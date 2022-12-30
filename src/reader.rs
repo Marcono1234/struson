@@ -1144,11 +1144,17 @@ pub struct JsonStreamReader<R: Read> {
     reader_settings: ReaderSettings,
 }
 
+// 4 (max bytes for UTF-8 encoded char) - 1, since at least one byte was already consumed
+const STRING_VALUE_READER_BUF_SIZE: usize = 3;
+
 struct StringValueReader<'j, R: Read> {
     json_reader: &'j mut JsonStreamReader<R>,
-    // Buffer (in reverse order) in case multi-byte character is read but caller did not provide large enough buffer
-    // TODO: Replace this with a [u8] and track pos
-    buf: Vec<u8>,
+    /// Buffer in case multi-byte character is read but caller did not provide large enough buffer
+    utf8_buf: [u8; STRING_VALUE_READER_BUF_SIZE],
+    /// Start position within [utf8_buf]
+    utf8_start_pos: usize,
+    /// Number of bytes currently in the [utf8_buf]
+    utf8_count: usize,
     reached_end: bool,
 }
 
@@ -1828,6 +1834,10 @@ impl<R: Read> JsonStreamReader<R> {
         Ok(())
     }
 
+    /// Reads the next character of a member name or string value
+    ///
+    /// If it is an unescaped `"` returns true. Otherwise passes the bytes of the char
+    /// (1 - 4 bytes) to the given consumer and returns false.
     fn read_string_bytes<C: FnMut(u8)>(
         &mut self,
         consumer: &mut C,
@@ -1942,7 +1952,9 @@ impl<R: Read> JsonStreamReader<R> {
         self.is_string_value_reader_active = true;
         StringValueReader {
             json_reader: self,
-            buf: Vec::with_capacity(3),
+            utf8_buf: [0; STRING_VALUE_READER_BUF_SIZE],
+            utf8_start_pos: 0,
+            utf8_count: 0,
             reached_end: false,
         }
     }
@@ -2295,19 +2307,39 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
             return Ok(0);
         }
         let mut pos = 0;
-        while pos < buf.len() && !self.buf.is_empty() {
-            buf[pos] = self.buf.pop().unwrap();
-            pos += 1;
+        // Check if there are remaining bytes in the UTF-8 buffer which should be served first
+        if self.utf8_count > 0 {
+            let copy_count = self.utf8_count.min(buf.len());
+            buf[..copy_count].copy_from_slice(
+                &self.utf8_buf[self.utf8_start_pos..(self.utf8_start_pos + copy_count)],
+            );
+            pos += copy_count;
+
+            // Check if complete buffer content was copied
+            if copy_count == self.utf8_count {
+                self.utf8_start_pos = 0;
+                self.utf8_count = 0;
+            } else {
+                self.utf8_start_pos += copy_count;
+                self.utf8_count -= copy_count;
+            }
         }
 
         while pos < buf.len() {
+            // Can assume that utf8_start_pos is 0 because it should have been drained at the beginning of
+            // this `read` method; otherwise if there were still remaining bytes in the UTF-8 buffer, that
+            // would indicate that `buf` was too small and is already full, so no iteration of this loop
+            // would have run
+            debug_assert!(self.utf8_start_pos == 0 && self.utf8_count == 0);
             let result = self.json_reader.read_string_bytes(&mut |byte| {
                 if pos < buf.len() {
                     buf[pos] = byte;
                     pos += 1;
                 } else {
-                    // Store remaining bytes in buffer; store at index 0 due to reverse order
-                    self.buf.insert(0, byte);
+                    // Due to loop condition at least one byte was written to `buf`, so at most 3 additional bytes
+                    // have to be stored in utf8_buf
+                    self.utf8_buf[self.utf8_count] = byte;
+                    self.utf8_count += 1;
                 }
             });
             match result {
