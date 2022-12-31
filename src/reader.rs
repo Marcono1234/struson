@@ -4,6 +4,349 @@
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 use crate::json_number::consume_json_number;
 
+/// Module for JSONPath
+///
+/// JSONPath is specified in [this article](https://goessner.net/articles/JsonPath/). This module only
+/// supports a small subset needed for JSON reader functionality, most notably for reporting the location
+/// of errors and for [`JsonReader::seek_to`].
+///
+/// A JSONPath consists of zero or more [`JsonPathPiece`] which either represent the index of a
+/// JSON array item or the name of a JSON object member. The convenience function [`parse_json_path`](json_path::parse_json_path)
+/// can be used to parse a JSONPath from its string representation.
+///
+/// Consider for example the following code:
+/// ```
+/// # use ron::reader::json_path::*;
+/// vec![
+///     JsonPathPiece::ObjectMember("a".to_owned()),
+///     JsonPathPiece::ArrayItem(2),
+/// ]
+/// # ;
+/// ```
+/// It means: Within a JSON object the member with name "a", and assuming the value of that member is
+/// a JSON array, of that array the item at index 2.  
+/// The string representation in dot-notation would be `a[2]`.
+pub mod json_path {
+    use std::fmt::Display;
+    use std::str::FromStr;
+
+    use thiserror::Error;
+
+    /// A piece of a JSONPath
+    ///
+    /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
+    #[derive(PartialEq, Debug)]
+    pub enum JsonPathPiece {
+        /// Index (starting at 0) of a JSON array item
+        ArrayItem(u32),
+        /// Name of a JSON object member
+        ObjectMember(String),
+    }
+
+    /// A JSONPath
+    ///
+    /// A JSONPath as represented by this module are zero or more [`JsonPathPiece`] elements.
+    /// JSONPath strings can be parsed using the [`parse_json_path`] function.
+    // TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then)
+    pub type JsonPath = [JsonPathPiece];
+
+    pub(crate) fn format_abs_json_path(json_path: &JsonPath) -> String {
+        "$".to_string()
+            + json_path
+                .iter()
+                .map(|p| match p {
+                    JsonPathPiece::ArrayItem(index) => {
+                        "[".to_owned() + index.to_string().as_str() + "]"
+                    }
+                    JsonPathPiece::ObjectMember(name) => ".".to_owned() + name.as_str(),
+                })
+                .collect::<String>()
+                .as_str()
+    }
+
+    /// Error which occurred while [parsing a JSONPath](parse_json_path)
+    #[derive(Error, Debug)]
+    pub struct JsonPathParseError {
+        /// Index (starting at 0) where the error occurred within the string
+        pub index: usize,
+        /// Message describing why the error occurred
+        pub message: String,
+    }
+
+    impl Display for JsonPathParseError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Parse error at index {}: {}", self.index, self.message)
+        }
+    }
+
+    /// Parses a JSONPath in dot-notation, for example `outer[4].inner`
+    ///
+    /// This is a convenience function which allows obtaining a vector of [`JsonPathPiece`] from a string form.
+    /// The path string must not start with `$` (respectively `$.`) and member names are limited to contain only
+    /// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. For malformed path strings an error is returned.
+    ///
+    /// # Example
+    /// ```
+    /// # use ron::reader::json_path::*;
+    /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
+    /// assert_eq!(
+    ///     json_path,
+    ///     vec![
+    ///         JsonPathPiece::ObjectMember("outer".to_owned()),
+    ///         JsonPathPiece::ArrayItem(1),
+    ///         JsonPathPiece::ObjectMember("inner".to_owned()),
+    ///         JsonPathPiece::ArrayItem(2),
+    ///         JsonPathPiece::ArrayItem(3),
+    ///     ]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    // TODO: Is there a proper specification (maybe even RFC?) for JSON Path, if so, should this method follow that specification?
+    pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
+        if path.is_empty() {
+            return Err(JsonPathParseError {
+                index: 0,
+                message: "Empty path".to_owned(),
+            });
+        }
+
+        fn find<T: PartialEq>(slice: &[T], t: T, start: usize) -> Option<usize> {
+            for i in start..slice.len() {
+                if slice[i] == t {
+                    return Some(i);
+                }
+            }
+            None
+        }
+        /// Finds the first occurrence of [t1] or [t2]
+        fn find_any<T: PartialEq>(slice: &[T], t1: T, t2: T, start: usize) -> Option<usize> {
+            for i in start..slice.len() {
+                let e = &slice[i];
+                if e == &t1 || e == &t2 {
+                    return Some(i);
+                }
+            }
+            None
+        }
+
+        let path_bytes = path.as_bytes();
+
+        if path_bytes[0] == b'.' {
+            return Err(JsonPathParseError {
+                index: 0,
+                message: "Leading '.' is not allowed".to_owned(),
+            });
+        }
+
+        let mut parsed_path = Vec::new();
+        let mut index = 0;
+        // Perform this check here because first member name cannot have leading '.'
+        let mut is_array_item = path_bytes[0] == b'[';
+
+        loop {
+            if is_array_item {
+                index += 1;
+                let end_index = match find(path_bytes, b']', index) {
+                    None => {
+                        return Err(JsonPathParseError {
+                            index,
+                            message: "Missing ']' for array index".to_owned(),
+                        })
+                    }
+                    Some(i) => i,
+                };
+                if end_index == index {
+                    return Err(JsonPathParseError {
+                        index,
+                        message: "Missing index value".to_owned(),
+                    });
+                }
+                if path_bytes[index] == b'0' && end_index != index + 1 {
+                    return Err(JsonPathParseError {
+                        index,
+                        message: "Leading 0 is not allowed".to_owned(),
+                    });
+                }
+
+                for i in index..end_index {
+                    if !(b'0'..=b'9').contains(&path_bytes[i]) {
+                        return Err(JsonPathParseError {
+                            index: i,
+                            message: "Invalid index digit".to_owned(),
+                        });
+                    }
+                }
+                let path_index =
+                    u32::from_str(&path[index..end_index]).map_err(|e| JsonPathParseError {
+                        index,
+                        message: "Invalid index value: ".to_owned() + e.to_string().as_str(),
+                    })?;
+                parsed_path.push(JsonPathPiece::ArrayItem(path_index));
+                index = end_index + 1;
+            } else {
+                let end_index = find_any(path_bytes, b'.', b'[', index).unwrap_or(path_bytes.len());
+                if end_index == index {
+                    return Err(JsonPathParseError {
+                        index,
+                        message: "Missing member name".to_owned(),
+                    });
+                }
+
+                for i in index..end_index {
+                    let b = path_bytes[i];
+                    if !((b'a'..=b'z').contains(&b)
+                        || (b'A'..=b'Z').contains(&b)
+                        || (b'0'..=b'9').contains(&b)
+                        || b == b'-'
+                        || b == b'_')
+                    {
+                        return Err(JsonPathParseError {
+                            index: i,
+                            message: "Unsupported char in member name".to_owned(),
+                        });
+                    }
+                }
+
+                parsed_path.push(JsonPathPiece::ObjectMember(
+                    path[index..end_index].to_string(),
+                ));
+                index = end_index;
+            }
+
+            if index >= path_bytes.len() {
+                break;
+            }
+            match path_bytes[index] {
+                b'.' => {
+                    is_array_item = false;
+                    index += 1;
+                }
+                b'[' => {
+                    is_array_item = true;
+                    // Don't have to skip '[' here, that is done at the beginning of the loop
+                }
+                _ => {
+                    return Err(JsonPathParseError {
+                        index,
+                        message: "Expecting either '.' or '['".to_owned(),
+                    })
+                }
+            }
+        }
+
+        Ok(parsed_path)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+        #[test]
+        fn test_format_abs_json_path() {
+            assert_eq!("$", format_abs_json_path(&Vec::new()));
+
+            assert_eq!(
+                "$[2]",
+                format_abs_json_path(&vec![JsonPathPiece::ArrayItem(2)])
+            );
+            assert_eq!(
+                "$[2][3]",
+                format_abs_json_path(&vec![
+                    JsonPathPiece::ArrayItem(2),
+                    JsonPathPiece::ArrayItem(3)
+                ])
+            );
+            assert_eq!(
+                "$[2].a",
+                format_abs_json_path(&vec![
+                    JsonPathPiece::ArrayItem(2),
+                    JsonPathPiece::ObjectMember("a".to_owned())
+                ])
+            );
+
+            assert_eq!(
+                "$.a",
+                format_abs_json_path(&vec![JsonPathPiece::ObjectMember("a".to_owned())])
+            );
+            assert_eq!(
+                "$.a.b",
+                format_abs_json_path(&vec![
+                    JsonPathPiece::ObjectMember("a".to_owned()),
+                    JsonPathPiece::ObjectMember("b".to_owned())
+                ])
+            );
+            assert_eq!(
+                "$.a[2]",
+                format_abs_json_path(&vec![
+                    JsonPathPiece::ObjectMember("a".to_owned()),
+                    JsonPathPiece::ArrayItem(2)
+                ])
+            );
+        }
+
+        #[test]
+        fn test_parse_json_path() -> TestResult {
+            assert_eq!(
+                vec![JsonPathPiece::ObjectMember("abc".to_owned())],
+                parse_json_path("abc")?
+            );
+            assert_eq!(vec![JsonPathPiece::ArrayItem(0)], parse_json_path("[0]")?);
+            assert_eq!(vec![JsonPathPiece::ArrayItem(34)], parse_json_path("[34]")?);
+
+            assert_eq!(
+                vec![
+                    JsonPathPiece::ObjectMember("ab".to_owned()),
+                    JsonPathPiece::ObjectMember("cd".to_owned()),
+                    JsonPathPiece::ArrayItem(12),
+                    JsonPathPiece::ObjectMember("34".to_owned()),
+                    JsonPathPiece::ArrayItem(56),
+                    JsonPathPiece::ArrayItem(78)
+                ],
+                parse_json_path("ab.cd[12].34[56][78]")?
+            );
+
+            fn assert_parse_error(path: &str, expected_index: usize, expected_message: &str) {
+                match parse_json_path(path) {
+                    Err(e) => {
+                        assert_eq!(expected_index, e.index);
+                        assert_eq!(expected_message, e.message);
+                    }
+                    Ok(_) => panic!("Should have failed for: {path}"),
+                }
+            }
+
+            assert_parse_error("", 0, "Empty path");
+            assert_parse_error(".a", 0, "Leading '.' is not allowed");
+            assert_parse_error("[", 1, "Missing ']' for array index");
+            assert_parse_error("[1", 1, "Missing ']' for array index");
+            assert_parse_error("[1.a]", 2, "Invalid index digit");
+            assert_parse_error("[1a2]", 2, "Invalid index digit");
+            assert_parse_error("[01]", 1, "Leading 0 is not allowed");
+            assert_parse_error("[00]", 1, "Leading 0 is not allowed");
+            assert_parse_error("[-1]", 1, "Invalid index digit");
+            // TODO: Should this test really check for specific Rust library message?
+            assert_parse_error(
+                "[99999999999999999999999999999999999999999999]",
+                1,
+                "Invalid index value: number too large to fit in target type",
+            );
+            assert_parse_error("[1[0]]", 2, "Invalid index digit");
+            assert_parse_error("[a]", 1, "Invalid index digit");
+            assert_parse_error("[1]1]", 3, "Expecting either '.' or '['");
+            assert_parse_error("[1]a", 3, "Expecting either '.' or '['");
+            assert_parse_error("a.", 2, "Missing member name");
+            assert_parse_error("a..b", 2, "Missing member name");
+            assert_parse_error("a.[1]", 2, "Missing member name");
+            assert_parse_error("%a", 0, "Unsupported char in member name");
+            assert_parse_error("a%", 1, "Unsupported char in member name");
+
+            Ok(())
+        }
+    }
+}
+
 use thiserror::Error;
 
 use std::{
@@ -11,6 +354,8 @@ use std::{
     io::{ErrorKind, Read},
     str::FromStr,
 };
+
+use self::json_path::{format_abs_json_path, JsonPath, JsonPathPiece};
 
 type IoError = std::io::Error;
 
@@ -35,12 +380,29 @@ pub enum ValueType {
 }
 
 /// Location of an error which occurred while reading a JSON document
+///
+/// A location consists of a JSONPath, the line and column number. Consider the following malformed
+/// JSON document (`@` being the malformed character):
+/// ```json
+/// {
+///   "a": @
+/// }
+/// ```
+/// The location would be:
+/// - path: `$.a`  
+///   The error occurred for the member with name "a"
+/// - line: 1  
+///   Line numbering starts at 0 and the error occurred in the second line
+/// - column: 7  
+///   Column numbering starts at 0 and the `@` is the 8th character in that line, respectively
+///   there are 7 characters in front of it
 #[derive(PartialEq, Debug)]
 pub struct JsonErrorLocation {
-    /// [JSONPath](https://goessner.net/articles/JsonPath/) of the error in dot-notation, for example `$outer[4].second`
+    /// [JSONPath](https://goessner.net/articles/JsonPath/) of the error in dot-notation, for example `$.outer[4].second`
     ///
     /// This path is mainly intended to help troubleshooting, it should not be parsed in any way since it might be ambiguous
-    /// or incorrect for certain member names, for example when a member name is `"name[0]"`.
+    /// or incorrect for certain member names. For example when a member name is `"address.street"` it would erroneously be
+    /// considered to consist of two separate names `"address"` and a nested member named `"street"`.
     pub path: String,
     /// Line number of the error, starting at 0
     ///
@@ -48,6 +410,12 @@ pub struct JsonErrorLocation {
     /// names and string values are not considered line breaks.
     pub line: u32,
     /// Character column of the error within the current line, starting at 0
+    ///
+    /// For all Unicode characters this value is incremented only by one, regardless of whether some encodings
+    /// such as UTF-8 might use more than one byte for the character, or whether encodings such as UTF-16
+    /// might use two characters (a *surrogate pair*) to encode the character. Similarly the tab character
+    /// (U+0009) is also considered a single character even though code editors might display it as if it
+    /// consisted of more than one space characters.
     pub column: u32,
 }
 
@@ -204,191 +572,6 @@ pub enum ReaderError {
     /// malformed UTF-8 data was encountered
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
-}
-
-/// A piece of a [`JsonPath`]
-#[derive(PartialEq, Debug)]
-pub enum JsonPathPiece {
-    /// Index (starting at 0) of a JSON array item
-    ArrayItem(u32),
-    /// Name of a JSON object member
-    ObjectMember(String),
-}
-
-/// A [JSONPath](https://goessner.net/articles/JsonPath/)
-///
-/// JSONPath strings can be parsed using the [`parse_json_path`] function.
-// TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then)
-pub type JsonPath = [JsonPathPiece];
-
-fn format_abs_json_path(json_path: &JsonPath) -> String {
-    "$".to_string()
-        + json_path
-            .iter()
-            .map(|p| match p {
-                JsonPathPiece::ArrayItem(index) => {
-                    "[".to_owned() + index.to_string().as_str() + "]"
-                }
-                JsonPathPiece::ObjectMember(name) => ".".to_owned() + name.as_str(),
-            })
-            .collect::<String>()
-            .as_str()
-}
-
-/// Error which occurred while [parsing a JSONPath](parse_json_path)
-#[derive(Error, Debug)]
-pub struct JsonPathParseError {
-    /// Index (starting at 0) where the error occurred within the string
-    pub index: usize,
-    /// Message describing why the error occurred
-    pub message: String,
-}
-
-impl Display for JsonPathParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parse error at index {}: {}", self.index, self.message)
-    }
-}
-
-/// Parses a [JSONPath](https://goessner.net/articles/JsonPath/) in dot-notation, for example `outer[4].inner`
-///
-/// This is a convenience function which allows obtaining a vector of [`JsonPathPiece`] from a string form.
-/// The path string must not start with `$` (respectively `$.`) and member names are limited to contain only
-/// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. For malformed path strings an error is returned.
-// TODO: Is there a proper specification (maybe even RFC?) for JSON Path, if so, should this method follow that specification?
-pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
-    if path.is_empty() {
-        return Err(JsonPathParseError {
-            index: 0,
-            message: "Empty path".to_owned(),
-        });
-    }
-
-    fn find<T: PartialEq>(slice: &[T], t: T, start: usize) -> Option<usize> {
-        for i in start..slice.len() {
-            if slice[i] == t {
-                return Some(i);
-            }
-        }
-        None
-    }
-    /// Finds the first occurrence of [t1] or [t2]
-    fn find_any<T: PartialEq>(slice: &[T], t1: T, t2: T, start: usize) -> Option<usize> {
-        for i in start..slice.len() {
-            let e = &slice[i];
-            if e == &t1 || e == &t2 {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    let path_bytes = path.as_bytes();
-
-    if path_bytes[0] == b'.' {
-        return Err(JsonPathParseError {
-            index: 0,
-            message: "Leading '.' is not allowed".to_owned(),
-        });
-    }
-
-    let mut parsed_path = Vec::new();
-    let mut index = 0;
-    // Perform this check here because first member name cannot have leading '.'
-    let mut is_array_item = path_bytes[0] == b'[';
-
-    loop {
-        if is_array_item {
-            index += 1;
-            let end_index = match find(path_bytes, b']', index) {
-                None => {
-                    return Err(JsonPathParseError {
-                        index,
-                        message: "Missing ']' for array index".to_owned(),
-                    })
-                }
-                Some(i) => i,
-            };
-            if end_index == index {
-                return Err(JsonPathParseError {
-                    index,
-                    message: "Missing index value".to_owned(),
-                });
-            }
-            if path_bytes[index] == b'0' && end_index != index + 1 {
-                return Err(JsonPathParseError {
-                    index,
-                    message: "Leading 0 is not allowed".to_owned(),
-                });
-            }
-
-            for i in index..end_index {
-                if !(b'0'..=b'9').contains(&path_bytes[i]) {
-                    return Err(JsonPathParseError {
-                        index: i,
-                        message: "Invalid index digit".to_owned(),
-                    });
-                }
-            }
-            let path_index =
-                u32::from_str(&path[index..end_index]).map_err(|e| JsonPathParseError {
-                    index,
-                    message: "Invalid index value: ".to_owned() + e.to_string().as_str(),
-                })?;
-            parsed_path.push(JsonPathPiece::ArrayItem(path_index));
-            index = end_index + 1;
-        } else {
-            let end_index = find_any(path_bytes, b'.', b'[', index).unwrap_or(path_bytes.len());
-            if end_index == index {
-                return Err(JsonPathParseError {
-                    index,
-                    message: "Missing member name".to_owned(),
-                });
-            }
-
-            for i in index..end_index {
-                let b = path_bytes[i];
-                if !((b'a'..=b'z').contains(&b)
-                    || (b'A'..=b'Z').contains(&b)
-                    || (b'0'..=b'9').contains(&b)
-                    || b == b'-'
-                    || b == b'_')
-                {
-                    return Err(JsonPathParseError {
-                        index: i,
-                        message: "Unsupported char in member name".to_owned(),
-                    });
-                }
-            }
-
-            parsed_path.push(JsonPathPiece::ObjectMember(
-                path[index..end_index].to_string(),
-            ));
-            index = end_index;
-        }
-
-        if index >= path_bytes.len() {
-            break;
-        }
-        match path_bytes[index] {
-            b'.' => {
-                is_array_item = false;
-                index += 1;
-            }
-            b'[' => {
-                is_array_item = true;
-                // Don't have to skip '[' here, that is done at the beginning of the loop
-            }
-            _ => {
-                return Err(JsonPathParseError {
-                    index,
-                    message: "Expecting either '.' or '['".to_owned(),
-                })
-            }
-        }
-    }
-
-    Ok(parsed_path)
 }
 
 // TODO: Doc: Deduplicate documentation for errors and panics for value reading methods and only describe it
@@ -991,6 +1174,7 @@ pub trait JsonReader {
     /// # Example
     /// ```
     /// # use ron::reader::*;
+    /// # use ron::reader::json_path::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes());
     /// json_reader.seek_to(&vec![JsonPathPiece::ObjectMember("foo".to_owned()), JsonPathPiece::ArrayItem(2)])?;
     ///
@@ -4056,65 +4240,6 @@ mod tests {
         }
         json_reader.end_array()?;
         json_reader.consume_trailing_whitespace()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_json_path() -> TestResult {
-        assert_eq!(
-            vec![JsonPathPiece::ObjectMember("abc".to_owned())],
-            parse_json_path("abc")?
-        );
-        assert_eq!(vec![JsonPathPiece::ArrayItem(0)], parse_json_path("[0]")?);
-        assert_eq!(vec![JsonPathPiece::ArrayItem(34)], parse_json_path("[34]")?);
-
-        assert_eq!(
-            vec![
-                JsonPathPiece::ObjectMember("ab".to_owned()),
-                JsonPathPiece::ObjectMember("cd".to_owned()),
-                JsonPathPiece::ArrayItem(12),
-                JsonPathPiece::ObjectMember("34".to_owned()),
-                JsonPathPiece::ArrayItem(56),
-                JsonPathPiece::ArrayItem(78)
-            ],
-            parse_json_path("ab.cd[12].34[56][78]")?
-        );
-
-        fn assert_parse_error(path: &str, expected_index: usize, expected_message: &str) {
-            match parse_json_path(path) {
-                Err(e) => {
-                    assert_eq!(expected_index, e.index);
-                    assert_eq!(expected_message, e.message);
-                }
-                Ok(_) => panic!("Should have failed for: {path}"),
-            }
-        }
-
-        assert_parse_error("", 0, "Empty path");
-        assert_parse_error(".a", 0, "Leading '.' is not allowed");
-        assert_parse_error("[", 1, "Missing ']' for array index");
-        assert_parse_error("[1", 1, "Missing ']' for array index");
-        assert_parse_error("[1.a]", 2, "Invalid index digit");
-        assert_parse_error("[1a2]", 2, "Invalid index digit");
-        assert_parse_error("[01]", 1, "Leading 0 is not allowed");
-        assert_parse_error("[00]", 1, "Leading 0 is not allowed");
-        assert_parse_error("[-1]", 1, "Invalid index digit");
-        // TODO: Should this test really check for specific Rust library message?
-        assert_parse_error(
-            "[99999999999999999999999999999999999999999999]",
-            1,
-            "Invalid index value: number too large to fit in target type",
-        );
-        assert_parse_error("[1[0]]", 2, "Invalid index digit");
-        assert_parse_error("[a]", 1, "Invalid index digit");
-        assert_parse_error("[1]1]", 3, "Expecting either '.' or '['");
-        assert_parse_error("[1]a", 3, "Expecting either '.' or '['");
-        assert_parse_error("a.", 2, "Missing member name");
-        assert_parse_error("a..b", 2, "Missing member name");
-        assert_parse_error("a.[1]", 2, "Missing member name");
-        assert_parse_error("%a", 0, "Unsupported char in member name");
-        assert_parse_error("a%", 1, "Unsupported char in member name");
-
         Ok(())
     }
 }
