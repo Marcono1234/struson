@@ -560,7 +560,7 @@ pub enum ReaderError {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     /// (Note: For a JSON object `skip_value` has to be called twice, once to skip the member name
-    /// a second time to skip the member value.)
+    /// and a second time to skip the member value.)
     #[error("Unexpected JSON structure {kind} at {location}")]
     UnexpectedStructure {
         /// Describes why the JSON document is considered to have an invalid structure
@@ -582,39 +582,39 @@ pub enum ReaderError {
 /// The methods of this reader can be divided into the following categories:
 ///
 /// - Peeking values, without consuming them
-///     - [`peek`](JsonReader::peek): Peeks at the type of the next value
-///     - [`has_next`](JsonReader::has_next): Checks if there is a next value
+///     - [`peek`](Self::peek): Peeks at the type of the next value
+///     - [`has_next`](Self::has_next): Checks if there is a next value
 /// - Reading values
-///     - [`begin_array`](JsonReader::begin_array), [`end_array`](JsonReader::end_array): Starting and ending a JSON array
-///     - [`begin_object`](JsonReader::begin_object), [`end_object`](JsonReader::end_object): Starting and ending a JSON object
-///     - [`next_name`](JsonReader::next_name): Reading a JSON object member name
-///     - [`next_string`](JsonReader::next_string), [`next_string_reader`](JsonReader::next_string_reader): Reading a JSON string value
-///     - [`next_number`](JsonReader::next_number), [`next_number_as_string`](JsonReader::next_number_as_string): Reading a JSON number value
-///     - [`next_bool`](JsonReader::next_bool): Reading a JSON boolean value
-///     - [`next_null`](JsonReader::next_null): Reading a JSON null value
+///     - [`begin_array`](Self::begin_array), [`end_array`](Self::end_array): Starting and ending a JSON array
+///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
+///     - [`next_name`](Self::next_name): Reading a JSON object member name
+///     - [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
+///     - [`next_number`](Self::next_number), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
+///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
+///     - [`next_null`](Self::next_null): Reading a JSON null value
 ///  - Skipping values
-///     - [`skip_value`](JsonReader::skip_value): Skipping a value or member name
-///     - [`seek_to`](JsonReader::seek_to): Skipping values until a specified location is reached
+///     - [`skip_value`](Self::skip_value): Skipping a value or member name
+///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
 ///  - Other:
-///     - [`consume_trailing_whitespace`](JsonReader::consume_trailing_whitespace): Consuming trailing whitespace at the end of the JSON document
+///     - [`consume_trailing_whitespace`](Self::consume_trailing_whitespace): Consuming trailing whitespace at the end of the JSON document
 ///
 /// JSON documents have at least one top-level value which can be either a JSON array, object,
 /// string, number, boolean or null value. For JSON arrays and objects the opening brackets
-/// must be consumed with the corresponding `begin_` method (for example [`begin_array`](JsonReader::begin_array)) and the
-/// closing bracket with the corresponding `end_` method (for example [`end_array`](JsonReader::end_array)). JSON objects
+/// must be consumed with the corresponding `begin_` method (for example [`begin_array`](Self::begin_array)) and the
+/// closing bracket with the corresponding `end_` method (for example [`end_array`](Self::end_array)). JSON objects
 /// consist of *members* which are name-value pairs. The name of a member can be read with
-/// [`next_name`](JsonReader::next_name) and the value with any of the value reading methods such as [`next_bool`](JsonReader::next_bool).
+/// [`next_name`](Self::next_name) and the value with any of the value reading methods such as [`next_bool`](Self::next_bool).
 ///
 /// It is not necessary to consume the complete JSON document, for example a user of this reader
 /// can simply drop the reader once the relevant information was extracted, ignoring the remainder
 /// of the JSON data. However, in that case no validation will be performed that the remainder
-/// has actually valid JSON syntax. To ensure that, [`skip_value`](JsonReader::skip_value) can be used to skip (and validate)
+/// has actually valid JSON syntax. To ensure that, [`skip_value`](Self::skip_value) can be used to skip (and validate)
 /// the remaining JSON values.
 ///
 /// **Important:** Even after the top-level has been fully consumed this reader does *not*
 /// automatically consume the remainder of the JSON document (which is expected to consist
 /// of optional whitespace only). To verify that there is no trailing data it is necessary
-/// to explicitly call [`consume_trailing_whitespace`](JsonReader::consume_trailing_whitespace).
+/// to explicitly call [`consume_trailing_whitespace`](Self::consume_trailing_whitespace).
 ///
 /// # Example
 /// ```
@@ -651,8 +651,8 @@ pub enum ReaderError {
 ///
 /// When encountering [`ReaderError::UnexpectedValueType`] or [`ReaderError::UnexpectedStructure`]
 /// depending on the use case it might be possible to continue processing the JSON document
-/// (except for [`seek_to`](JsonReader::seek_to) where it might not be obvious how many elements have already been
-/// skipped). However, these errors can usually be avoided by using either [`peek`](JsonReader::peek) or [`has_next`](JsonReader::has_next)
+/// (except for [`seek_to`](Self::seek_to) where it might not be obvious how many elements have already been
+/// skipped). However, these errors can usually be avoided by using either [`peek`](Self::peek) or [`has_next`](Self::has_next)
 /// before trying to consume a value whose type is not known in advance, or for which it
 /// is not known whether it is present in the JSON document.
 ///
@@ -662,7 +662,7 @@ pub enum ReaderError {
 /// # Panics
 /// Methods of this reader panic when used in an incorrect way. The documentation of the methods
 /// describes in detail the situations when that will happen. In general all these cases are
-/// related to incorrect usage by the user (such as trying to call [`end_object`](JsonReader::end_object) when currently
+/// related to incorrect usage by the user (such as trying to call [`end_object`](Self::end_object) when currently
 /// reading a JSON array) and are unrelated to the JSON data which is processed.
 pub trait JsonReader {
     /// Peeks at the type of the next value, without consuming it
@@ -690,7 +690,7 @@ pub trait JsonReader {
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The method
-    /// [`has_next`](JsonReader::has_next) can be used to check if there is a next value.
+    /// [`has_next`](Self::has_next) can be used to check if there is a next value.
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
@@ -701,19 +701,22 @@ pub trait JsonReader {
 
     /// Begins consuming a JSON object
     ///
-    /// The method [`has_next`](JsonReader::has_next) can be used to check for object members. To consume a member
-    /// first call [`next_name`](JsonReader::next_name) and afterwards one of the value reading methods such as [`next_number`](JsonReader::next_number).
-    /// At the end call [`end_object`](JsonReader::end_object) to consume the closing bracket of the JSON object.
+    /// The method [`has_next`](Self::has_next) can be used to check if there is a next object member. To consume a member
+    /// first call [`next_name`](Self::next_name) and afterwards one of the value reading methods such as [`next_number`](Self::next_number).
+    /// At the end call [`end_object`](Self::end_object) to consume the closing bracket of the JSON object.
     ///
     /// # Example
     /// ```
     /// # use ron::reader::*;
-    /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
+    /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
-    /// assert_eq!("a", json_reader.next_name()?);
-    /// assert_eq!(1_u32, json_reader.next_number()??);
-    /// assert_eq!(false, json_reader.has_next()?);
+    /// // Prints "a: 1", "b: 2"
+    /// while json_reader.has_next()? {
+    ///     let name = json_reader.next_name()?;
+    ///     let value: u32 = json_reader.next_number()??;
+    ///     println!("{name}: {value}");
+    /// }
     ///
     /// json_reader.end_object()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -722,11 +725,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON object but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -738,13 +741,13 @@ pub trait JsonReader {
 
     /// Consumes the closing bracket `}` of the current JSON object
     ///
-    /// This method is used to end a JSON object started by [`begin_object`](JsonReader::begin_object).
+    /// This method is used to end a JSON object started by [`begin_object`](Self::begin_object).
     ///
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If there are remaining members in the object a [`ReaderError::UnexpectedStructure`] is returned.
-    /// [`skip_value`](JsonReader::skip_value) can be used to skip these remaining members in case they should be ignored:
+    /// [`skip_value`](Self::skip_value) can be used to skip these remaining members in case they should be ignored:
     /// ```
     /// # use ron::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("{}".as_bytes());
@@ -768,9 +771,9 @@ pub trait JsonReader {
 
     /// Begins consuming a JSON array
     ///
-    /// The method [`has_next`](JsonReader::has_next) can be used to check for array items. To consume an item one of
-    /// the regular value reading methods such as [`next_number`](JsonReader::next_number) can be used. At the end call
-    /// [`end_array`](JsonReader::end_array) to consume the closing bracket of the JSON array.
+    /// The method [`has_next`](Self::has_next) can be used to check if there is a next array item. To consume an item one of
+    /// the regular value reading methods such as [`next_number`](Self::next_number) can be used. At the end call
+    /// [`end_array`](Self::end_array) to consume the closing bracket of the JSON array.
     ///
     /// Note that JSON arrays can contain values of different types, so for example the
     /// following is valid JSON: `[1, true, "a"]`
@@ -778,11 +781,14 @@ pub trait JsonReader {
     /// # Example
     /// ```
     /// # use ron::reader::*;
-    /// let mut json_reader = JsonStreamReader::new("[1]".as_bytes());
+    /// let mut json_reader = JsonStreamReader::new("[1, 2, 3]".as_bytes());
     /// json_reader.begin_array()?;
     ///
-    /// assert_eq!(1_u32, json_reader.next_number()??);
-    /// assert_eq!(false, json_reader.has_next()?);
+    /// // Prints: "Number: 1", "Number: 2", "Number: 3"
+    /// while json_reader.has_next()? {
+    ///     let number: u32 = json_reader.next_number()??;
+    ///     println!("Number: {number}");
+    /// }
     ///
     /// json_reader.end_array()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -791,11 +797,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON array but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -807,13 +813,13 @@ pub trait JsonReader {
 
     /// Consumes the closing bracket `]` of the current JSON array
     ///
-    /// This method is used to end a JSON array started by [`begin_array`](JsonReader::begin_array).
+    /// This method is used to end a JSON array started by [`begin_array`](Self::begin_array).
     ///
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If there are remaining items in the array a [`ReaderError::UnexpectedStructure`] is returned.
-    /// [`skip_value`](JsonReader::skip_value) can be used to skip these remaining items in case they should be ignored:
+    /// [`skip_value`](Self::skip_value) can be used to skip these remaining items in case they should be ignored:
     /// ```
     /// # use ron::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
@@ -836,6 +842,9 @@ pub trait JsonReader {
     /// Returns `true` if there is a next element, `false` otherwise. When multiple top-level
     /// values are allowed by the [`ReaderSettings`] this method can also be used to check if
     /// there are more top-level values.
+    /// 
+    /// This method can be useful as condition of a `while` loop when processing a JSON array or object
+    /// of unknown size.
     ///
     /// # Example
     /// ```
@@ -865,7 +874,7 @@ pub trait JsonReader {
 
     /// Consumes and returns the name of the next JSON object member
     ///
-    /// Afterwards one of the value reading methods such as [`next_number`](JsonReader::next_number) can be
+    /// Afterwards one of the value reading methods such as [`next_number`](Self::next_number) can be
     /// used to read the corresponding member value.
     ///
     /// **Important:** This method does not detect duplicate  member names, such as
@@ -886,7 +895,7 @@ pub trait JsonReader {
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If there is no next object member a [`ReaderError::UnexpectedStructure`] is returned.
-    /// [`has_next`](JsonReader::has_next) can be used to check if there are further members in the current JSON object.
+    /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This
@@ -896,9 +905,9 @@ pub trait JsonReader {
     /// Consumes and returns a JSON string value
     ///
     /// This method is only intended to consume string values, it cannot be used to consume
-    /// JSON object member names. The method [`next_name`](JsonReader::next_name) has to be used for that.
+    /// JSON object member names. The method [`next_name`](Self::next_name) has to be used for that.
     ///
-    /// To avoid reading the complete string value into memory, the method [`next_string_reader`](JsonReader::next_string_reader)
+    /// To avoid reading the complete string value into memory, the method [`next_string_reader`](Self::next_string_reader)
     /// can be used to obtain a reader which allows lazily reading the value. Especially for
     /// large string values this can be useful.
     ///
@@ -913,11 +922,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON string value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -930,10 +939,10 @@ pub trait JsonReader {
     /// Provides a reader for lazily reading a JSON string value
     ///
     /// This method is mainly designed to process large string values in a memory efficient
-    /// way. If that is not a concern the method [`next_string`](JsonReader::next_string) should be used instead.
+    /// way. If that is not a concern the method [`next_string`](Self::next_string) should be used instead.
     ///
     /// This method is only intended to consume string values, it cannot be used to consume
-    /// JSON object member names. The method [`next_name`](JsonReader::next_name) has to be used for that.
+    /// JSON object member names. The method [`next_name`](Self::next_name) has to be used for that.
     ///
     /// JSON syntax errors which occur while consuming the JSON document with the reader
     /// are reported as [`std::io::Error`] for that reader.
@@ -969,11 +978,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON string value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -990,7 +999,7 @@ pub trait JsonReader {
     /// be inferred automatically.
     ///
     /// If parsing the number should be deferred to a later point or the exact format of the
-    /// JSON number should be preserved, the method [`next_number_as_string`](JsonReader::next_number_as_string) can be used.
+    /// JSON number should be preserved, the method [`next_number_as_string`](Self::next_number_as_string) can be used.
     ///
     /// # Example
     /// ```
@@ -1003,11 +1012,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON number value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1026,7 +1035,7 @@ pub trait JsonReader {
     /// However, this method nonetheless validates the JSON number matches the format
     /// described by the JSON specification.
     ///
-    /// The method [`next_number`](JsonReader::next_number) can be used instead to parse the number directly in place.
+    /// The method [`next_number`](Self::next_number) can be used instead to parse the number directly in place.
     ///
     /// # Example
     /// ```
@@ -1039,11 +1048,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON number value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1066,11 +1075,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON boolean value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1097,11 +1106,11 @@ pub trait JsonReader {
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON null value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](JsonReader::peek) method can be used to
+    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1140,12 +1149,12 @@ pub trait JsonReader {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// To skip to a specific location in the JSON document the method [`seek_to`](JsonReader::seek_to) can be used.
+    /// To skip to a specific location in the JSON document the method [`seek_to`](Self::seek_to) can be used.
     ///
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](JsonReader::has_next)
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// # Panics
@@ -1206,7 +1215,7 @@ pub trait JsonReader {
     /// have any unexpected data at the end. This is not checked automatically by this JSON reader.
     ///
     /// When multiple top-level values are allowed by the [`ReaderSettings`] but not all
-    /// top-level values are relevant they can be skipped with of loop calling [`has_next`](JsonReader::has_next) and [`skip_value`](JsonReader::skip_value)
+    /// top-level values are relevant they can be skipped with of loop calling [`has_next`](Self::has_next) and [`skip_value`](Self::skip_value)
     /// to allow calling `consume_trailing_whitespace` eventually.
     ///
     /// **Important:** It is expected that there is always at least one top-level value

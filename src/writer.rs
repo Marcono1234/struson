@@ -20,26 +20,26 @@ type IoError = std::io::Error;
 /// The methods of this writer can be divided into the following categories:
 ///
 /// - Writing values
-///     - [`begin_array`](JsonWriter::begin_array), [`end_array`](JsonWriter::end_array): Starting and ending a JSON array
-///     - [`begin_object`](JsonWriter::begin_object), [`end_object`](JsonWriter::end_object): Starting and ending a JSON object
-///     - [`name`](JsonWriter::name): Writing a JSON object member name
-///     - [`string_value`](JsonWriter::string_value), [`string_value_writer`](JsonWriter::string_value_writer): Writing a JSON string value
-///     - [`number_value`](JsonWriter::number_value), [`fp_number_value`](JsonWriter::fp_number_value), [`number_value_from_string`](JsonWriter::number_value_from_string): Writing a JSON number value
-///     - [`bool_value`](JsonWriter::bool_value): Writing a JSON boolean value
-///     - [`null_value`](JsonWriter::null_value): Writing a JSON null value
+///     - [`begin_array`](Self::begin_array), [`end_array`](Self::end_array): Starting and ending a JSON array
+///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
+///     - [`name`](Self::name): Writing a JSON object member name
+///     - [`string_value`](Self::string_value), [`string_value_writer`](Self::string_value_writer): Writing a JSON string value
+///     - [`number_value`](Self::number_value), [`fp_number_value`](Self::fp_number_value), [`number_value_from_string`](Self::number_value_from_string): Writing a JSON number value
+///     - [`bool_value`](Self::bool_value): Writing a JSON boolean value
+///     - [`null_value`](Self::null_value): Writing a JSON null value
 ///  - Other:
-///     - [`finish_document`](JsonWriter::finish_document): Ensuring that the JSON document is complete and flushing the buffer
+///     - [`finish_document`](Self::finish_document): Ensuring that the JSON document is complete and flushing the buffer
 ///
 /// JSON documents have at least one top-level value which can be either a JSON array, object,
 /// string, number, boolean or null value. For JSON arrays and objects the opening brackets
-/// must be written with the corresponding `begin_` method (for example [`begin_array`](JsonWriter::begin_array)) and the
-/// closing bracket with the corresponding `end_` method (for example [`end_array`](JsonWriter::end_array)). JSON objects
+/// must be written with the corresponding `begin_` method (for example [`begin_array`](Self::begin_array)) and the
+/// closing bracket with the corresponding `end_` method (for example [`end_array`](Self::end_array)). JSON objects
 /// consist of *members* which are name-value pairs. The name of a member can be written with
-/// [`name`](JsonWriter::name) and the value with any of the value writing methods such as [`bool_value`](JsonWriter::bool_value).
+/// [`name`](Self::name) and the value with any of the value writing methods such as [`bool_value`](Self::bool_value).
 ///
-/// Once the JSON document is complete, [`finish_document`](JsonWriter::finish_document) has to be called to ensure that the
+/// Once the JSON document is complete, [`finish_document`](Self::finish_document) has to be called to ensure that the
 /// JSON document really is complete and to flush the internal buffer to the underlying writer.
-/// Forgetting to call [`finish_document`](JsonWriter::finish_document) leads to unspecified behavior; most likely the written
+/// Forgetting to call [`finish_document`](Self::finish_document) leads to unspecified behavior; most likely the written
 /// JSON document will be incomplete.
 ///
 /// # Example
@@ -79,16 +79,16 @@ type IoError = std::io::Error;
 /// # Panics
 /// Methods of this writer panic when used in an incorrect way. The documentation of the methods
 /// describes in detail the situations when that will happen. In general all these cases are
-/// related to incorrect usage by the user (such as trying to call [`end_object`](JsonWriter::end_object) when currently
+/// related to incorrect usage by the user (such as trying to call [`end_object`](Self::end_object) when currently
 /// writing a JSON array).
 pub trait JsonWriter {
     // TODO: Should these methods all return &mut Self to allow chaining?
 
     /// Begins writing a JSON object
     ///
-    /// To write member of the object first call [`name`](JsonWriter::name) to write the member name
+    /// To write member of the object first call [`name`](Self::name) to write the member name
     /// and afterwards one of the value writing to write the member value. At the end
-    /// call [`end_object`](JsonWriter::end_object) to write the closing bracket of the JSON object.
+    /// call [`end_object`](Self::end_object) to write the closing bracket of the JSON object.
     ///
     /// # Example
     /// ```
@@ -116,7 +116,7 @@ pub trait JsonWriter {
 
     /// Writes the closing bracket `}` of the current JSON object
     ///
-    /// This method is used to end a JSON object started by [`begin_object`](JsonWriter::begin_object).
+    /// This method is used to end a JSON object started by [`begin_object`](Self::begin_object).
     ///
     /// # Panics
     /// Panics when called on a JSON writer which is currently not inside a JSON object,
@@ -126,8 +126,8 @@ pub trait JsonWriter {
 
     /// Begins writing a JSON array
     ///
-    /// To write items of the array the regular value writing methods such as [`number_value`](JsonWriter::number_value)
-    /// can be used. At the end call [`end_array`](JsonWriter::end_array) to write the closing bracket of the JSON array.
+    /// To write items of the array the regular value writing methods such as [`number_value`](Self::number_value)
+    /// can be used. At the end call [`end_array`](Self::end_array) to write the closing bracket of the JSON array.
     ///
     /// Note that JSON arrays can contain values of different types, so for example the
     /// following is valid JSON: `[1, true, "a"]`
@@ -157,7 +157,7 @@ pub trait JsonWriter {
 
     /// Writes the closing bracket `]` of the current JSON object
     ///
-    /// This method is used to end a JSON array started by [`begin_array`](JsonWriter::begin_array).
+    /// This method is used to end a JSON array started by [`begin_array`](Self::begin_array).
     ///
     /// # Panics
     /// Panics when called on a JSON writer which is currently not inside a JSON array.
@@ -166,7 +166,7 @@ pub trait JsonWriter {
 
     /// Writes the name of the next JSON object member
     ///
-    /// Afterwards one of the value writing methods such as [`number_value`](JsonWriter::number_value) can be used
+    /// Afterwards one of the value writing methods such as [`number_value`](Self::number_value) can be used
     /// to write the corresponding member value.
     ///
     /// This method does not detect or prevent duplicate member names, such as in
@@ -251,9 +251,9 @@ pub trait JsonWriter {
     /// Writes a JSON string value
     ///
     /// This method is only intended to write string values, it cannot be used to write
-    /// JSON object member names. The method [`name`](JsonWriter::name) has to be used for that.
+    /// JSON object member names. The method [`name`](Self::name) has to be used for that.
     ///
-    /// To avoid having to store the complete string value in memory, the method [`string_value_writer`](JsonWriter::string_value_writer)
+    /// To avoid having to store the complete string value in memory, the method [`string_value_writer`](Self::string_value_writer)
     /// can be used to obtain a writer which allows lazily writing the value. Especially for
     /// large string values this can be useful.
     ///
@@ -284,10 +284,10 @@ pub trait JsonWriter {
     /// Provides a writer for lazily writing a JSON string value
     ///
     /// This method is mainly designed to write large string values in a memory efficient
-    /// way. If that is not a concern the method [`string_value`](JsonWriter::string_value) should be used instead.
+    /// way. If that is not a concern the method [`string_value`](Self::string_value) should be used instead.
     ///
     /// This method is only intended to write string values, it cannot be used to write
-    /// JSON object member names. The method [`name`](JsonWriter::name) has to be used for that.
+    /// JSON object member names. The method [`name`](Self::name) has to be used for that.
     ///
     /// Characters are automatically escaped in the JSON output if necessary. For example
     /// the character U+0000 is written as `\u0000`. Writing invalid UTF-8 data to the
@@ -328,7 +328,7 @@ pub trait JsonWriter {
     ///
     /// This method is mainly intended for custom number implementations or situations
     /// where the exact format of the JSON number is important. In all other cases either
-    /// [`number_value`](JsonWriter::number_value) or [`fp_number_value`](JsonWriter::fp_number_value) should be used.
+    /// [`number_value`](Self::number_value) or [`fp_number_value`](Self::fp_number_value) should be used.
     ///
     /// # Example
     /// ```
@@ -347,7 +347,7 @@ pub trait JsonWriter {
     /// # Errors
     /// Returns a [`JsonNumberError::InvalidNumber`] when the provided string is not a valid
     /// JSON number. Non-finite floating point numbers such as `NaN` or `Infinity` are not
-    /// allowed by JSON and have to be written as JSON string value with [`string_value`](JsonWriter::string_value).
+    /// allowed by JSON and have to be written as JSON string value with [`string_value`](Self::string_value).
     ///
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
@@ -359,8 +359,8 @@ pub trait JsonWriter {
     /// Writes an integral JSON number value
     ///
     /// This method supports all standard primitive integral number types, such as `u32`.
-    /// To write a floating point value use [`fp_number_value`](JsonWriter::fp_number_value), to write a number in a
-    /// specific format use [`number_value_from_string`](JsonWriter::number_value_from_string).
+    /// To write a floating point value use [`fp_number_value`](Self::fp_number_value), to write a number in a
+    /// specific format use [`number_value_from_string`](Self::number_value_from_string).
     ///
     /// # Example
     /// ```
@@ -386,8 +386,8 @@ pub trait JsonWriter {
     /// Writes a floating point JSON number value
     ///
     /// This method supports the standard floating point number types `f32` and `f64`.
-    /// To write an integral number value use [`number_value`](JsonWriter::number_value), to write a number in a
-    /// specific format use [`number_value_from_string`](JsonWriter::number_value_from_string).
+    /// To write an integral number value use [`number_value`](Self::number_value), to write a number in a
+    /// specific format use [`number_value_from_string`](Self::number_value_from_string).
     ///
     /// The number is converted to a JSON number by calling `to_string` on it.
     ///
@@ -408,7 +408,7 @@ pub trait JsonWriter {
     /// # Errors
     /// Returns a [`JsonNumberError::InvalidNumber`] when the provided number is non-finite.
     /// Non-finite floating point numbers such as `NaN` or `Infinity` are not
-    /// allowed by JSON and have to be written as JSON string value with [`string_value`](JsonWriter::string_value).
+    /// allowed by JSON and have to be written as JSON string value with [`string_value`](Self::string_value).
     ///
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
