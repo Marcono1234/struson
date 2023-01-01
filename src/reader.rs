@@ -938,12 +938,12 @@ pub trait JsonReader {
     /// JSON syntax errors which occur while consuming the JSON document with the reader
     /// are reported as [`std::io::Error`] for that reader.
     ///
-    /// **Important:** The data of the string value reader must be fully consumed until
-    /// `read` returns `Ok(0)`. Otherwise the string value reader will still be considered
-    /// 'active' and all methods of this JSON reader will panic.  
-    /// Note that after finishing reading of the string value, it might be necessary to
-    /// manually `drop(...)` it for the Rust compiler to allow using the original JSON reader
-    /// again.
+    /// **Important:** The data of the string value reader must be fully consumed, that means
+    /// `read` has to be called with a non-empty buffer until it returns `Ok(0)`. Otherwise the
+    /// string value reader will still be considered 'active' and all methods of this JSON reader
+    /// will panic. Note that after finishing reading from the string value reader, it might be
+    /// necessary to explicitly `drop(...)` it for the Rust compiler to allow using the original
+    /// JSON reader again.
     ///
     /// # Example
     /// ```
