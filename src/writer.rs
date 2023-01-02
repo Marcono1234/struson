@@ -1009,7 +1009,6 @@ fn map_utf8_error(e: Utf8Error) -> IoError {
 }
 
 fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
-    // TODO: Implement this more efficiently?
     match std::str::from_utf8(bytes) {
         Err(e) => Err(map_utf8_error(e)),
         Ok(s) => {

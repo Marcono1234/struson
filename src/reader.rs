@@ -2165,7 +2165,7 @@ impl<R: Read> JsonStreamReader<R> {
         let mut buf = Vec::new();
         self.read_all_string_bytes(&mut |byte| buf.push(byte))?;
         // Unwrap should be safe since reader made sure UTF-8 content is valid
-        Ok(std::str::from_utf8(&buf).unwrap().to_owned())
+        Ok(String::from_utf8(buf).unwrap())
     }
 
     fn collect_next_number_bytes<C: FnMut(u8)>(
@@ -2446,8 +2446,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
         let mut buf = Vec::new();
         self.collect_next_number_bytes(&mut |byte| buf.push(byte))?;
-
-        Ok(std::str::from_utf8(buf.as_slice()).unwrap().to_string())
+        // Unwrap should be safe since number bytes are valid UTF-8 chars
+        Ok(String::from_utf8(buf).unwrap())
     }
 
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
