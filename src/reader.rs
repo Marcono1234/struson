@@ -576,7 +576,7 @@ pub enum ReaderError {
     /// # use ron::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
     /// # json_reader.begin_array()?;
-    /// while (json_reader.has_next()?) {
+    /// while json_reader.has_next()? {
     ///     json_reader.skip_value()?;
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())

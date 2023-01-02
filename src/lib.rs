@@ -1,5 +1,11 @@
 #![warn(missing_docs)]
 
+// Enable 'unused' warnings for doc tests (are disabled by default)
+#![doc(test(no_crate_inject))]
+#![doc(test(attr(warn(unused))))]
+// Fail on warnings in doc tests
+#![doc(test(attr(deny(warnings))))]
+
 //! Ron is a [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
 //! Its main purpose is allowing to read and write JSON data in an efficient way without having to store the
 //! complete JSON document structure in memory. It is however *not* an object mapper which converts structs
