@@ -842,7 +842,7 @@ pub trait JsonReader {
     /// Returns `true` if there is a next element, `false` otherwise. When multiple top-level
     /// values are allowed by the [`ReaderSettings`] this method can also be used to check if
     /// there are more top-level values.
-    /// 
+    ///
     /// This method can be useful as condition of a `while` loop when processing a JSON array or object
     /// of unknown size.
     ///
@@ -1693,7 +1693,7 @@ impl<R: Read> JsonStreamReader<R> {
     ) -> Result<(), JsonSyntaxError> {
         match byte {
             // Note: Also includes ':' even though that is not a valid value separator to get more accurate errors
-            b',' | b']' | b'}' | b' ' | b'\t' | b'/' | b':' => Ok(()),
+            b',' | b']' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'/' | b':' => Ok(()),
             _ => Err(JsonSyntaxError {
                 kind: error_kind,
                 location: self.create_error_location(),
@@ -2659,6 +2659,36 @@ mod tests {
             SyntaxErrorKind::TrailingDataAfterLiteral,
             0,
         );
+
+        Ok(())
+    }
+
+    /// Verifies that valid trailing data after literal does not prevent literal from being parsed
+    #[test]
+    fn literals_valid_trailing_data() -> TestResult {
+        vec!["", " ", "\t", "\r", "\n", "\r\n"].assert_all(|whitespace| {
+            let json = "true".to_owned() + whitespace;
+            let mut json_reader = new_reader(json.as_str());
+            assert_eq!(true, json_reader.next_bool()?);
+            json_reader.consume_trailing_whitespace()?;
+            Ok(())
+        });
+
+        let mut json_reader = new_reader("[true,true]");
+        json_reader.begin_array()?;
+        assert_eq!(true, json_reader.next_bool()?);
+        assert_eq!(true, json_reader.next_bool()?);
+        json_reader.end_array()?;
+
+        let mut json_reader = new_reader(r#"{"a":true}"#);
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!(true, json_reader.next_bool()?);
+        json_reader.end_object()?;
+
+        let mut json_reader = new_reader_with_comments("true// a");
+        assert_eq!(true, json_reader.next_bool()?);
+        json_reader.consume_trailing_whitespace()?;
 
         Ok(())
     }
