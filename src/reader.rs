@@ -403,6 +403,28 @@ pub struct JsonErrorLocation {
     /// This path is mainly intended to help troubleshooting, it should not be parsed in any way since it might be ambiguous
     /// or incorrect for certain member names. For example when a member name is `"address.street"` it would erroneously be
     /// considered to consist of two separate names `"address"` and a nested member named `"street"`.
+    ///
+    /// The last piece of the path cannot accurately point to the error location in all cases because errors can occur at
+    /// any position in the JSON document and some cannot be described properly using a JSONPath. The last path piece has
+    /// the following meaning:
+    ///
+    /// - Array item index: Index of the currently processed item, or index of the potential next item
+    ///
+    ///   For example the path `$[2]` means, depending on the error type, that either the error occurred in front of the
+    ///   item at index 2 or the end of the array, for example when a comma is missing. Or it means that parsing the
+    ///   item at index 2 failed, for example because it is a malformed number value. Note that array indices start at 0.
+    ///
+    ///   In general the index is incremented once a value in an array was fully consumed, which results in the
+    ///   behavior described above.
+    ///
+    /// - Object member name: Name of the previously read member, or name of the current member
+    ///
+    ///   For example the path `$.a` means, depending on the error type, that either the error occurred for the value
+    ///   of the member with name "a", for example when the value of the member is malformed. Or it means that parsing
+    ///   the name of the member after "a" or the end of the object failed. The special name `<?>` is used to indicate
+    ///   that a JSON object was started, but the name of the first member has not been consumed yet.
+    ///
+    /// For the exact location of the error the [`line`](Self::line) and [`column`](Self::column) values should be used.
     pub path: String,
     /// Line number of the error, starting at 0
     ///
@@ -1900,25 +1922,6 @@ impl<R: Read> JsonStreamReader<R> {
         let peeked = self.map_peeked(peeked_internal)?;
 
         return if peeked == expected {
-            // Update array path
-            if self.is_in_array() {
-                match self.json_path.last_mut().unwrap() {
-                    JsonPathPiece::ArrayItem(index) => {
-                        // For array index only increment when non-empty, since index initially is already 0
-                        if !self.is_empty {
-                            *index += 1
-                        }
-                    }
-                    _ => unreachable!("Path should be array item"),
-                }
-            }
-
-            // Caller will consume value, so can already indicate that object member name is expected next
-            if self.is_in_object() {
-                self.expects_member_name = true;
-            }
-            self.is_empty = false;
-
             self.consume_peeked();
             Ok(peeked_internal)
         } else {
@@ -1930,13 +1933,33 @@ impl<R: Read> JsonStreamReader<R> {
         };
     }
 
-    fn on_container_end(&mut self) -> () {
+    fn on_container_end(&mut self) {
         self.stack.pop();
+        self.json_path.pop();
+
+        // Clear expects_member_name in case current container is now an array; on_value_end() call
+        // below will set expects_member_name again if current container is an object
+        self.expects_member_name = false;
+
+        self.on_value_end();
+    }
+
+    fn on_value_end(&mut self) {
+        // Update array path
+        if self.is_in_array() {
+            match self.json_path.last_mut().unwrap() {
+                JsonPathPiece::ArrayItem(index) => *index += 1,
+                _ => unreachable!("Path should be array item"),
+            }
+        }
+
+        // After value was consumed indicate that object member name is expected next
+        if self.is_in_object() {
+            self.expects_member_name = true;
+        }
+
         // Enclosing container is not empty since this method call here is processing its child
         self.is_empty = false;
-
-        // If after pop() call above currently in object, then expecting a member name
-        self.expects_member_name = self.is_in_object();
     }
 
     fn read_unicode_escape_hex_digit(&mut self) -> Result<u32, StringReadingError> {
@@ -2103,7 +2126,6 @@ impl<R: Read> JsonStreamReader<R> {
             }
             b'"' => {
                 self.column += 1;
-                self.is_string_value_reader_active = false;
                 return Ok(true);
             }
             // Control characters must be written as Unicode escape
@@ -2127,29 +2149,23 @@ impl<R: Read> JsonStreamReader<R> {
         Ok(false)
     }
 
-    fn read_string_bytes_to_string(&mut self) -> Result<String, StringReadingError> {
-        let mut buf = Vec::new();
+    fn read_all_string_bytes<C: FnMut(u8)>(
+        &mut self,
+        consumer: &mut C,
+    ) -> Result<(), StringReadingError> {
         loop {
-            let reached_end = self.read_string_bytes(&mut |byte| {
-                buf.push(byte);
-            })?;
+            let reached_end = self.read_string_bytes(consumer)?;
             if reached_end {
-                break;
+                return Ok(());
             }
         }
-        // Unwrap should be safe since reader made sure UTF-8 content is valid
-        Ok(std::str::from_utf8(&buf).unwrap().to_owned())
     }
 
-    fn create_string_value_reader(&mut self) -> StringValueReader<'_, R> {
-        self.is_string_value_reader_active = true;
-        StringValueReader {
-            json_reader: self,
-            utf8_buf: [0; STRING_VALUE_READER_BUF_SIZE],
-            utf8_start_pos: 0,
-            utf8_count: 0,
-            reached_end: false,
-        }
+    fn read_string_bytes_to_string(&mut self) -> Result<String, StringReadingError> {
+        let mut buf = Vec::new();
+        self.read_all_string_bytes(&mut |byte| buf.push(byte))?;
+        // Unwrap should be safe since reader made sure UTF-8 content is valid
+        Ok(std::str::from_utf8(&buf).unwrap().to_owned())
     }
 
     fn collect_next_number_bytes<C: FnMut(u8)>(
@@ -2185,6 +2201,7 @@ impl<R: Read> JsonStreamReader<R> {
             }
             None => {}
         }
+        self.on_value_end();
         Ok(())
     }
 }
@@ -2220,7 +2237,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             });
         }
         self.consume_peeked();
-        self.json_path.pop();
         self.on_container_end();
         Ok(())
     }
@@ -2228,6 +2244,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn begin_object(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Object)?;
         self.stack.push(ValueType::Object);
+        // Push a placeholder which is replaced once the name of the first member is read
+        // Important: When changing this placeholder in the future also have to update documentation mentioning to it
+        self.json_path
+            .push(JsonPathPiece::ObjectMember("<?>".to_owned()));
         self.is_empty = true;
         self.expects_member_name = true;
         Ok(())
@@ -2253,12 +2273,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
         let name = self.read_string_bytes_to_string()?;
 
-        // Check if there is a previous object member name to pop
-        if !self.is_empty {
-            self.json_path.pop();
+        match self.json_path.last_mut().unwrap() {
+            JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
+            _ => unreachable!("Path should be object member"),
         }
-        self.json_path
-            .push(JsonPathPiece::ObjectMember(name.clone()));
 
         let byte = self.skip_whitespace_no_eof(SyntaxErrorKind::MissingColon)?;
         return if byte == b':' {
@@ -2285,25 +2303,24 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             });
         }
         self.consume_peeked();
-        // Name has only been pushed if non-empty
-        if !self.is_empty {
-            self.json_path.pop();
-        }
         self.on_container_end();
         Ok(())
     }
 
     fn next_bool(&mut self) -> Result<bool, ReaderError> {
-        Ok(match self.start_expected_value_type(ValueType::Boolean)? {
+        let result = Ok(match self.start_expected_value_type(ValueType::Boolean)? {
             PeekedValue::BooleanTrue => true,
             PeekedValue::BooleanFalse => false,
             // Call to start_expected_value_type should have verified type
             _ => unreachable!("Peeked value is not a boolean"),
-        })
+        });
+        self.on_value_end();
+        result
     }
 
     fn next_null(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Null)?;
+        self.on_value_end();
         Ok(())
     }
 
@@ -2376,8 +2393,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         }
                         ValueType::String => {
                             self.start_expected_value_type(ValueType::String)?;
-                            // Consume all bytes
-                            while !self.read_string_bytes(&mut |_| {})? {}
+                            self.read_all_string_bytes(&mut |_| {})?;
+                            self.on_value_end();
                         }
                         ValueType::Number => {
                             self.collect_next_number_bytes(&mut |_| {})?;
@@ -2409,12 +2426,21 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn next_string(&mut self) -> Result<String, ReaderError> {
         self.start_expected_value_type(ValueType::String)?;
-        Ok(self.read_string_bytes_to_string()?)
+        let result = Ok(self.read_string_bytes_to_string()?);
+        self.on_value_end();
+        result
     }
 
     fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError> {
         self.start_expected_value_type(ValueType::String)?;
-        Ok(Box::new(self.create_string_value_reader()))
+        self.is_string_value_reader_active = true;
+        Ok(Box::new(StringValueReader {
+            json_reader: self,
+            utf8_buf: [0; STRING_VALUE_READER_BUF_SIZE],
+            utf8_start_pos: 0,
+            utf8_count: 0,
+            reached_end: false,
+        }))
     }
 
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
@@ -2539,6 +2565,8 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
                 Ok(reached_end) => {
                     if reached_end {
                         self.reached_end = true;
+                        self.json_reader.is_string_value_reader_active = false;
+                        self.json_reader.on_value_end();
                         break;
                     }
                 }
@@ -3035,7 +3063,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::TrailingCommaNotEnabled,
-            "$[0]",
+            "$[1]",
             2,
         );
 
@@ -3084,7 +3112,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedComma,
-            "$[0]", // TODO Should this rather be $[1]?
+            "$[1]",
             3,
         );
 
@@ -3100,7 +3128,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::MissingComma,
-            "$[0]",
+            "$[1]",
             3,
         );
 
@@ -3111,7 +3139,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedColon,
-            "$[0]",
+            "$[1]",
             2,
         );
 
@@ -3122,7 +3150,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedColon,
-            "$[0]",
+            "$[1]",
             4,
         );
 
@@ -3133,14 +3161,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedClosingBracket,
-            "$[0]",
+            "$[1]",
             2,
         );
         assert_parse_error_with_path(
             None,
             json_reader.end_array(),
             SyntaxErrorKind::UnexpectedClosingBracket,
-            "$[0]",
+            "$[1]",
             2,
         );
 
@@ -3160,10 +3188,11 @@ mod tests {
     fn object_trailing_comma() -> TestResult {
         let mut json_reader = new_reader("{,}");
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedComma,
+            "$.<?>",
             1,
         );
 
@@ -3203,10 +3232,11 @@ mod tests {
             },
         );
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedComma,
+            "$.<?>",
             1,
         );
 
@@ -3259,46 +3289,52 @@ mod tests {
     fn object_malformed() -> TestResult {
         let mut json_reader = new_reader("{true: 1}");
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.next_name(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
 
         let mut json_reader = new_reader("{test: 1}");
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.next_name(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
 
         let mut json_reader = new_reader("{: 1}");
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.next_name(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
 
@@ -3392,7 +3428,7 @@ mod tests {
             8,
         );
         /* TODO: Reader currently already advances after duplicate comma, so this won't fail
-         *   Either reader should remember error or it should be documented that continuing after error causes undefined behavior
+         *   However it is already documented that continuing after syntax error causes unspecified behavior
         assert_parse_error_with_path(
             None,
             json_reader.next_name(),
@@ -3424,22 +3460,25 @@ mod tests {
 
         let mut json_reader = new_reader("{]");
         json_reader.begin_object()?;
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.next_name(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
-        assert_parse_error(
+        assert_parse_error_with_path(
             None,
             json_reader.end_object(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
+            "$.<?>",
             1,
         );
 
@@ -3504,7 +3543,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.skip_value(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[13]",
+            "$[14]",
             78,
         );
 
@@ -3707,7 +3746,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.seek_to(&[JsonPathPiece::ArrayItem(1)]),
             UnexpectedStructureKind::TooShortArray { expected_index: 1 },
-            "$[0]", // TODO: Should be $[1]?
+            "$[1]",
             2,
         );
 
@@ -3773,7 +3812,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.next_name(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$",
+            "$.<?>",
             1,
         );
 
@@ -3782,7 +3821,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.end_object(),
             UnexpectedStructureKind::MoreElementsThanExpected,
-            "$",
+            "$.<?>",
             1,
         );
 
@@ -4243,7 +4282,7 @@ mod tests {
                 Some(json),
                 json_reader.peek(),
                 SyntaxErrorKind::IncompleteDocument,
-                "$[0]",
+                "$[1]",
                 expected_column,
             );
         }
@@ -4265,6 +4304,77 @@ mod tests {
         assert_location("[[1, 2],", 8);
         assert_location("[{},", 4);
         assert_location(r#"[{"a": 1},"#, 10);
+    }
+
+    #[test]
+    fn location_skip() -> TestResult {
+        let mut json_reader =
+            new_reader(r#"[true, false, null, 12, "test", [], [34], {}, {"a": 1}]"#);
+        json_reader.begin_array()?;
+
+        let column_positions = vec![1, 7, 14, 20, 24, 32, 36, 42, 46];
+        for i in 0..column_positions.len() {
+            let expected_path = format!("$[{i}]");
+            assert_unexpected_structure(
+                json_reader.end_array(),
+                UnexpectedStructureKind::MoreElementsThanExpected,
+                &expected_path,
+                column_positions[i],
+            );
+            json_reader.skip_value()?;
+        }
+        json_reader.end_array()?;
+
+        let mut json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
+        json_reader.begin_object()?;
+        assert_unexpected_structure(
+            json_reader.end_object(),
+            UnexpectedStructureKind::MoreElementsThanExpected,
+            "$.<?>",
+            1,
+        );
+
+        // Skip the name
+        json_reader.skip_value()?;
+        assert_unexpected_value_type(
+            json_reader.next_bool(),
+            ValueType::Boolean,
+            ValueType::Number,
+            "$.a",
+            6,
+        );
+
+        // Skip the value
+        json_reader.skip_value()?;
+
+        assert_unexpected_structure(
+            json_reader.end_object(),
+            UnexpectedStructureKind::MoreElementsThanExpected,
+            "$.a",
+            9,
+        );
+        // Skip the name
+        json_reader.skip_value()?;
+        assert_unexpected_value_type(
+            json_reader.next_bool(),
+            ValueType::Boolean,
+            ValueType::Number,
+            "$.b",
+            14,
+        );
+
+        // Skip the value
+        json_reader.skip_value()?;
+
+        assert_unexpected_structure(
+            json_reader.next_name(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            "$.b",
+            15,
+        );
+        json_reader.end_object()?;
+
+        Ok(())
     }
 
     #[test]
