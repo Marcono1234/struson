@@ -556,7 +556,7 @@ pub enum ReaderError {
     SyntaxError(#[from] JsonSyntaxError),
     /// The next JSON value had an unexpected type
     ///
-    /// This error can occur for example trying to read a JSON number when the next value is actually
+    /// This error can occur for example when trying to read a JSON number when the next value is actually
     /// a JSON boolean.
     #[error("Expected JSON value type {expected} but got {actual} at {location}")]
     UnexpectedValueType {

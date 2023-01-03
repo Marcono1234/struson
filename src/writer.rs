@@ -501,6 +501,8 @@ mod private {
 #[derive(Error, Debug)]
 pub enum JsonNumberError {
     /// The number is not a valid JSON number
+    ///
+    /// The data of this enum variant is a message explaining why the number is not valid.
     #[error("{0}")]
     InvalidNumber(String),
     /// An IO error occurred while writing the number
