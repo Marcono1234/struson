@@ -1395,7 +1395,7 @@ pub struct ReaderSettings {
     /// # Example
     /// ```json
     /// [
-    ///     // This is the first element
+    ///     // This is the first value
     ///     1,
     ///     2 /* and this the second */
     /// ]
@@ -1433,6 +1433,20 @@ pub struct ReaderSettings {
     /// Normally a JSON document is expected to contain only a single top-level value, but there
     /// might be use cases where supporting multiple top-level values can be useful.
     pub allow_multiple_top_level: bool,
+
+    /// Whether to update the error location path while skipping values
+    ///
+    /// When enabled, skipping JSON arrays and objects with methods such as [`JsonReader::skip_value`] or
+    /// [`JsonReader::seek_to`] will update the path which is reported for [error locations](JsonErrorLocation::path).
+    /// However, this incurs overhead because JSON object member names cannot be skipped in an efficient way
+    /// but must be read to be available for the path information.  
+    /// When disabled the path is not updated which increases performance but in case of syntax errors might
+    /// make them more difficult to identify. [Line](JsonErrorLocation::line) and [column](JsonErrorLocation::column)
+    /// numbers are however not affected and will always be accurate.
+    ///
+    /// This setting has no effect on the JSON parsing behavior, it only affects the information included
+    /// for errors.
+    pub update_path_during_skip: bool,
 }
 
 impl<R: Read> JsonStreamReader<R> {
@@ -1442,6 +1456,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// - comments: disallowed
     /// - trailing comma: disallowed
     /// - multiple top-level values: disallowed
+    /// - update path during skip: enabled
     pub fn new(reader: R) -> Self {
         JsonStreamReader::new_custom(
             reader,
@@ -1449,6 +1464,7 @@ impl<R: Read> JsonStreamReader<R> {
                 allow_comments: false,
                 allow_trailing_comma: false,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         )
     }
@@ -2161,11 +2177,77 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
+    fn skip_all_string_bytes(&mut self) -> Result<(), StringReadingError> {
+        self.read_all_string_bytes(&mut |_| {})
+    }
+
     fn read_string_bytes_to_string(&mut self) -> Result<String, StringReadingError> {
         let mut buf = Vec::new();
         self.read_all_string_bytes(&mut |byte| buf.push(byte))?;
         // Unwrap should be safe since reader made sure UTF-8 content is valid
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    /// Consumes the next member name
+    ///
+    /// `read_name` should read the name and if desired update the JSON path. The `Self`
+    /// parameter of the function is `self`; this is necessary for callers to avoid directly
+    /// accessing `self` which would not be permitted since `consume_name` is already called
+    /// on `self`.
+    // TODO: Is there a cleaner solution than having to pass `self` as argument to `read_name`?
+    fn consume_name<T, F: FnOnce(&mut Self) -> Result<T, ReaderError>>(
+        &mut self,
+        read_name: F,
+    ) -> Result<T, ReaderError> {
+        if !self.expects_member_name {
+            panic!("Incorrect reader usage: Cannot consume member name when not expecting it");
+        }
+        if self.is_string_value_reader_active {
+            panic!("Incorrect reader usage: Cannot consume member name when string value reader is active");
+        }
+
+        if !self.has_next()? {
+            return Err(ReaderError::UnexpectedStructure {
+                kind: UnexpectedStructureKind::FewerElementsThanExpected,
+                location: self.create_error_location(),
+            });
+        }
+
+        self.expects_member_name = false;
+        self.consume_peeked();
+
+        let result = read_name(self)?;
+
+        let byte = self.skip_whitespace_no_eof(SyntaxErrorKind::MissingColon)?;
+        return if byte == b':' {
+            self.skip_peeked_byte();
+            self.column += 1;
+            Ok(result)
+        } else {
+            self.create_syntax_value_error(SyntaxErrorKind::MissingColon)
+        };
+    }
+
+    fn skip_name(&mut self, update_path: bool) -> Result<(), ReaderError> {
+        self.consume_name(|self_| {
+            if update_path {
+                // Similar to `next_name` implementation, except that `name` can directly be moved to
+                // json_path piece instead of having to be cloned
+                let name = self_.read_string_bytes_to_string()?;
+
+                match self_.json_path.last_mut().unwrap() {
+                    JsonPathPiece::ObjectMember(path_name) => *path_name = name,
+                    _ => unreachable!("Path should be object member"),
+                }
+            } else {
+                self_.skip_all_string_bytes()?;
+                // Don't update the path, but keep the initial member name
+                // TODO: In the future when `update_path == false` don't update the path at all (neither push nor pop path pieces)?
+                //       Would require passing `update_path` to all kinds of methods though, e.g. `next_bool`, `begin_array`, ...
+                //       In that case would also have to indicate that path is incomplete, e.g. by appending " (incomplete)"?
+            }
+            Ok(())
+        })
     }
 
     fn collect_next_number_bytes<C: FnMut(u8)>(
@@ -2254,38 +2336,15 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_name(&mut self) -> Result<String, ReaderError> {
-        if !self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot consume member name when not expecting it");
-        }
-        if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot consume member name when string value reader is active");
-        }
+        self.consume_name(|self_| {
+            let name = self_.read_string_bytes_to_string()?;
 
-        if !self.has_next()? {
-            return Err(ReaderError::UnexpectedStructure {
-                kind: UnexpectedStructureKind::FewerElementsThanExpected,
-                location: self.create_error_location(),
-            });
-        }
-
-        self.expects_member_name = false;
-        self.consume_peeked();
-
-        let name = self.read_string_bytes_to_string()?;
-
-        match self.json_path.last_mut().unwrap() {
-            JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
-            _ => unreachable!("Path should be object member"),
-        }
-
-        let byte = self.skip_whitespace_no_eof(SyntaxErrorKind::MissingColon)?;
-        return if byte == b':' {
-            self.skip_peeked_byte();
-            self.column += 1;
+            match self_.json_path.last_mut().unwrap() {
+                JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
+                _ => unreachable!("Path should be object member"),
+            }
             Ok(name)
-        } else {
-            self.create_syntax_value_error(SyntaxErrorKind::MissingColon)
-        };
+        })
     }
 
     fn end_object(&mut self) -> Result<(), ReaderError> {
@@ -2361,12 +2420,14 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn skip_value(&mut self) -> Result<(), ReaderError> {
         if self.expects_member_name {
-            // TODO: Maybe skip names in a more efficient way?
-            self.next_name()?;
+            // Update path when skipping name, otherwise errors when reading
+            // corresponding member value will have wrong path
+            self.skip_name(true)?;
         } else if self.is_empty && self.stack.is_empty()
             || self.expects_member_value()
             || self.has_next()?
         {
+            let update_path = self.reader_settings.update_path_during_skip;
             let mut depth: u32 = 0;
             loop {
                 if depth > 0 && !self.has_next()? {
@@ -2378,8 +2439,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     depth -= 1;
                 } else {
                     if self.expects_member_name {
-                        // TODO: Maybe skip names in a more efficient way?
-                        self.next_name()?;
+                        self.skip_name(update_path)?;
                     }
 
                     match self.peek()? {
@@ -2393,7 +2453,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         }
                         ValueType::String => {
                             self.start_expected_value_type(ValueType::String)?;
-                            self.read_all_string_bytes(&mut |_| {})?;
+                            self.skip_all_string_bytes()?;
                             self.on_value_end();
                         }
                         ValueType::Number => {
@@ -3073,6 +3133,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_array()?;
@@ -3087,6 +3148,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_array()?;
@@ -3104,6 +3166,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_array()?;
@@ -3214,6 +3277,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_object()?;
@@ -3229,6 +3293,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_object()?;
@@ -3246,6 +3311,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: true,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         json_reader.begin_object()?;
@@ -3549,6 +3615,88 @@ mod tests {
 
         json_reader.end_array()?;
         json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_no_path_update() -> TestResult {
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"[{"a": 1, "b": [{"c": {}, "d": []}, true]}, 2]"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        json_reader.begin_array()?;
+        json_reader.skip_value()?;
+        assert_unexpected_structure(
+            json_reader.end_array(),
+            UnexpectedStructureKind::MoreElementsThanExpected,
+            "$[1]",
+            44,
+        );
+        assert_eq!("2", json_reader.next_number_as_string()?);
+        json_reader.end_array()?;
+
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"{"a": 1, "b": [{"c": @}]}"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_value(),
+            SyntaxErrorKind::MalformedJson,
+            "$.<?>[0].<?>",
+            21,
+        );
+
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"{"a": {"b": 1}}"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        // Skipping object should not affect path of current object
+        json_reader.skip_value()?;
+        assert_unexpected_structure(
+            json_reader.next_name(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            "$.a",
+            14,
+        );
+
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"{"a": @}"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        json_reader.begin_object()?;
+        // When only skipping name it should still be stored in path regardless of reader settings
+        json_reader.skip_value()?;
+        assert_parse_error_with_path(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::MalformedJson,
+            "$.a",
+            6,
+        );
 
         Ok(())
     }
@@ -3930,6 +4078,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: false,
                 allow_multiple_top_level: true,
+                update_path_during_skip: true,
             },
         );
 
@@ -3985,6 +4134,7 @@ mod tests {
                 allow_comments: false,
                 allow_trailing_comma: false,
                 allow_multiple_top_level: true,
+                update_path_during_skip: true,
             },
         );
 
@@ -4038,6 +4188,7 @@ mod tests {
                 allow_comments: true,
                 allow_trailing_comma: false,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         )
     }
@@ -4207,6 +4358,7 @@ mod tests {
                 allow_comments: true,
                 allow_trailing_comma: false,
                 allow_multiple_top_level: false,
+                update_path_during_skip: true,
             },
         );
         match json_reader.peek() {
@@ -4304,6 +4456,23 @@ mod tests {
         assert_location("[[1, 2],", 8);
         assert_location("[{},", 4);
         assert_location(r#"[{"a": 1},"#, 10);
+    }
+
+    #[test]
+    fn location_malformed_name() -> TestResult {
+        let mut json_reader = new_reader("{\"a\": 1, \"b\\X\": 2}");
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.next_name(),
+            SyntaxErrorKind::UnknownEscapeSequence,
+            "$.a",
+            11,
+        );
+
+        Ok(())
     }
 
     #[test]
