@@ -11,8 +11,9 @@ use crate::json_number::consume_json_number;
 /// of errors and for [`JsonReader::seek_to`].
 ///
 /// A JSONPath consists of zero or more [`JsonPathPiece`] which either represent the index of a
-/// JSON array item or the name of a JSON object member. The convenience function [`parse_json_path`](json_path::parse_json_path)
-/// can be used to parse a JSONPath from its string representation.
+/// JSON array item or the name of a JSON object member. The macro [`json_path!`](json_path::json_path)
+/// and the function [`parse_json_path`](json_path::parse_json_path) can be used to create a JSONPath
+/// in a concise way.
 ///
 /// Consider for example the following code:
 /// ```
@@ -43,10 +44,32 @@ pub mod json_path {
         ObjectMember(String),
     }
 
+    /// Creates a [`JsonPathPiece::ArrayItem`] with the number as index
+    impl From<u32> for JsonPathPiece {
+        fn from(v: u32) -> Self {
+            JsonPathPiece::ArrayItem(v)
+        }
+    }
+
+    /// Creates a [`JsonPathPiece::ObjectMember`] with the string as member name
+    impl From<String> for JsonPathPiece {
+        fn from(v: String) -> Self {
+            JsonPathPiece::ObjectMember(v)
+        }
+    }
+
+    /// Creates a [`JsonPathPiece::ObjectMember`] with the string as member name
+    impl From<&str> for JsonPathPiece {
+        fn from(v: &str) -> Self {
+            JsonPathPiece::ObjectMember(v.to_string())
+        }
+    }
+
     /// A JSONPath
     ///
     /// A JSONPath as represented by this module are zero or more [`JsonPathPiece`] elements.
-    /// JSONPath strings can be parsed using the [`parse_json_path`] function.
+    /// The macro [`json_path!`] and the function [`parse_json_path`] can be used to create
+    /// a JSONPath in a concise way.
     // TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then)
     pub type JsonPath = [JsonPathPiece];
 
@@ -83,7 +106,8 @@ pub mod json_path {
     ///
     /// This is a convenience function which allows obtaining a vector of [`JsonPathPiece`] from a string form.
     /// The path string must not start with `$` (respectively `$.`) and member names are limited to contain only
-    /// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. For malformed path strings an error is returned.
+    /// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. The path string must not be empty. For malformed path strings
+    /// an error is returned.
     ///
     /// # Example
     /// ```
@@ -101,7 +125,7 @@ pub mod json_path {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    // TODO: Is there a proper specification (maybe even RFC?) for JSON Path, if so, should this method follow that specification?
+    // TODO: Is there a proper specification (maybe even RFC?) for JSONPath, if so, should this function follow that specification?
     pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
         if path.is_empty() {
             return Err(JsonPathParseError {
@@ -237,6 +261,46 @@ pub mod json_path {
         Ok(parsed_path)
     }
 
+    /// Creates a JSONPath from path pieces
+    ///
+    /// The arguments to this macro represent the path pieces:
+    /// - numbers of type `u32` are converted to [`JsonPathPiece::ArrayItem`]
+    /// - strings are converted to [`JsonPathPiece::ObjectMember`]
+    ///
+    /// At least one path piece argument must be provided.
+    ///
+    /// # Example
+    /// ```
+    /// # use ron::reader::json_path::*;
+    /// let json_path = json_path!["outer", 3, "inner"];
+    /// assert_eq!(
+    ///     json_path,
+    ///     [
+    ///         JsonPathPiece::ObjectMember("outer".to_owned()),
+    ///         JsonPathPiece::ArrayItem(3),
+    ///         JsonPathPiece::ObjectMember("inner".to_owned()),
+    ///     ]
+    /// );
+    /// ```
+    // TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
+    //       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
+    #[macro_export]
+    macro_rules! json_path {
+        ( $( $piece:expr ),+ ) => {
+            {
+                [
+                    $(
+                        $crate::reader::json_path::JsonPathPiece::from($piece),
+                    )*
+                ]
+            }
+        };
+    }
+
+    // Re-export the macro to be available under the `ron::reader::json_path` module path
+    #[doc(inline)]
+    pub use json_path;
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -343,6 +407,28 @@ pub mod json_path {
             assert_parse_error("a%", 1, "Unsupported char in member name");
 
             Ok(())
+        }
+
+        #[test]
+        fn macro_json_path() {
+            assert_eq!(json_path![3], [JsonPathPiece::ArrayItem(3)]);
+            assert_eq!(
+                json_path!["a"],
+                [JsonPathPiece::ObjectMember("a".to_owned())]
+            );
+            assert_eq!(
+                json_path!["a".to_owned()],
+                [JsonPathPiece::ObjectMember("a".to_owned())]
+            );
+            assert_eq!(
+                json_path!["outer", 1, "inner".to_owned(), 2],
+                [
+                    JsonPathPiece::ObjectMember("outer".to_owned()),
+                    JsonPathPiece::ArrayItem(1),
+                    JsonPathPiece::ObjectMember("inner".to_owned()),
+                    JsonPathPiece::ArrayItem(2),
+                ]
+            );
         }
     }
 }
