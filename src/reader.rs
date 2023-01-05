@@ -2,7 +2,7 @@
 //!
 //! [`JsonReader`] is the general trait for JSON readers, [`JsonStreamReader`] is an implementation
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
-use crate::json_number::consume_json_number;
+use crate::{json_number::consume_json_number, writer::JsonWriter};
 
 /// Module for JSONPath
 ///
@@ -442,16 +442,19 @@ use std::{
 };
 
 use self::json_path::{format_abs_json_path, JsonPath, JsonPathPiece};
+// Ignore false positive for unused import of `json_path!` macro
+#[allow(unused_imports)]
+use self::json_path::json_path;
 
 type IoError = std::io::Error;
 
 /// Type of a JSON value
 #[derive(PartialEq, Debug, strum_macros::Display)]
 pub enum ValueType {
-    /// JSON object: `{ ... }`
-    Object,
     /// JSON array: `[ ... ]`
     Array,
+    /// JSON object: `{ ... }`
+    Object,
     /// JSON string value, for example `"text in \"quotes\""`
     String,
     /// JSON number value, for example `123.4e+10`
@@ -462,7 +465,7 @@ pub enum ValueType {
     Null,
     // No EndOfDocument because peeking after top-level element is a logic error
 
-    // No ObjectEnd and ArrayEnd, should use has_next()
+    // No ArrayEnd and ObjectEnd, should use has_next()
 }
 
 /// Location of an error which occurred while reading a JSON document
@@ -680,6 +683,17 @@ pub enum ReaderError {
     /// malformed UTF-8 data was encountered
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
+}
+
+/// Error which occurred while calling [`JsonReader::transfer_to`]
+#[derive(Error, Debug)]
+pub enum TransferError {
+    /// Error which occurred while readering from the JSON reader
+    #[error("Reader error: {0}")]
+    ReaderError(#[from] ReaderError),
+    /// Error which occurred while writing to the JSON writer
+    #[error("Writer error: {0}")]
+    WriterError(#[from] IoError),
 }
 
 // TODO: Doc: Deduplicate documentation for errors and panics for value reading methods and only describe it
@@ -1293,7 +1307,7 @@ pub trait JsonReader {
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes());
-    /// json_reader.seek_to(&vec![JsonPathPiece::ObjectMember("foo".to_owned()), JsonPathPiece::ArrayItem(2)])?;
+    /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Can now consume the value to which the call seeked to
     /// assert_eq!("c", json_reader.next_string()?);
@@ -1313,6 +1327,71 @@ pub trait JsonReader {
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
+
+    /// Consumes the next value and writes it to the given JSON writer
+    ///
+    /// This method consumes the next value and calls the corresponding methods on the
+    /// JSON writer to emit the value again. Due to this, whitespace and comments, if enabled
+    /// in the [`ReaderSettings`], are not preserved. Instead the formatting of the output
+    /// is dependent on the configuration of the JSON writer. Similarly the Unicode characters
+    /// of member names and string values might be escaped differently. However, all these differences
+    /// don't have an effect on the JSON value. JSON readers will consider it to be equivalent.
+    /// For JSON numbers the exact format is preserved.
+    ///
+    /// This method is useful for extracting a subsection from a JSON document and / or for
+    /// embedding it into another JSON document. Extraction can be done by using for example
+    /// [`seek_to`](Self::seek_to) to position the reader before calling this method. Embedding
+    /// can be done by already writing JSON data to the JSON writer before calling this method.
+    ///
+    /// # Example
+    /// ```
+    /// # use ron::reader::*;
+    /// # use ron::reader::json_path::*;
+    /// # use ron::writer::*;
+    /// let mut json_reader = JsonStreamReader::new(r#"{"bar": true, "foo": [1, 2]}"#.as_bytes());
+    /// json_reader.seek_to(&json_path!["foo"])?;
+    ///
+    /// let mut writer = Vec::<u8>::new();
+    /// let mut json_writer = JsonStreamWriter::new(&mut writer);
+    /// json_writer.begin_object()?;
+    /// json_writer.name("embedded")?;
+    ///
+    /// // Extract subsection from reader and embed it in the document created by the writer
+    /// json_reader.transfer_to(&mut json_writer)?;
+    ///
+    /// json_writer.end_object()?;
+    /// json_writer.finish_document()?;
+    ///
+    /// assert_eq!(r#"{"embedded":[1,2]}"#, std::str::from_utf8(&writer)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Errors are reported as [`TransferError`] which wraps either an error which occurred for this
+    /// JSON reader or an error which occurred for the given JSON writer.
+    ///
+    /// ## Reader errors
+    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    ///
+    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// method can be used to check if there is a next value.
+    ///
+    /// ## Writer errors
+    /// If writing the JSON value fails an IO error is returned.
+    ///
+    /// # Panics
+    /// Panics when called on a JSON reader which currently expects a member name, or
+    /// when called after the top-level value has already been consumed and multiple top-level
+    /// values are not enabled in the [`ReaderSettings`].
+    ///
+    /// Panics when the given JSON writer currently expects a member name, or when it has already
+    /// written a top-level value and multiple top-level values are not enabled in the
+    /// [`WriterSettings`]($crate::writer::WriterSettings).
+    ///
+    /// These cases indicate incorrect usage by the user and are unrelated to the JSON data.
+    // TODO: Choose a different name which makes it clearer that only the next value is transferred, e.g. `transfer_next_to`?
+    // TODO: Are the use cases common enough to justify the existence of this method?
+    fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError>;
 
     /// Consumes trailing whitespace at the end of the top-level value
     ///
@@ -1691,15 +1770,8 @@ impl<R: Read> JsonStreamReader<R> {
                 _ => {
                     self.skip_peeked_byte();
                     // Validate the UTF-8 data, but ignore it
-                    match self.read_utf8_bytes(byte, &mut |_| {}) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            return match e {
-                                StringReadingError::IoError(e) => Err(e)?,
-                                StringReadingError::SyntaxError(e) => Err(e)?,
-                            }
-                        }
-                    };
+                    self.read_utf8_bytes(byte, &mut |_| {})
+                        .map_err(ReaderError::from)?;
                     self.column += 1;
                 }
             }
@@ -2509,10 +2581,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             // Update path when skipping name, otherwise errors when reading
             // corresponding member value will have wrong path
             self.skip_name(true)?;
-        } else if self.is_empty && self.stack.is_empty()
-            || self.expects_member_value()
-            || self.has_next()?
-        {
+        } else {
             let update_path = self.reader_settings.update_path_during_skip;
             let mut depth: u32 = 0;
             loop {
@@ -2529,12 +2598,12 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     }
 
                     match self.peek()? {
-                        ValueType::Object => {
-                            self.begin_object()?;
-                            depth += 1;
-                        }
                         ValueType::Array => {
                             self.begin_array()?;
+                            depth += 1;
+                        }
+                        ValueType::Object => {
+                            self.begin_object()?;
                             depth += 1;
                         }
                         ValueType::String => {
@@ -2558,13 +2627,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     break;
                 }
             }
-        } else {
-            // Return error if there is nothing to skip
-            // TODO: Should this rather panic?
-            return Err(ReaderError::UnexpectedStructure {
-                kind: UnexpectedStructureKind::FewerElementsThanExpected,
-                location: self.create_error_location(),
-            });
         }
 
         Ok(())
@@ -2639,6 +2701,87 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         });
                     }
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
+        if self.expects_member_name {
+            panic!("Incorrect reader usage: Cannot transfer value when expecting member name");
+        }
+
+        let mut depth: u32 = 0;
+        loop {
+            if depth > 0 && !self.has_next()? {
+                if self.is_in_array() {
+                    self.end_array()?;
+                    json_writer.end_array()?;
+                } else {
+                    self.end_object()?;
+                    json_writer.end_object()?;
+                }
+                depth -= 1;
+            } else {
+                if self.expects_member_name {
+                    let name = self.next_name()?;
+                    json_writer.name(&name)?;
+                }
+
+                match self.peek()? {
+                    ValueType::Array => {
+                        self.begin_array()?;
+                        json_writer.begin_array()?;
+                        depth += 1;
+                    }
+                    ValueType::Object => {
+                        self.begin_object()?;
+                        json_writer.begin_object()?;
+                        depth += 1;
+                    }
+                    ValueType::String => {
+                        self.start_expected_value_type(ValueType::String)?;
+                        // Write value in a streaming way using value writer
+                        let mut string_writer = json_writer.string_value_writer()?;
+
+                        let mut buf = [0_u8; 4];
+                        let mut buf_len;
+                        loop {
+                            buf_len = 0;
+                            let reached_end = self
+                                .read_string_bytes(&mut |byte| {
+                                    buf[buf_len] = byte;
+                                    buf_len += 1;
+                                })
+                                .map_err(ReaderError::from)?;
+
+                            if reached_end {
+                                break;
+                            } else {
+                                string_writer.write_all(&buf[..buf_len])?;
+                            }
+                        }
+                        string_writer.finish_value()?;
+                        self.on_value_end();
+                    }
+                    ValueType::Number => {
+                        let number = self.next_number_as_string()?;
+                        // Should not fail since next_number_as_string would have returned Err for invalid JSON number
+                        json_writer.number_value_from_string(&number).map_err(|e| format!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}")).unwrap();
+                    }
+                    ValueType::Boolean => {
+                        json_writer.bool_value(self.next_bool()?)?;
+                    }
+                    ValueType::Null => {
+                        self.next_null()?;
+                        json_writer.null_value()?;
+                    }
+                }
+            }
+
+            if depth == 0 {
+                break;
             }
         }
 
@@ -2730,6 +2873,8 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
 
 #[cfg(test)]
 mod tests {
+    use crate::writer::JsonStreamWriter;
+
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -3895,13 +4040,103 @@ mod tests {
     #[test]
     fn seek_to() -> TestResult {
         let mut json_reader = new_reader(r#"[1, {"a": 2, "b": {"c": [3, 4]}, "b": 5}]"#);
-        json_reader.seek_to(&[
-            JsonPathPiece::ArrayItem(1),
-            JsonPathPiece::ObjectMember("b".to_owned()),
-            JsonPathPiece::ObjectMember("c".to_owned()),
-            JsonPathPiece::ArrayItem(0),
-        ])?;
+        json_reader.seek_to(&json_path![1, "b", "c", 0])?;
         assert_eq!("3", json_reader.next_number_as_string()?);
+
+        Ok(())
+    }
+
+    fn as_transfer_read_error(error: TransferError) -> ReaderError {
+        match error {
+            TransferError::ReaderError(e) => e,
+            _ => panic!("Unexpected error: {error}"),
+        }
+    }
+
+    #[test]
+    fn transfer_to() -> TestResult {
+        let json =
+            r#"[true, null, 123, 123.0e+0, "a\"b\\c\u0064", [1], {"a": 1, "a\"b\\c\u0064": 2, "c":[{"d":[3]}]},"#
+                .to_owned()
+                + "\"\u{10FFFF}\"]";
+        let mut json_reader = new_reader(json.as_str());
+        json_reader.begin_array()?;
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.begin_array()?;
+
+        while json_reader.has_next()? {
+            json_reader.transfer_to(&mut json_writer)?;
+        }
+        // Also check how missing value is handled
+        assert_unexpected_structure(
+            json_reader
+                .transfer_to(&mut json_writer)
+                .map_err(as_transfer_read_error),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            "$[8]",
+            99,
+        );
+
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        json_writer.end_array()?;
+        json_writer.finish_document()?;
+        assert_eq!(
+            r#"[true,null,123,123.0e+0,"a\"b\\cd",[1],{"a":1,"a\"b\\cd":2,"c":[{"d":[3]}]},"#
+                .to_owned()
+                + "\"\u{10FFFF}\"]",
+            std::str::from_utf8(&writer)?
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn transfer_to_string_syntax_error() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        let mut json_reader = new_reader(r#""\X""#);
+        // Make sure that syntax error is reported as JsonSyntaxError and not wrapped in std::io::Error
+        assert_parse_error(
+            None,
+            json_reader
+                .transfer_to(&mut json_writer)
+                .map_err(as_transfer_read_error),
+            SyntaxErrorKind::UnknownEscapeSequence,
+            1,
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot transfer value when expecting member name"
+    )]
+    fn transfer_to_name() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        let mut json_reader = new_reader(r#"{"a": 1}"#);
+        json_reader.begin_object().unwrap();
+
+        json_reader.transfer_to(&mut json_writer).unwrap();
+    }
+
+    #[test]
+    fn transfer_to_comments() -> TestResult {
+        let mut json_reader = new_reader_with_comments("[\n// test\n1,/* */2]");
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        json_reader.transfer_to(&mut json_writer)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        json_writer.finish_document()?;
+        // Whitespace and comments are not preserved
+        assert_eq!("[1,2]", std::str::from_utf8(&writer)?);
 
         Ok(())
     }
