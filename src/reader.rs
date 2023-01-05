@@ -36,7 +36,7 @@ pub mod json_path {
     /// A piece of a JSONPath
     ///
     /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
-    #[derive(PartialEq, Debug)]
+    #[derive(PartialEq, Eq, Debug)]
     pub enum JsonPathPiece {
         /// Index (starting at 0) of a JSON array item
         ArrayItem(u32),
@@ -135,22 +135,11 @@ pub mod json_path {
         }
 
         fn find<T: PartialEq>(slice: &[T], t: T, start: usize) -> Option<usize> {
-            for i in start..slice.len() {
-                if slice[i] == t {
-                    return Some(i);
-                }
-            }
-            None
+            (start..slice.len()).find(|&i| slice[i] == t)
         }
         /// Finds the first occurrence of [t1] or [t2]
         fn find_any<T: PartialEq>(slice: &[T], t1: T, t2: T, start: usize) -> Option<usize> {
-            for i in start..slice.len() {
-                let e = &slice[i];
-                if e == &t1 || e == &t2 {
-                    return Some(i);
-                }
-            }
-            None
+            (start..slice.len()).find(|&i| slice[i] == t1 || slice[i] == t2)
         }
 
         let path_bytes = path.as_bytes();
@@ -449,7 +438,7 @@ use self::json_path::json_path;
 type IoError = std::io::Error;
 
 /// Type of a JSON value
-#[derive(PartialEq, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Debug, strum_macros::Display)]
 pub enum ValueType {
     /// JSON array: `[ ... ]`
     Array,
@@ -485,7 +474,7 @@ pub enum ValueType {
 /// - column: 7  
 ///   Column numbering starts at 0 and the `@` is the 8th character in that line, respectively
 ///   there are 7 characters in front of it
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct JsonErrorLocation {
     /// [JSONPath](https://goessner.net/articles/JsonPath/) of the error in dot-notation, for example `$.outer[4].second`
     ///
@@ -541,7 +530,7 @@ impl Display for JsonErrorLocation {
 }
 
 /// JSON syntax error
-#[derive(Error, PartialEq, Debug)]
+#[derive(Error, PartialEq, Eq, Debug)]
 #[error("JSON syntax error {kind} at {location}")]
 pub struct JsonSyntaxError {
     /// Kind of the error
@@ -551,7 +540,7 @@ pub struct JsonSyntaxError {
 }
 
 /// Describes why a syntax error occurred
-#[derive(PartialEq, Copy, Clone, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, strum_macros::Display)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not enabled in the [`ReaderSettings`]
     CommentsNotEnabled,
@@ -615,7 +604,7 @@ pub enum SyntaxErrorKind {
 }
 
 /// Describes why the JSON document is considered to have an unexpected structure
-#[derive(PartialEq, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Debug, strum_macros::Display)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
     TooShortArray {
@@ -1906,11 +1895,8 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         // Make sure there are no misleading chars directly afterwards, e.g. "truey"
-        match self.peek_byte()? {
-            Some(byte) => {
-                self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterLiteral)?
-            }
-            None => {}
+        if let Some(byte) = self.peek_byte()? {
+            self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterLiteral)?;
         }
 
         // Note: Don't adjust self.column yet, is done when peeked value is actually consumed
@@ -2031,6 +2017,7 @@ impl<R: Read> JsonStreamReader<R> {
 
     fn peek_internal(&mut self) -> Result<PeekedValue, ReaderError> {
         self.peek_internal_optional()?.map_or_else(
+            // Handle EOF
             || {
                 let eof_as_unexpected_structure =
                     self.is_behind_top_level() && self.reader_settings.allow_multiple_top_level;
@@ -2043,7 +2030,7 @@ impl<R: Read> JsonStreamReader<R> {
                     self.create_syntax_value_error(SyntaxErrorKind::IncompleteDocument)
                 }
             },
-            |p| Ok(p),
+            Ok,
         )
     }
 
@@ -2315,7 +2302,7 @@ impl<R: Read> JsonStreamReader<R> {
             }
             // Read and validate UTF-8 encoded data
             _ => {
-                self.read_utf8_bytes(byte, &mut |byte| consumer(byte))?;
+                self.read_utf8_bytes(byte, consumer)?;
             }
         }
 
@@ -2435,11 +2422,8 @@ impl<R: Read> JsonStreamReader<R> {
 
         self.column += consumed_bytes;
         // Make sure there are no misleading chars directly afterwards, e.g. "123f"
-        match self.peek_byte()? {
-            Some(byte) => {
-                self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
-            }
-            None => {}
+        if let Some(byte) = self.peek_byte()? {
+            self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
         }
         self.on_value_end();
         Ok(())
@@ -2811,7 +2795,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
 impl<'j, R: Read> Read for StringValueReader<'j, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.reached_end || buf.len() == 0 {
+        if self.reached_end || buf.is_empty() {
             return Ok(0);
         }
         let mut pos = 0;

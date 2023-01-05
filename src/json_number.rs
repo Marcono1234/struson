@@ -84,12 +84,11 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
         consumer(byte);
 
         // In the first iteration this consumes the `first_byte` argument
-        let peeked_byte = consume_current_peek_next()?;
-        if peeked_byte.is_none() {
+        if let Some(peeked_byte) = consume_current_peek_next()? {
+            byte = peeked_byte;
+        } else {
             has_trailing_number_chars = false;
             break;
-        } else {
-            byte = peeked_byte.unwrap();
         }
     }
 
