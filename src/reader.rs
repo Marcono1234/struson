@@ -2,7 +2,10 @@
 //!
 //! [`JsonReader`] is the general trait for JSON readers, [`JsonStreamReader`] is an implementation
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
-use crate::{json_number::consume_json_number, writer::JsonWriter};
+use crate::{
+    json_number::consume_json_number,
+    writer::{JsonNumberError, JsonWriter},
+};
 
 /// Module for JSONPath
 ///
@@ -2752,7 +2755,12 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     ValueType::Number => {
                         let number = self.next_number_as_string()?;
                         // Should not fail since next_number_as_string would have returned Err for invalid JSON number
-                        json_writer.number_value_from_string(&number).map_err(|e| format!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}")).unwrap();
+                        if let Err(e) = json_writer.number_value_from_string(&number) {
+                            match e {
+                                JsonNumberError::InvalidNumber(e) => panic!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}"),
+                                JsonNumberError::IoError(e) => return Err(TransferError::WriterError(e)),
+                            }
+                        }
                     }
                     ValueType::Boolean => {
                         json_writer.bool_value(self.next_bool()?)?;
@@ -2857,7 +2865,7 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::writer::JsonStreamWriter;
+    use crate::writer::{FloatingPointNumber, IntegralNumber, JsonStreamWriter, StringValueWriter};
 
     use super::*;
 
@@ -4123,6 +4131,93 @@ mod tests {
         assert_eq!("[1,2]", std::str::from_utf8(&writer)?);
 
         Ok(())
+    }
+
+    #[test]
+    fn transfer_to_writer_error() {
+        struct FailingJsonWriter;
+
+        fn err() -> IoError {
+            IoError::new(ErrorKind::Other, "test error")
+        }
+
+        // JsonWriter which always returns Err(...)
+        // Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test
+        impl JsonWriter for FailingJsonWriter {
+            fn begin_object(&mut self) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn end_object(&mut self) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn begin_array(&mut self) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn end_array(&mut self) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn name(&mut self, _: &str) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn null_value(&mut self) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn bool_value(&mut self, _: bool) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn string_value(&mut self, _: &str) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError> {
+                Err(err())
+            }
+
+            fn number_value_from_string(&mut self, _: &str) -> Result<(), JsonNumberError> {
+                Err(JsonNumberError::IoError(err()))
+            }
+
+            fn number_value<N: IntegralNumber>(&mut self, _: N) -> Result<(), IoError> {
+                Err(err())
+            }
+
+            fn fp_number_value<N: FloatingPointNumber>(
+                &mut self,
+                _: N,
+            ) -> Result<(), JsonNumberError> {
+                Err(JsonNumberError::IoError(err()))
+            }
+
+            fn finish_document(self) -> Result<(), IoError> {
+                Err(err())
+            }
+        }
+
+        let json_values = vec!["true", "null", "123", "\"a\"", "[]", "{}"];
+        for json in json_values {
+            let mut json_reader = new_reader(json);
+
+            let result = json_reader.transfer_to(&mut FailingJsonWriter);
+            match result {
+                Ok(_) => panic!("Should have failed"),
+                Err(e) => match e {
+                    TransferError::ReaderError(e) => {
+                        panic!("Unexpected error for input '{json}': {e}")
+                    }
+                    TransferError::WriterError(e) => {
+                        assert_eq!(ErrorKind::Other, e.kind());
+                        assert_eq!("test error", e.to_string());
+                    }
+                },
+            }
+        }
     }
 
     fn assert_unexpected_value_type<T>(
