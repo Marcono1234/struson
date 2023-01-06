@@ -710,6 +710,7 @@ pub enum TransferError {
 ///     - [`skip_value`](Self::skip_value): Skipping a value or member name
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
 ///  - Other:
+///     - [`transfer_to`](Self::transfer_to): Reading a JSON value and writing it to a given JSON writer
 ///     - [`consume_trailing_whitespace`](Self::consume_trailing_whitespace): Consuming trailing whitespace at the end of the JSON document
 ///
 /// JSON documents have at least one top-level value which can be either a JSON array, object,
