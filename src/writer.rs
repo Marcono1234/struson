@@ -532,6 +532,8 @@ impl FloatingPointNumber for type_template {
 /// Except for [allowing multiple top-level values](WriterSettings::multi_top_level_value_separator) these
 /// settings only have an effect on how the JSON output will look like without affecting
 /// its data in any way. All compliant JSON readers should consider the data identical.
+///
+/// These settings are used by [`JsonStreamWriter::new_custom`].
 #[derive(Clone, Debug)]
 pub struct WriterSettings {
     /// Whether to pretty print the JSON output
@@ -570,7 +572,7 @@ pub struct WriterSettings {
     /// Whether to escape all non-ASCII characters
     ///
     /// When enabled all Unicode characters in member names and string values whose code point
-    /// is >= `0x7F` are written as escape sequence. This can be useful when interacting with
+    /// is >= `0x80` are written as escape sequence. This can be useful when interacting with
     /// legacy systems which do not properly support non-ASCII input.
     ///
     /// This setting does not have any effect on the validity of the JSON output. Any
@@ -594,6 +596,22 @@ pub struct WriterSettings {
     /// Normally a JSON document is expected to contain only a single top-level value, but there
     /// might be use cases where supporting multiple top-level values can be useful.
     pub multi_top_level_value_separator: Option<String>,
+}
+
+impl Default for WriterSettings {
+    /// Creates the default JSON writer settings
+    ///
+    /// - pretty print: disabled (= compact JSON will be written)
+    /// - escape all control chars: false (= only control characters `0x00` to `0x1F` are escaped)
+    /// - multiple top level values: disallowed
+    fn default() -> Self {
+        WriterSettings {
+            pretty_print: false,
+            escape_all_control_chars: false,
+            escape_all_non_ascii: false,
+            multi_top_level_value_separator: None,
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -627,22 +645,9 @@ pub struct JsonStreamWriter<W: Write> {
 }
 
 impl<W: Write> JsonStreamWriter<W> {
-    /// Creates a JSON writer with default settings
-    ///
-    /// The JSON writer uses the following [`WriterSettings`]:
-    /// - pretty print: disabled (= compact JSON will be written)
-    /// - escape all control chars: false (= only control characters `0x00` to `0x1F` are escaped)
-    /// - multiple top level values: disallowed
+    /// Creates a JSON writer with [default settings](WriterSettings::default)
     pub fn new(writer: W) -> Self {
-        JsonStreamWriter::new_custom(
-            writer,
-            WriterSettings {
-                pretty_print: false,
-                escape_all_control_chars: false,
-                escape_all_non_ascii: false,
-                multi_top_level_value_separator: None,
-            },
-        )
+        JsonStreamWriter::new_custom(writer, WriterSettings::default())
     }
 
     /// Creates a JSON writer with custom settings

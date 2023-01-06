@@ -39,7 +39,7 @@ pub mod json_path {
     /// A piece of a JSONPath
     ///
     /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
-    #[derive(PartialEq, Eq, Debug)]
+    #[derive(PartialEq, Eq, Clone, Debug)]
     pub enum JsonPathPiece {
         /// Index (starting at 0) of a JSON array item
         ArrayItem(u32),
@@ -91,7 +91,7 @@ pub mod json_path {
     }
 
     /// Error which occurred while [parsing a JSONPath](parse_json_path)
-    #[derive(Error, Debug)]
+    #[derive(Error, Clone, Debug)]
     pub struct JsonPathParseError {
         /// Index (starting at 0) where the error occurred within the string
         pub index: usize,
@@ -441,7 +441,7 @@ use self::json_path::json_path;
 type IoError = std::io::Error;
 
 /// Type of a JSON value
-#[derive(PartialEq, Eq, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Clone, Copy, strum_macros::Display, Debug)]
 pub enum ValueType {
     /// JSON array: `[ ... ]`
     Array,
@@ -477,7 +477,7 @@ pub enum ValueType {
 /// - column: 7  
 ///   Column numbering starts at 0 and the `@` is the 8th character in that line, respectively
 ///   there are 7 characters in front of it
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct JsonErrorLocation {
     /// [JSONPath](https://goessner.net/articles/JsonPath/) of the error in dot-notation, for example `$.outer[4].second`
     ///
@@ -533,7 +533,7 @@ impl Display for JsonErrorLocation {
 }
 
 /// JSON syntax error
-#[derive(Error, PartialEq, Eq, Debug)]
+#[derive(Error, PartialEq, Eq, Clone, Debug)]
 #[error("JSON syntax error {kind} at {location}")]
 pub struct JsonSyntaxError {
     /// Kind of the error
@@ -543,7 +543,7 @@ pub struct JsonSyntaxError {
 }
 
 /// Describes why a syntax error occurred
-#[derive(PartialEq, Eq, Copy, Clone, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Clone, Copy, strum_macros::Display, Debug)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not enabled in the [`ReaderSettings`]
     CommentsNotEnabled,
@@ -607,7 +607,7 @@ pub enum SyntaxErrorKind {
 }
 
 /// Describes why the JSON document is considered to have an unexpected structure
-#[derive(PartialEq, Eq, Debug, strum_macros::Display)]
+#[derive(PartialEq, Eq, Clone, strum_macros::Display, Debug)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
     TooShortArray {
@@ -1415,7 +1415,7 @@ pub trait JsonReader {
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
 }
 
-#[derive(PartialEq, Copy, Clone, strum_macros::Display)]
+#[derive(PartialEq, Clone, Copy, strum_macros::Display)]
 enum PeekedValue {
     ObjectStart,
     ObjectEnd,
@@ -1531,6 +1531,8 @@ struct StringValueReader<'j, R: Read> {
 }
 
 /// Settings to customize the JSON reader behavior
+///
+/// These settings are used by [`JsonStreamReader::new_custom`].
 #[derive(Clone, Debug)]
 pub struct ReaderSettings {
     /// Whether to allow comments in the JSON document
@@ -1606,24 +1608,29 @@ pub struct ReaderSettings {
     pub update_path_during_skip: bool,
 }
 
-impl<R: Read> JsonStreamReader<R> {
-    /// Creates a JSON reader with default settings
+impl Default for ReaderSettings {
+    /// Creates the default JSON reader settings
     ///
-    /// The JSON reader uses the following [`ReaderSettings`] which is compliant with the JSON specification:
     /// - comments: disallowed
     /// - trailing comma: disallowed
     /// - multiple top-level values: disallowed
     /// - update path during skip: enabled
+    ///
+    /// These defaults are compliant with the JSON specification.
+    fn default() -> Self {
+        ReaderSettings {
+            allow_comments: false,
+            allow_trailing_comma: false,
+            allow_multiple_top_level: false,
+            update_path_during_skip: true,
+        }
+    }
+}
+
+impl<R: Read> JsonStreamReader<R> {
+    /// Creates a JSON reader with [default settings](ReaderSettings::default)
     pub fn new(reader: R) -> Self {
-        JsonStreamReader::new_custom(
-            reader,
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        )
+        JsonStreamReader::new_custom(reader, ReaderSettings::default())
     }
 
     /// Creates a JSON reader with custom settings
