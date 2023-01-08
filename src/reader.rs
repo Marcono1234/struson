@@ -3850,6 +3850,30 @@ mod tests {
         Ok(())
     }
 
+    /// Test behavior when skipping deeply nested JSON arrays; should not cause stack overflow
+    #[test]
+    fn skip_array_deeply_nested() -> TestResult {
+        let nesting_depth = 20_000;
+        let json = "[".repeat(nesting_depth) + "true" + "]".repeat(nesting_depth).as_str();
+        let mut json_reader = new_reader(json.as_str());
+
+        json_reader.skip_value()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Also test with malformed JSON to verify that deeply nested value is actually reached
+        let json = "[".repeat(nesting_depth) + "@" + "]".repeat(nesting_depth).as_str();
+        let mut json_reader = new_reader(json.as_str());
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_value(),
+            SyntaxErrorKind::MalformedJson,
+            ("$".to_owned() + "[0]".repeat(nesting_depth).as_str()).as_str(),
+            nesting_depth as u32,
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn skip_no_path_update() -> TestResult {
         let mut json_reader = JsonStreamReader::new_custom(
@@ -3948,6 +3972,31 @@ mod tests {
 
         json_reader.end_object()?;
         json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
+    }
+
+    /// Test behavior when skipping deeply nested JSON objects; should not cause stack overflow
+    #[test]
+    fn skip_object_deeply_nested() -> TestResult {
+        let nesting_depth = 20_000;
+        let json_start = r#"{"a":"#;
+        let json = json_start.repeat(nesting_depth) + "true" + "}".repeat(nesting_depth).as_str();
+        let mut json_reader = new_reader(json.as_str());
+
+        json_reader.skip_value()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Also test with malformed JSON to verify that deeply nested value is actually reached
+        let json = json_start.repeat(nesting_depth) + "@" + "}".repeat(nesting_depth).as_str();
+        let mut json_reader = new_reader(json.as_str());
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_value(),
+            SyntaxErrorKind::MalformedJson,
+            ("$".to_owned() + ".a".repeat(nesting_depth).as_str()).as_str(),
+            (json_start.len() * nesting_depth) as u32,
+        );
 
         Ok(())
     }
