@@ -709,6 +709,7 @@ pub enum TransferError {
 ///  - Skipping values
 ///     - [`skip_value`](Self::skip_value): Skipping a value or member name
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
+///     - [`skip_to_top_level`](Self::skip_to_top_level): Skipping the remaining elements of all enclosing JSON arrays and objects
 ///  - Other:
 ///     - [`transfer_to`](Self::transfer_to): Reading a JSON value and writing it to a given JSON writer
 ///     - [`consume_trailing_whitespace`](Self::consume_trailing_whitespace): Consuming trailing whitespace at the end of the JSON document
@@ -1276,7 +1277,8 @@ pub trait JsonReader {
     /// Panics when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. This indicates incorrect usage by the user
     /// and is unrelated to the JSON data.
-    // TODO: Should either rename method (in that case search also for text occurrences of name) or not support skipping name?
+    // TODO: Since this also supports skipping names, should either rename method (in that case search also for
+    //       text occurrences of name) or better (?) have separate method for skipping names?
     fn skip_value(&mut self) -> Result<(), ReaderError>;
 
     /// Seeks to the specified location in the JSON document
@@ -1299,7 +1301,9 @@ pub trait JsonReader {
     /// ```
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
-    /// let mut json_reader = JsonStreamReader::new(r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes());
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes()
+    /// );
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Can now consume the value to which the call seeked to
@@ -1321,6 +1325,45 @@ pub trait JsonReader {
     /// usage by the user and are unrelated to the JSON data.
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
 
+    /// Skips the remaining elements of all currently enclosing JSON arrays and objects
+    ///
+    /// Based on the current JSON reader position skips the remaining elements of all enclosing
+    /// JSON arrays and objects (if any) until the top-level is reached. That is, for every array
+    /// started with [`begin_array`](Self::begin_array) and for every object started with [`begin_object`](Self::begin_object)
+    /// the remaining elements are skipped and the end of the array respectively object is consumed.
+    /// During skipping, the syntax of the skipped values is validated. Calling this method has no
+    /// effect when there is currently no enclosing JSON array or object.
+    ///
+    /// This method is useful when a subsection of a JSON document has been consumed, for example
+    /// with the help of [`seek_to`](Self::seek_to), and afterwards either
+    /// - the syntax of the remainder of the document should be validated and trailing data should
+    ///   be rejected, by calling [`consume_trailing_whitespace`](Self::consume_trailing_whitespace)
+    /// - or, multiple top-level values are enabled in the [`ReaderSettings`] and the next top-level
+    ///   value should be consumed
+    ///
+    /// # Example
+    /// ```
+    /// # use ron::reader::*;
+    /// # use ron::reader::json_path::*;
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes()
+    /// );
+    /// json_reader.seek_to(&json_path!["foo", 2])?;
+    ///
+    /// // Consume the value to which the call seeked to
+    /// assert_eq!("c", json_reader.next_string()?);
+    ///
+    /// // Skip the remainder of the document
+    /// json_reader.skip_to_top_level()?;
+    /// // And verify that there is only optional whitespace, but no trailing data
+    /// json_reader.consume_trailing_whitespace()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// None, besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`].
+    fn skip_to_top_level(&mut self) -> Result<(), ReaderError>;
+
     /// Consumes the next value and writes it to the given JSON writer
     ///
     /// This method consumes the next value and calls the corresponding methods on the
@@ -1341,7 +1384,9 @@ pub trait JsonReader {
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
     /// # use ron::writer::*;
-    /// let mut json_reader = JsonStreamReader::new(r#"{"bar": true, "foo": [1, 2]}"#.as_bytes());
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"{"bar": true, "foo": [1, 2]}"#.as_bytes()
+    /// );
     /// json_reader.seek_to(&json_path!["foo"])?;
     ///
     /// let mut writer = Vec::<u8>::new();
@@ -1598,8 +1643,8 @@ pub struct ReaderSettings {
     ///
     /// When enabled, skipping JSON arrays and objects with methods such as [`JsonReader::skip_value`] or
     /// [`JsonReader::seek_to`] will update the path which is reported for [error locations](JsonErrorLocation::path).
-    /// However, this incurs overhead because JSON object member names cannot be skipped in an efficient way
-    /// but must be read to be available for the path information.  
+    /// However, updating the path incurs overhead because JSON object member names cannot be skipped in
+    /// an efficient way but must be read to be available for the path information.  
     /// When disabled the path is not updated which increases performance but in case of syntax errors might
     /// make them more difficult to identify. [Line](JsonErrorLocation::line) and [column](JsonErrorLocation::column)
     /// numbers are however not affected and will always be accurate.
@@ -2699,6 +2744,40 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             }
         }
 
+        Ok(())
+    }
+
+    fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
+        if self.is_string_value_reader_active {
+            panic!("Incorrect reader usage: Cannot skip to top level when string value reader is active");
+        }
+
+        // Handle expected member value separately because has_next() calls below are not allowed when
+        // member value is expected
+        if self.expects_member_value() {
+            self.skip_value()?;
+        }
+
+        while let Some(value_type) = self.stack.last() {
+            match value_type {
+                ValueType::Array => {
+                    while self.has_next()? {
+                        self.skip_value()?;
+                    }
+                    self.end_array()?;
+                }
+                ValueType::Object => {
+                    while self.has_next()? {
+                        // Must update path when skipping name, otherwise error location might point to name of
+                        // unrelated previously consumed member in the same object
+                        self.skip_name(true)?;
+                        self.skip_value()?;
+                    }
+                    self.end_object()?;
+                }
+                _ => unreachable!("Stack should only contain either array or object type"),
+            }
+        }
         Ok(())
     }
 
@@ -4002,52 +4081,6 @@ mod tests {
     }
 
     #[test]
-    fn trailing_data() -> TestResult {
-        let mut json_reader = new_reader("1 2");
-        assert_eq!("1", json_reader.next_number_as_string()?);
-        assert_parse_error(
-            None,
-            json_reader.consume_trailing_whitespace(),
-            SyntaxErrorKind::TrailingData,
-            2,
-        );
-        Ok(())
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet"
-    )]
-    fn consume_trailing_whitespace_top_level_not_started() {
-        let json_reader = new_reader("");
-
-        json_reader.consume_trailing_whitespace().unwrap();
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet"
-    )]
-    fn consume_trailing_whitespace_top_level_not_finished() {
-        let mut json_reader = new_reader("[]");
-        json_reader.begin_array().unwrap();
-
-        json_reader.consume_trailing_whitespace().unwrap();
-    }
-
-    /// Byte order mark U+FEFF should not be allowed
-    #[test]
-    fn byte_order_mark() {
-        let mut json_reader = new_reader("\u{FEFF}1");
-        assert_parse_error(
-            None,
-            json_reader.next_number_as_string(),
-            SyntaxErrorKind::MalformedJson,
-            0,
-        );
-    }
-
-    #[test]
     fn skip_top_level() -> TestResult {
         vec![
             "true",
@@ -4091,6 +4124,117 @@ mod tests {
         let mut json_reader = new_reader(r#"[1, {"a": 2, "b": {"c": [3, 4]}, "b": 5}]"#);
         json_reader.seek_to(&json_path![1, "b", "c", 0])?;
         assert_eq!("3", json_reader.next_number_as_string()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_to_top_level() -> TestResult {
+        let mut json_reader = new_reader("null");
+        // Should have no effect when not inside array or object
+        json_reader.skip_to_top_level()?;
+        json_reader.next_null()?;
+        // Should have no effect when not inside array or object
+        json_reader.skip_to_top_level()?;
+        json_reader.skip_to_top_level()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader(r#"[1, {"a": 2, "b": {"c": [3, 4]}, "b": 5}]"#);
+        json_reader.seek_to(&json_path![1, "b", "c", 0])?;
+        assert_eq!("3", json_reader.next_number_as_string()?);
+        json_reader.skip_to_top_level()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader(r#"{"a": 1}"#);
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        // Should also work when currently expecting member value
+        json_reader.skip_to_top_level()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader(r#"[@]"#);
+        json_reader.begin_array()?;
+        // Should be able to detect syntax errors
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_to_top_level(),
+            SyntaxErrorKind::MalformedJson,
+            "$[0]",
+            1,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_to_top_level_no_path_update() -> TestResult {
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"{"a": 1, "b": @}"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_to_top_level(),
+            SyntaxErrorKind::MalformedJson,
+            // Path in already started objects should have been updated
+            "$.b",
+            14,
+        );
+
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"{"a": {"b": @}}"#.as_bytes(),
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: false,
+                update_path_during_skip: false,
+            },
+        );
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.skip_to_top_level(),
+            SyntaxErrorKind::MalformedJson,
+            "$.a.<?>",
+            12,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_to_top_level_multi_top_level() -> TestResult {
+        let mut json_reader = JsonStreamReader::new_custom(
+            b"[1] [2] [3]" as &[u8],
+            ReaderSettings {
+                allow_comments: false,
+                allow_trailing_comma: false,
+                allow_multiple_top_level: true,
+                update_path_during_skip: true,
+            },
+        );
+        json_reader.begin_array()?;
+        json_reader.skip_to_top_level()?;
+        json_reader.begin_array()?;
+        assert_eq!("2", json_reader.next_number_as_string()?);
+        json_reader.skip_to_top_level()?;
+
+        // Should have no effect since there is currently no enclosing array
+        json_reader.skip_to_top_level()?;
+        json_reader.skip_to_top_level()?;
+
+        json_reader.begin_array()?;
+        assert_eq!("3", json_reader.next_number_as_string()?);
+        json_reader.skip_to_top_level()?;
+        json_reader.consume_trailing_whitespace()?;
 
         Ok(())
     }
@@ -4275,6 +4419,52 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn trailing_data() -> TestResult {
+        let mut json_reader = new_reader("1 2");
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error(
+            None,
+            json_reader.consume_trailing_whitespace(),
+            SyntaxErrorKind::TrailingData,
+            2,
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet"
+    )]
+    fn consume_trailing_whitespace_top_level_not_started() {
+        let json_reader = new_reader("");
+
+        json_reader.consume_trailing_whitespace().unwrap();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet"
+    )]
+    fn consume_trailing_whitespace_top_level_not_finished() {
+        let mut json_reader = new_reader("[]");
+        json_reader.begin_array().unwrap();
+
+        json_reader.consume_trailing_whitespace().unwrap();
+    }
+
+    /// Byte order mark U+FEFF should not be allowed
+    #[test]
+    fn byte_order_mark() {
+        let mut json_reader = new_reader("\u{FEFF}1");
+        assert_parse_error(
+            None,
+            json_reader.next_number_as_string(),
+            SyntaxErrorKind::MalformedJson,
+            0,
+        );
     }
 
     fn assert_unexpected_value_type<T>(
