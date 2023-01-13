@@ -2316,6 +2316,44 @@ impl<R: Read> JsonStreamReader<R> {
         Ok(())
     }
 
+    fn read_unicode_escape_char(&mut self) -> Result<char, StringReadingError> {
+        let mut c = self.read_unicode_escape()?;
+        let mut consumed_chars_count = 4;
+
+        // Unpaired low surrogate
+        if (0xDC00..=0xDFFF).contains(&c) {
+            return Err(JsonSyntaxError {
+                kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
+                location: self.create_error_location(),
+            })?;
+        }
+        // If char is high surrogate, expect unicode escaped low surrogate
+        if (0xD800..=0xDBFF).contains(&c) {
+            if !(self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'\\'
+                && self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'u')
+            {
+                return Err(JsonSyntaxError {
+                    kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
+                    location: self.create_error_location(),
+                })?;
+            }
+            let c2 = self.read_unicode_escape()?;
+            consumed_chars_count += 6; // \uXXXX
+            if !(0xDC00..=0xDFFF).contains(&c2) {
+                return Err(JsonSyntaxError {
+                    kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
+                    location: self.create_error_location(),
+                })?;
+            }
+
+            c = ((c - 0xD800) << 10 | (c2 - 0xDC00)) + 0x10000;
+        }
+
+        self.column += consumed_chars_count;
+        // unwrap() here should be safe since checks above made sure this is a valid Rust `char`
+        Ok(char::from_u32(c).unwrap())
+    }
+
     /// Reads the next character of a member name or string value
     ///
     /// If it is an unescaped `"` returns true. Otherwise passes the bytes of the char
@@ -2341,44 +2379,10 @@ impl<R: Read> JsonStreamReader<R> {
                     b'r' => consumer(b'\r'),
                     b't' => consumer(b'\t'),
                     b'u' => {
-                        let mut c = self.read_unicode_escape()?;
-                        consumed_chars_count += 4;
-
-                        // Unpaired low surrogate
-                        if (0xDC00..=0xDFFF).contains(&c) {
-                            return Err(JsonSyntaxError {
-                                kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
-                                location: self.create_error_location(),
-                            })?;
-                        }
-                        // If char is high surrogate, expect unicode escaped low surrogate
-                        if (0xD800..=0xDBFF).contains(&c) {
-                            if !(self
-                                .read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)?
-                                == b'\\'
-                                && self.read_byte(
-                                    SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
-                                )? == b'u')
-                            {
-                                return Err(JsonSyntaxError {
-                                    kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
-                                    location: self.create_error_location(),
-                                })?;
-                            }
-                            let c2 = self.read_unicode_escape()?;
-                            consumed_chars_count += 6; // \uXXXX
-                            if !(0xDC00..=0xDFFF).contains(&c2) {
-                                return Err(JsonSyntaxError {
-                                    kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
-                                    location: self.create_error_location(),
-                                })?;
-                            }
-
-                            c = ((c - 0xD800) << 10 | (c2 - 0xDC00)) + 0x10000;
-                        }
-
-                        // unwrap() here should be safe since checks above made sure this is a valid Rust `char`
-                        for b in char::from_u32(c).unwrap().to_string().as_bytes() {
+                        let c = self.read_unicode_escape_char()?;
+                        let mut char_encode_buf = [0; 4];
+                        let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
+                        for b in &char_encode_buf[..bytes_count] {
                             consumer(*b);
                         }
                     }
