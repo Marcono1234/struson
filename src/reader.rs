@@ -662,8 +662,8 @@ pub enum ReaderError {
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    /// (Note: For a JSON object `skip_value` has to be called twice, once to skip the member name
-    /// and a second time to skip the member value.)
+    /// Note: For a JSON object [`skip_name`](JsonReader::skip_name) and [`skip_value`](JsonReader::skip_value)
+    /// have to be called for every member to skip its name and value.
     #[error("Unexpected JSON structure {kind} at {location}")]
     UnexpectedStructure {
         /// Describes why the JSON document is considered to have an invalid structure
@@ -701,13 +701,14 @@ pub enum TransferError {
 /// - Reading values
 ///     - [`begin_array`](Self::begin_array), [`end_array`](Self::end_array): Starting and ending a JSON array
 ///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
-///     - [`next_name`](Self::next_name): Reading a JSON object member name
+///     - [`next_name`](Self::next_name): Reading the name of a JSON object member
 ///     - [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
 ///     - [`next_number`](Self::next_number), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
 ///  - Skipping values
-///     - [`skip_value`](Self::skip_value): Skipping a value or member name
+///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
+///     - [`skip_value`](Self::skip_value): Skipping a value
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
 ///     - [`skip_to_top_level`](Self::skip_to_top_level): Skipping the remaining elements of all enclosing JSON arrays and objects
 ///  - Other:
@@ -724,8 +725,8 @@ pub enum TransferError {
 /// It is not necessary to consume the complete JSON document, for example a user of this reader
 /// can simply drop the reader once the relevant information was extracted, ignoring the remainder
 /// of the JSON data. However, in that case no validation will be performed that the remainder
-/// has actually valid JSON syntax. To ensure that, [`skip_value`](Self::skip_value) can be used to skip (and validate)
-/// the remaining JSON values.
+/// has actually valid JSON syntax. To ensure that, [`skip_to_top_level`](Self::skip_to_top_level)
+/// can be used to skip (and validate) the remainder of the current top-level JSON array or object.
 ///
 /// **Important:** Even after the top-level has been fully consumed this reader does *not*
 /// automatically consume the remainder of the JSON document (which is expected to consist
@@ -863,14 +864,15 @@ pub trait JsonReader {
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If there are remaining members in the object a [`ReaderError::UnexpectedStructure`] is returned.
-    /// [`skip_value`](Self::skip_value) can be used to skip these remaining members in case they should be ignored:
+    /// [`skip_name`](Self::skip_name) and [`skip_value`](Self::skip_value) can be used to skip these
+    /// remaining members in case they should be ignored:
     /// ```
     /// # use ron::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("{}".as_bytes());
     /// # json_reader.begin_object()?;
     /// while json_reader.has_next()? {
     ///     // Skip member name
-    ///     json_reader.skip_value()?;
+    ///     json_reader.skip_name()?;
     ///     // Skip member value
     ///     json_reader.skip_value()?;
     /// }
@@ -1236,11 +1238,45 @@ pub trait JsonReader {
     /// usage by the user and are unrelated to the JSON data.
     fn next_null(&mut self) -> Result<(), ReaderError>;
 
-    /// Skips a value or a member name
+    /// Skips the name of the next JSON object member
+    ///
+    /// Afterwards one of the value reading methods such as [`next_number`](Self::next_number) can be
+    /// used to read the corresponding member value.
+    ///
+    /// Skipping member names can be useful when the only the values of the JSON object members are
+    /// relevant for the application processing the JSON document but the member names don't matter.
+    ///
+    /// Skipping member names with this method is usually more efficient than calling [`next_name`](Self::next_name)
+    /// but discarding its result. However, `skip_name` nonetheless also verifies that the skipped
+    /// name has valid syntax.
+    ///
+    /// # Example
+    /// ```
+    /// # use ron::reader::*;
+    /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
+    /// json_reader.begin_object()?;
+    ///
+    /// // Skip member name "a"
+    /// json_reader.skip_name()?;
+    ///
+    /// assert_eq!("1", json_reader.next_number_as_string()?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// To skip to a specific location in the JSON document the method [`seek_to`](Self::seek_to) can be used.
+    ///
+    /// # Errors
+    /// None, besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`].
+    ///
+    /// # Panics
+    /// Panics when called on a JSON reader which currently does not expect a member name. This
+    /// indicates incorrect usage by the user and is unrelated to the JSON data.
+    fn skip_name(&mut self) -> Result<(), ReaderError>;
+
+    /// Skips the next value
     ///
     /// This method can be used to skip top-level values, JSON array items and JSON object member
-    /// names and values. For object members one `skip_value` call skips the member name and a
-    /// separate call skips the member value.  
+    /// values. To skip an object member name, the method [`skip_name`](Self::skip_name) has to be used.  
     /// Skipping a JSON array or object skips the complete value including all nested ones, if any.
     ///
     /// Skipping values can be useful when parts of the processed JSON document are not relevant
@@ -1256,8 +1292,8 @@ pub trait JsonReader {
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": [{}], "b": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
-    /// // Skip member name "a"
-    /// json_reader.skip_value()?;
+    /// assert_eq!("a", json_reader.next_name()?);
+    ///
     /// // Skip member value [{}]
     /// json_reader.skip_value()?;
     ///
@@ -1274,11 +1310,10 @@ pub trait JsonReader {
     /// method can be used to check if there is a next value.
     ///
     /// # Panics
-    /// Panics when called after the top-level value has already been consumed and multiple top-level
-    /// values are not enabled in the [`ReaderSettings`]. This indicates incorrect usage by the user
-    /// and is unrelated to the JSON data.
-    // TODO: Since this also supports skipping names, should either rename method (in that case search also for
-    //       text occurrences of name) or better (?) have separate method for skipping names?
+    /// Panics when called on a JSON reader which currently expects a member name ([`skip_name`](Self::skip_name)
+    /// has to be used for that), or when called after the top-level value has already been consumed
+    /// and multiple top-level values are not enabled in the [`ReaderSettings`]. Both cases indicate
+    /// incorrect usage by the user and are unrelated to the JSON data.
     fn skip_value(&mut self) -> Result<(), ReaderError>;
 
     /// Seeks to the specified location in the JSON document
@@ -1441,7 +1476,20 @@ pub trait JsonReader {
     ///
     /// When multiple top-level values are allowed by the [`ReaderSettings`] but not all
     /// top-level values are relevant they can be skipped with of loop calling [`has_next`](Self::has_next) and [`skip_value`](Self::skip_value)
-    /// to allow calling `consume_trailing_whitespace` eventually.
+    /// to allow calling `consume_trailing_whitespace` eventually:
+    /// ```
+    /// # use ron::reader::*;
+    /// # let mut json_reader = JsonStreamReader::new_custom("1".as_bytes(), ReaderSettings { allow_multiple_top_level: true, ..ReaderSettings::default() });
+    /// # json_reader.skip_value()?;
+    /// // Skip all remaining top-level values
+    /// while json_reader.has_next()? {
+    ///     json_reader.skip_value()?;
+    /// }
+    ///
+    /// // Verify that there is only optional whitespace, but no trailing data
+    /// json_reader.consume_trailing_whitespace()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// **Important:** It is expected that there is always at least one top-level value
     /// in a JSON document, so calling this method without having consumed a value yet
@@ -2429,7 +2477,7 @@ impl<R: Read> JsonStreamReader<R> {
         };
     }
 
-    fn skip_name(&mut self, update_path: bool) -> Result<(), ReaderError> {
+    fn skip_name_impl(&mut self, update_path: bool) -> Result<(), ReaderError> {
         self.consume_name(|self_| {
             if update_path {
                 // Similar to `next_name` implementation, except that `name` can directly be moved to
@@ -2616,11 +2664,15 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok((peeked != PeekedValue::ArrayEnd) && (peeked != PeekedValue::ObjectEnd))
     }
 
+    fn skip_name(&mut self) -> Result<(), ReaderError> {
+        // Update path when skipping name, otherwise errors when reading
+        // corresponding member value will have wrong path
+        self.skip_name_impl(true)
+    }
+
     fn skip_value(&mut self) -> Result<(), ReaderError> {
         if self.expects_member_name {
-            // Update path when skipping name, otherwise errors when reading
-            // corresponding member value will have wrong path
-            self.skip_name(true)?;
+            panic!("Incorrect reader usage: Cannot skip value when expecting member name");
         } else {
             let update_path = self.reader_settings.update_path_during_skip;
             let mut depth: u32 = 0;
@@ -2634,7 +2686,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     depth -= 1;
                 } else {
                     if self.expects_member_name {
-                        self.skip_name(update_path)?;
+                        self.skip_name_impl(update_path)?;
                     }
 
                     match self.peek()? {
@@ -2768,9 +2820,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                 }
                 ValueType::Object => {
                     while self.has_next()? {
-                        // Must update path when skipping name, otherwise error location might point to name of
-                        // unrelated previously consumed member in the same object
-                        self.skip_name(true)?;
+                        // Uses variant which updates the JSON path when skipping the name, otherwise the error
+                        // location would point to name of an unrelated previously consumed member in the same object
+                        self.skip_name()?;
                         self.skip_value()?;
                     }
                     self.end_object()?;
@@ -4023,7 +4075,7 @@ mod tests {
         );
         json_reader.begin_object()?;
         // When only skipping name it should still be stored in path regardless of reader settings
-        json_reader.skip_value()?;
+        json_reader.skip_name()?;
         assert_parse_error_with_path(
             None,
             json_reader.peek(),
@@ -4046,7 +4098,7 @@ mod tests {
         assert_eq!("b", json_reader.next_name()?);
         assert_eq!("2", json_reader.next_number_as_string()?);
 
-        json_reader.skip_value()?; // skip member name
+        json_reader.skip_name()?;
         assert_eq!("3", json_reader.next_number_as_string()?);
 
         json_reader.end_object()?;
@@ -4117,6 +4169,27 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot skip value when expecting member name"
+    )]
+    fn skip_value_expecting_name() {
+        let mut json_reader = new_reader(r#"{"a": 1}"#);
+        json_reader.begin_object().unwrap();
+
+        json_reader.skip_value().unwrap();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot consume member name when not expecting it"
+    )]
+    fn skip_name_expecting_value() {
+        let mut json_reader = new_reader("\"a\"");
+
+        json_reader.skip_name().unwrap();
     }
 
     #[test]
@@ -4213,7 +4286,7 @@ mod tests {
     #[test]
     fn skip_to_top_level_multi_top_level() -> TestResult {
         let mut json_reader = JsonStreamReader::new_custom(
-            b"[1] [2] [3]" as &[u8],
+            "[1] [2] [3]".as_bytes(),
             ReaderSettings {
                 allow_comments: false,
                 allow_trailing_comma: false,
@@ -5150,8 +5223,7 @@ mod tests {
             1,
         );
 
-        // Skip the name
-        json_reader.skip_value()?;
+        json_reader.skip_name()?;
         assert_unexpected_value_type(
             json_reader.next_bool(),
             ValueType::Boolean,
@@ -5160,7 +5232,6 @@ mod tests {
             6,
         );
 
-        // Skip the value
         json_reader.skip_value()?;
 
         assert_unexpected_structure(
@@ -5169,8 +5240,7 @@ mod tests {
             "$.a",
             9,
         );
-        // Skip the name
-        json_reader.skip_value()?;
+        json_reader.skip_name()?;
         assert_unexpected_value_type(
             json_reader.next_bool(),
             ValueType::Boolean,
@@ -5179,7 +5249,6 @@ mod tests {
             14,
         );
 
-        // Skip the value
         json_reader.skip_value()?;
 
         assert_unexpected_structure(
