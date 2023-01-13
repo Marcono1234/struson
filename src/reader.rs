@@ -1593,7 +1593,8 @@ pub struct JsonStreamReader<R: Read> {
     reader: R,
     buf: [u8; READER_BUF_SIZE],
     buf_pos: usize,
-    buf_len: usize,
+    /// Index (exclusive) up to which [`buf`](Self::buf) is filled
+    buf_end_pos: usize,
     reached_eof: bool,
 
     peeked: Option<PeekedValue>,
@@ -1736,7 +1737,7 @@ impl<R: Read> JsonStreamReader<R> {
             reader,
             buf: [0; READER_BUF_SIZE],
             buf_pos: 0,
-            buf_len: 0,
+            buf_end_pos: 0,
             reached_eof: false,
             peeked: None,
             is_empty: true,
@@ -1788,13 +1789,13 @@ impl<R: Read> JsonStreamReader<R> {
         if self.reached_eof {
             return Ok(false);
         }
-        if self.buf_pos < self.buf_len {
+        if self.buf_pos < self.buf_end_pos {
             return Ok(true);
         }
 
         self.buf_pos = 0;
-        self.buf_len = self.reader.read(&mut self.buf)?;
-        if self.buf_len == 0 {
+        self.buf_end_pos = self.reader.read(&mut self.buf)?;
+        if self.buf_end_pos == 0 {
             self.reached_eof = true;
             Ok(false)
         } else {
@@ -1811,7 +1812,7 @@ impl<R: Read> JsonStreamReader<R> {
     }
 
     fn skip_peeked_byte(&mut self) {
-        debug_assert!(self.buf_pos < self.buf_len);
+        debug_assert!(self.buf_pos < self.buf_end_pos);
         self.buf_pos += 1;
     }
 
@@ -5259,6 +5260,44 @@ mod tests {
         );
         json_reader.end_object()?;
 
+        Ok(())
+    }
+
+    struct FewBytesReader<'a> {
+        bytes: &'a [u8],
+        pos: usize,
+    }
+
+    impl Read for FewBytesReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.bytes.len() {
+                return Ok(0);
+            }
+            let read_count =
+                // Always reads at most 3 bytes
+                (if buf.len() < 3 { buf.len() } else { 3 }).min(self.bytes.len() - self.pos);
+            buf[..read_count].copy_from_slice(&self.bytes[self.pos..(self.pos + read_count)]);
+            self.pos += read_count;
+
+            Ok(read_count)
+        }
+    }
+
+    #[test]
+    fn few_bytes_reader() -> TestResult {
+        let count = READER_BUF_SIZE;
+        let json = "[".to_owned() + "true,".repeat(count - 1).as_str() + "true]";
+        let mut json_reader = JsonStreamReader::new(FewBytesReader {
+            bytes: json.as_bytes(),
+            pos: 0,
+        });
+
+        json_reader.begin_array()?;
+        for _ in 0..count {
+            assert_eq!(true, json_reader.next_bool()?);
+        }
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
 
