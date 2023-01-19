@@ -1,5 +1,9 @@
 #![warn(missing_docs)]
 
+// Allow needless `return` because that makes it sometimes more obvious that
+// an expression is the result of the function
+#![allow(clippy::needless_return)]
+
 // Enable 'unused' warnings for doc tests (are disabled by default)
 #![doc(test(no_crate_inject))]
 #![doc(test(attr(warn(unused))))]
@@ -7,12 +11,12 @@
 #![doc(test(attr(deny(warnings))))]
 
 //! Ron is a [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
-//! Its main purpose is allowing to read and write JSON data in an efficient way without having to store the
+//! Its main purpose is allowing to read and write JSON data in a memory efficient way without having to store the
 //! complete JSON document structure in memory. It is however *not* an object mapper which converts structs
 //! to JSON and vice versa, a dedicated library such as [Serde](https://github.com/serde-rs/json) should be
 //! used for that.
 //!
-//! The API of Ron was inspired by the API of the Java library [Gson](https://github.com/google/gson).
+//! The API of Ron was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson).
 //!
 //! # Terminology
 //!

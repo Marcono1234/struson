@@ -184,6 +184,7 @@ pub mod json_path {
                     });
                 }
 
+                #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
                 for i in index..end_index {
                     if !(b'0'..=b'9').contains(&path_bytes[i]) {
                         return Err(JsonPathParseError {
@@ -208,6 +209,7 @@ pub mod json_path {
                     });
                 }
 
+                #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
                 for i in index..end_index {
                     let b = path_bytes[i];
                     if !((b'a'..=b'z').contains(&b)

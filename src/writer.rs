@@ -761,6 +761,7 @@ impl<W: Write> JsonStreamWriter<W> {
                 self.write_indentation()?;
             }
         } else {
+            #[allow(clippy::collapsible_else_if)]
             if self.writer_settings.pretty_print {
                 self.write_bytes(b",\n")?;
                 self.write_indentation()?;
