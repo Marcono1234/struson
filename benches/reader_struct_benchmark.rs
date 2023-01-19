@@ -59,7 +59,7 @@ fn benchmark_struct(c: &mut Criterion) {
                             "string" => {
                                 string = Some(json_reader.next_string()?);
                             }
-                            name @ _ => panic!("Unknown name '{name}'"),
+                            name => panic!("Unknown name '{name}'"),
                         }
                     }
                     json_reader.end_object()?;

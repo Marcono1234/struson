@@ -55,7 +55,7 @@ fn benchmark_struct(c: &mut Criterion) {
     group.bench_with_input("ron", &values, |b, values| {
         b.iter(|| {
             let json_writer = JsonStreamWriter::new(std::io::sink());
-            ron_write(json_writer, &values).unwrap()
+            ron_write(json_writer, values).unwrap()
         })
     });
     group.bench_with_input("ron (pretty)", &values, |b, values| {
@@ -67,7 +67,7 @@ fn benchmark_struct(c: &mut Criterion) {
                     ..Default::default()
                 },
             );
-            ron_write(json_writer, &values).unwrap()
+            ron_write(json_writer, values).unwrap()
         })
     });
 

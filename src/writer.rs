@@ -1219,12 +1219,12 @@ mod tests {
 
     #[test]
     fn number_validation() {
-        assert_eq!(true, is_valid_json_number("0"));
-        assert_eq!(true, is_valid_json_number("-0"));
-        assert_eq!(true, is_valid_json_number("1230.1"));
-        assert_eq!(true, is_valid_json_number("1.01e1"));
-        assert_eq!(true, is_valid_json_number("12.120e+01"));
-        assert_eq!(true, is_valid_json_number("12.120e-10"));
+        assert!(is_valid_json_number("0"));
+        assert!(is_valid_json_number("-0"));
+        assert!(is_valid_json_number("1230.1"));
+        assert!(is_valid_json_number("1.01e1"));
+        assert!(is_valid_json_number("12.120e+01"));
+        assert!(is_valid_json_number("12.120e-10"));
 
         assert_eq!(false, is_valid_json_number("00"));
         assert_eq!(false, is_valid_json_number("-00"));

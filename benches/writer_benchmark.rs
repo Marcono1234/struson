@@ -80,7 +80,7 @@ fn bench_compare_string_writing(c: &mut Criterion, name: &str, string_value: &st
     group.bench_with_input("ron", string_value, |b, string_value| {
         b.iter(|| {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
-            json_writer.string_value(&string_value).unwrap();
+            json_writer.string_value(string_value).unwrap();
             json_writer.finish_document().unwrap();
         })
     });

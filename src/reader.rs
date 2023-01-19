@@ -305,20 +305,14 @@ pub mod json_path {
         fn test_format_abs_json_path() {
             assert_eq!("$", format_abs_json_path(&Vec::new()));
 
-            assert_eq!(
-                "$[2]",
-                format_abs_json_path(&vec![JsonPathPiece::ArrayItem(2)])
-            );
+            assert_eq!("$[2]", format_abs_json_path(&[JsonPathPiece::ArrayItem(2)]));
             assert_eq!(
                 "$[2][3]",
-                format_abs_json_path(&vec![
-                    JsonPathPiece::ArrayItem(2),
-                    JsonPathPiece::ArrayItem(3)
-                ])
+                format_abs_json_path(&[JsonPathPiece::ArrayItem(2), JsonPathPiece::ArrayItem(3)])
             );
             assert_eq!(
                 "$[2].a",
-                format_abs_json_path(&vec![
+                format_abs_json_path(&[
                     JsonPathPiece::ArrayItem(2),
                     JsonPathPiece::ObjectMember("a".to_owned())
                 ])
@@ -326,18 +320,18 @@ pub mod json_path {
 
             assert_eq!(
                 "$.a",
-                format_abs_json_path(&vec![JsonPathPiece::ObjectMember("a".to_owned())])
+                format_abs_json_path(&[JsonPathPiece::ObjectMember("a".to_owned())])
             );
             assert_eq!(
                 "$.a.b",
-                format_abs_json_path(&vec![
+                format_abs_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ObjectMember("b".to_owned())
                 ])
             );
             assert_eq!(
                 "$.a[2]",
-                format_abs_json_path(&vec![
+                format_abs_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ArrayItem(2)
                 ])
@@ -973,7 +967,7 @@ pub trait JsonReader {
     /// json_reader.begin_array()?;
     ///
     /// // Array has a next item
-    /// assert_eq!(true, json_reader.has_next()?);
+    /// assert!(json_reader.has_next()?);
     ///
     /// json_reader.skip_value()?;
     /// // Array does not have a next item anymore
@@ -3098,7 +3092,7 @@ mod tests {
 
     #[test]
     fn literals_invalid() -> TestResult {
-        let invalid_numbers = vec!["truE", "tru", "falsE", "fal", "nuLl", "nu"];
+        let invalid_numbers = ["truE", "tru", "falsE", "fal", "nuLl", "nu"];
         for invalid_number in invalid_numbers {
             let mut json_reader = new_reader(invalid_number);
             assert_parse_error(
@@ -3123,7 +3117,7 @@ mod tests {
     /// Verifies that valid trailing data after literal does not prevent literal from being parsed
     #[test]
     fn literals_valid_trailing_data() -> TestResult {
-        vec!["", " ", "\t", "\r", "\n", "\r\n"].assert_all(|whitespace| {
+        ["", " ", "\t", "\r", "\n", "\r\n"].assert_all(|whitespace| {
             let json = "true".to_owned() + whitespace;
             let mut json_reader = new_reader(json.as_str());
             assert_eq!(true, json_reader.next_bool()?);
@@ -3187,14 +3181,15 @@ mod tests {
         assert_eq!(123, json_reader.next_number::<i32>()??);
         assert_eq!(45_u32, json_reader.next_number()??);
         assert_eq!(0.5, json_reader.next_number::<f32>()??);
-        assert_eq!(true, json_reader.next_number::<i32>()?.is_err());
+        // Cannot parse floating point number as i32
+        assert!(json_reader.next_number::<i32>()?.is_err());
 
         Ok(())
     }
 
     #[test]
     fn numbers_invalid() -> TestResult {
-        let invalid_numbers = vec![
+        let invalid_numbers = [
             "-", "--1", "-.1", "00", "01", "1.", "1.-1", "1.e1", "1e", "1ee1", "1eE1", "1e-",
             "1e+", "1e--1", "1e+-1", "1e.1", "1e1.1", "1e1-1", "1e1e1",
         ];
@@ -3775,7 +3770,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a":: 1}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!("a", json_reader.next_name()?);
         assert_parse_error_with_path(
             None,
@@ -3787,7 +3782,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a"}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
             json_reader.next_name(),
@@ -3798,7 +3793,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a":}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!("a", json_reader.next_name()?);
         assert_parse_error_with_path(
             None,
@@ -3810,7 +3805,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a" 1}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
             json_reader.next_name(),
@@ -3821,7 +3816,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a", "b": 2}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
             json_reader.next_name(),
@@ -3832,7 +3827,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a": 1 "b": 2}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!("a", json_reader.next_name()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
@@ -3852,7 +3847,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a": 1,, "b": 2}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!("a", json_reader.next_name()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
@@ -3875,7 +3870,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a": 1: "b": 2}"#);
         json_reader.begin_object()?;
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!("a", json_reader.next_name()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
@@ -4141,7 +4136,7 @@ mod tests {
 
     #[test]
     fn skip_top_level() -> TestResult {
-        vec![
+        [
             "true",
             "false",
             "null",
@@ -4481,7 +4476,7 @@ mod tests {
             }
         }
 
-        let json_values = vec!["true", "null", "123", "\"a\"", "[]", "{}"];
+        let json_values = ["true", "null", "123", "\"a\"", "[]", "{}"];
         for json in json_values {
             let mut json_reader = new_reader(json);
 
@@ -4814,7 +4809,7 @@ mod tests {
         assert_eq!("1", json_reader.next_number_as_string()?);
         json_reader.end_array()?;
 
-        assert_eq!(true, json_reader.has_next()?);
+        assert!(json_reader.has_next()?);
         assert_eq!(ValueType::Array, json_reader.peek()?);
         json_reader.begin_array()?;
         assert_eq!("2", json_reader.next_number_as_string()?);
@@ -4930,7 +4925,7 @@ mod tests {
             0,
         );
 
-        vec![
+        [
             "/* a */1",
             " /* a */ 1",
             "/**/1",
@@ -5208,14 +5203,13 @@ mod tests {
             new_reader(r#"[true, false, null, 12, "test", [], [34], {}, {"a": 1}]"#);
         json_reader.begin_array()?;
 
-        let column_positions = vec![1, 7, 14, 20, 24, 32, 36, 42, 46];
-        for i in 0..column_positions.len() {
+        for (i, column_position) in [1, 7, 14, 20, 24, 32, 36, 42, 46].iter().enumerate() {
             let expected_path = format!("$[{i}]");
             assert_unexpected_structure(
                 json_reader.end_array(),
                 UnexpectedStructureKind::MoreElementsThanExpected,
                 &expected_path,
-                column_positions[i],
+                *column_position,
             );
             json_reader.skip_value()?;
         }
