@@ -1,0 +1,41 @@
+[
+  [],
+  [
+    1
+  ],
+  [
+    1,
+    "a",
+    true,
+    {
+      "nested": [
+        {
+          "nested2": [
+            2
+          ]
+        }
+      ]
+    }
+  ],
+  {},
+  {
+    "name": 1
+  },
+  {
+    "name1": false,
+    "name2": "value",
+    "name1": 2,
+    "": 3
+  },
+  "string value",
+  "\u0000 test \n\t \\ \"",
+  "unicode § ಀ ᠅ 𝄆",
+  0,
+  -1234,
+  567.89,
+  100e-10,
+  6.070e+010,
+  true,
+  false,
+  null
+]

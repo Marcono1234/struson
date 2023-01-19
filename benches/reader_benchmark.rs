@@ -70,6 +70,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
                                 } else {
                                     stack.pop();
                                     json_reader.end_object()?;
+
                                     if stack.is_empty() {
                                         break;
                                     } else {
