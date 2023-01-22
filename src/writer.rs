@@ -6,6 +6,7 @@
 use crate::json_number::consume_json_number;
 
 use std::{
+    fmt::Debug,
     io::{ErrorKind, Write},
     str::Utf8Error,
 };
@@ -42,7 +43,7 @@ type IoError = std::io::Error;
 /// Forgetting to call [`finish_document`](Self::finish_document) leads to unspecified behavior; most likely the written
 /// JSON document will be incomplete.
 ///
-/// # Example
+/// # Examples
 /// ```
 /// # use ron::writer::*;
 /// // In this example JSON bytes are stored in a Vec;
@@ -90,7 +91,7 @@ pub trait JsonWriter {
     /// and afterwards one of the value writing to write the member value. At the end
     /// call [`end_object`](Self::end_object) to write the closing bracket of the JSON object.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -132,7 +133,7 @@ pub trait JsonWriter {
     /// Note that JSON arrays can contain values of different types, so for example the
     /// following is valid JSON: `[1, true, "a"]`
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -177,7 +178,7 @@ pub trait JsonWriter {
     /// Characters are automatically escaped in the JSON output if necessary. For example
     /// the character U+0000 is written as `\u0000`.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -204,7 +205,7 @@ pub trait JsonWriter {
     /// This method takes no argument because there is only one JSON null value, which
     /// has no variants.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -227,7 +228,7 @@ pub trait JsonWriter {
 
     /// Writes a JSON boolean value
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -260,7 +261,7 @@ pub trait JsonWriter {
     /// Characters are automatically escaped in the JSON output if necessary. For example
     /// the character U+0000 is written as `\u0000`.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -297,7 +298,7 @@ pub trait JsonWriter {
     /// must be called. Otherwise the string value writer will still be considered 'active'
     /// and all methods of this JSON writer will panic.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -321,7 +322,10 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    // TODO: Instead of Box<dyn ...> should this directly declare struct as return type?
+    // TODO: Instead of Box<dyn ...> should this directly declare struct as return type
+    //   (and not have separate trait StringValueWriter)?
+    //   But then users might not be able to implement JsonWriter themselves anymore easily;
+    //   would also be inconsistent with JsonReader::next_string_reader
     fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError>;
 
     /// Writes the string representation of a JSON number value
@@ -330,7 +334,7 @@ pub trait JsonWriter {
     /// where the exact format of the JSON number is important. In all other cases either
     /// [`number_value`](Self::number_value) or [`fp_number_value`](Self::fp_number_value) should be used.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -362,7 +366,7 @@ pub trait JsonWriter {
     /// To write a floating point value use [`fp_number_value`](Self::fp_number_value), to write a number in a
     /// specific format use [`number_value_from_string`](Self::number_value_from_string).
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -391,7 +395,7 @@ pub trait JsonWriter {
     ///
     /// The number is converted to a JSON number by calling `to_string` on it.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::writer::*;
     /// let mut writer = Vec::<u8>::new();
@@ -614,7 +618,7 @@ impl Default for WriterSettings {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum StackValue {
     Array,
     Object,
@@ -631,10 +635,14 @@ const WRITER_BUF_SIZE: usize = 1024;
 /// is finished properly by calling [`JsonWriter::finish_document`]. No leading byte order mark (BOM)
 /// is written.
 pub struct JsonStreamWriter<W: Write> {
+    // When adding more fields to this struct, adjust the Debug implementation below, if necessary
     writer: W,
     buf: [u8; WRITER_BUF_SIZE],
-    buf_pos: usize,
-    // Whether the current object or array is empty, or at top-level whether at least one value has been written already
+    /// Index (starting at 0) within [`buf`](Self::buf) where to write next,
+    /// respectively how many bytes have already been written to the buffer
+    buf_write_pos: usize,
+    /// Whether the current array or object is empty, or at top-level whether
+    /// at least one value has been written already
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
@@ -657,7 +665,7 @@ impl<W: Write> JsonStreamWriter<W> {
         Self {
             writer,
             buf: [0; WRITER_BUF_SIZE],
-            buf_pos: 0,
+            buf_write_pos: 0,
             is_empty: true,
             expects_member_name: false,
             stack: Vec::new(),
@@ -705,15 +713,15 @@ impl<W: Write> JsonStreamWriter<W> {
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), IoError> {
         let mut pos = 0;
         while pos < bytes.len() {
-            let copied_count = (self.buf.len() - self.buf_pos).min(bytes.len() - pos);
-            self.buf[self.buf_pos..(self.buf_pos + copied_count)]
+            let copied_count = (self.buf.len() - self.buf_write_pos).min(bytes.len() - pos);
+            self.buf[self.buf_write_pos..(self.buf_write_pos + copied_count)]
                 .copy_from_slice(&bytes[pos..(pos + copied_count)]);
-            self.buf_pos += copied_count;
+            self.buf_write_pos += copied_count;
             pos += copied_count;
 
-            if self.buf_pos >= self.buf.len() {
+            if self.buf_write_pos >= self.buf.len() {
                 self.writer.write_all(&self.buf)?;
-                self.buf_pos = 0;
+                self.buf_write_pos = 0;
             }
         }
 
@@ -721,8 +729,8 @@ impl<W: Write> JsonStreamWriter<W> {
     }
 
     fn flush(&mut self) -> Result<(), IoError> {
-        self.writer.write_all(&self.buf[0..self.buf_pos])?;
-        self.buf_pos = 0;
+        self.writer.write_all(&self.buf[0..self.buf_write_pos])?;
+        self.buf_write_pos = 0;
         self.writer.flush()?;
         Ok(())
     }
@@ -755,7 +763,7 @@ impl<W: Write> JsonStreamWriter<W> {
     fn before_container_element(&mut self) -> Result<(), IoError> {
         if self.is_empty {
             if self.writer_settings.pretty_print {
-                // Convert "[]" (respectively "{}") to "[\n...]"
+                // Convert "[" (respectively "{") to "[\n..."
                 self.write_bytes(b"\n")?;
                 self.increase_indentation();
                 self.write_indentation()?;
@@ -1000,20 +1008,97 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 }
 
+// TODO: Is there a way to have `W` only optionally implement `Debug`?
+impl<W: Write + Debug> Debug for JsonStreamWriter<W> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug_struct = f.debug_struct("JsonStreamWriter");
+        debug_struct
+            .field("writer", &self.writer)
+            .field("buf_count", &self.buf_write_pos);
+
+        fn limit_str_middle(s: &str) -> String {
+            let chars_count = s.chars().count();
+
+            let prefix_len = 25;
+            let suffix_len = prefix_len;
+
+            let max_len = 55;
+            // Assert that `max_len` is large enough for splitting to be possible and worth it
+            assert!(max_len > prefix_len + suffix_len);
+
+            if chars_count <= max_len {
+                return s.to_owned();
+            }
+
+            let prefix_end = s.char_indices().nth(prefix_len).unwrap().0;
+            let prefix = &s[..prefix_end];
+
+            // `suffix_len - 1` because `nth_back(0)` already returns inclusive index of first char
+            let suffix_start = s.char_indices().nth_back(suffix_len - 1).unwrap().0;
+            let suffix = &s[suffix_start..];
+
+            format!("{prefix} ... {suffix}")
+        }
+
+        match std::str::from_utf8(&self.buf[..self.buf_write_pos]) {
+            Ok(buf_string) => {
+                debug_struct.field("buf_str", &limit_str_middle(buf_string));
+            }
+            // In case of error buffer was likely already flushed before and split valid UTF-8;
+            // loop until start of next valid substring is found
+            Err(_) => {
+                let mut substring_start = self.buf_write_pos;
+                let mut buf_string_suffix = None;
+
+                for i in 1..self.buf_write_pos {
+                    if let Ok(suffix) = std::str::from_utf8(&self.buf[i..self.buf_write_pos]) {
+                        buf_string_suffix = Some(format!("...{}", &limit_str_middle(suffix)));
+                        substring_start = i;
+                        break;
+                    }
+                }
+
+                // Only include the bytes which could not be decoded to string
+                debug_struct.field("buf...", &&self.buf[..substring_start]);
+
+                // If no valid suffix could be decoded use "..."
+                debug_struct.field("buf_str", &buf_string_suffix.unwrap_or("...".to_owned()));
+            }
+        }
+
+        debug_struct
+            .field("is_empty", &self.is_empty)
+            .field("expects_member_name", &self.expects_member_name)
+            .field("stack", &self.stack)
+            .field(
+                "is_string_value_writer_active",
+                &self.is_string_value_writer_active,
+            )
+            .field("indentation_level", &self.indentation_level)
+            .field("writer_settings", &self.writer_settings)
+            .finish()
+    }
+}
+
 const MAX_UTF8_BYTES_COUNT: usize = 4;
 
 struct StringValueWriterImpl<'j, W: Write> {
     json_writer: &'j mut JsonStreamWriter<W>,
+    /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
+    /// a user of this writer
+    ///
+    /// Buffering it is necessary to make sure it is valid UTF-8 data before writing it to the
+    /// underlying `Write`.
     utf8_buf: [u8; MAX_UTF8_BYTES_COUNT],
+    /// Index (0-based) within [utf8_buf] where the next byte should be written, respectively
+    /// number of already written bytes
     utf8_pos: usize,
+    /// Expected number of total bytes for the character whose bytes are currently in [utf8_buf]
     utf8_expected_len: usize,
 }
 
 fn map_utf8_error(e: Utf8Error) -> IoError {
-    IoError::new(
-        ErrorKind::InvalidData,
-        "Invalid UTF-8 data: ".to_owned() + e.to_string().as_str(),
-    )
+    IoError::new(ErrorKind::InvalidData, e)
 }
 
 fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
@@ -1075,7 +1160,7 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
                     i += 1;
                     continue;
                 } else {
-                    return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"));
+                    return Err(IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"));
                 }
 
                 let remaining_count = buf.len() - i;
@@ -1115,7 +1200,7 @@ impl<'j, W: Write> StringValueWriter for StringValueWriterImpl<'j, W> {
         if self.utf8_pos > 0 {
             return Err(IoError::new(
                 ErrorKind::InvalidData,
-                "Incomplete multi-byte UTF-8 data",
+                "incomplete multi-byte UTF-8 data",
             ));
         }
         self.json_writer.write_bytes(b"\"")?;
@@ -1544,7 +1629,7 @@ mod tests {
             F: FnOnce(Box<dyn StringValueWriter + '_>) -> Result<T, IoError>,
         >(
             f: F,
-            expected_message_prefix: &str,
+            expected_custom_message: Option<&str>,
         ) {
             let mut writer = Vec::<u8>::new();
             let mut json_writer = JsonStreamWriter::new(&mut writer);
@@ -1553,10 +1638,16 @@ mod tests {
                 Ok(_) => panic!("Should have failed"),
                 Err(e) => {
                     assert_eq!(ErrorKind::InvalidData, e.kind());
-                    assert!(
-                        e.to_string().starts_with(expected_message_prefix),
-                        "Actual message: {e}"
-                    );
+
+                    match expected_custom_message {
+                        None => assert!(
+                            e.get_ref().unwrap().is::<Utf8Error>(),
+                            "Inner error is not Utf8Error"
+                        ),
+                        Some(message) => {
+                            assert_eq!(message, e.to_string(), "Custom message does not match")
+                        }
+                    }
                 }
             }
         }
@@ -1566,7 +1657,7 @@ mod tests {
                 // Invalid UTF-8 byte 1111_1000
                 w.write_all(b"\xF8")
             },
-            "Invalid UTF-8 data",
+            Some("invalid UTF-8 data"),
         );
 
         assert_invalid_utf8(
@@ -1574,7 +1665,7 @@ mod tests {
                 // Malformed UTF-8; high surrogate U+D800 encoded in UTF-8 (= invalid)
                 w.write_all(b"\xED\xA0\x80")
             },
-            "Invalid UTF-8 data: ",
+            None,
         );
 
         assert_invalid_utf8(
@@ -1585,7 +1676,7 @@ mod tests {
                 w.write_all(b"\x80")?;
                 w.write_all(b"\x80")
             },
-            "Invalid UTF-8 data: ",
+            None,
         );
 
         assert_invalid_utf8(
@@ -1593,7 +1684,7 @@ mod tests {
                 // Overlong encoding for two bytes
                 w.write_all(b"\xC1\xBF")
             },
-            "Invalid UTF-8 data: ",
+            None,
         );
 
         assert_invalid_utf8(
@@ -1604,7 +1695,7 @@ mod tests {
                 w.write_all(b"\x80")?;
                 w.finish_value()
             },
-            "Incomplete multi-byte UTF-8 data",
+            Some("incomplete multi-byte UTF-8 data"),
         );
     }
 
@@ -1890,5 +1981,92 @@ mod tests {
         json_writer.begin_array().unwrap();
 
         json_writer.finish_document().unwrap();
+    }
+
+    struct DebuggableWriter;
+
+    impl Write for DebuggableWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // Pretend complete buffer content was written
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Debug for DebuggableWriter {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "debuggable-writer")
+        }
+    }
+
+    fn new_with_debuggable_writer() -> JsonStreamWriter<DebuggableWriter> {
+        JsonStreamWriter::new(DebuggableWriter)
+    }
+
+    // The following Debug output tests mainly exist to make sure the buffer content is properly displayed
+    // Besides that they heavily rely on implementation details
+
+    #[test]
+    fn debug_writer() -> TestResult {
+        let mut json_writer = new_with_debuggable_writer();
+        assert_eq!(
+            "JsonStreamWriter { writer: debuggable-writer, buf_count: 0, buf_str: \"\", is_empty: true, expects_member_name: false, stack: [], is_string_value_writer_active: false, indentation_level: 0, writer_settings: WriterSettings { pretty_print: false, escape_all_control_chars: false, escape_all_non_ascii: false, multi_top_level_value_separator: None } }",
+            format!("{json_writer:?}")
+        );
+
+        json_writer.string_value("test")?;
+        assert_eq!(
+            "JsonStreamWriter { writer: debuggable-writer, buf_count: 6, buf_str: \"\\\"test\\\"\", is_empty: false, expects_member_name: false, stack: [], is_string_value_writer_active: false, indentation_level: 0, writer_settings: WriterSettings { pretty_print: false, escape_all_control_chars: false, escape_all_non_ascii: false, multi_top_level_value_separator: None } }",
+            format!("{json_writer:?}")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug_writer_long() -> TestResult {
+        let mut json_writer = new_with_debuggable_writer();
+        json_writer.string_value("test".repeat(100).as_str())?;
+        assert_eq!(
+            "JsonStreamWriter { writer: debuggable-writer, buf_count: 402, buf_str: \"\\\"testtesttesttesttesttest ... testtesttesttesttesttest\\\"\", is_empty: false, expects_member_name: false, stack: [], is_string_value_writer_active: false, indentation_level: 0, writer_settings: WriterSettings { pretty_print: false, escape_all_control_chars: false, escape_all_non_ascii: false, multi_top_level_value_separator: None } }",
+            format!("{json_writer:?}"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn debug_writer_incomplete_with_suffix() -> TestResult {
+        let mut json_writer = new_with_debuggable_writer();
+        // Write a string value which splits a multi-byte UTF-8 char
+        // `WRITER_BUF_SIZE - 2` due to leading '"' of string, and to leave one byte space for
+        // first byte of multi-byte UTF-8
+        let string_value = format!("{}\u{10FFFF}test", "a".repeat(WRITER_BUF_SIZE - 2));
+        json_writer.string_value(&string_value)?;
+        assert_eq!(
+            "JsonStreamWriter { writer: debuggable-writer, buf_count: 8, buf...: [143, 191, 191], buf_str: \"...test\\\"\", is_empty: false, expects_member_name: false, stack: [], is_string_value_writer_active: false, indentation_level: 0, writer_settings: WriterSettings { pretty_print: false, escape_all_control_chars: false, escape_all_non_ascii: false, multi_top_level_value_separator: None } }",
+            format!("{json_writer:?}")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug_writer_incomplete_with_long_suffix() -> TestResult {
+        let mut json_writer = new_with_debuggable_writer();
+        // Write a string value which splits a multi-byte UTF-8 char
+        // `WRITER_BUF_SIZE - 2` due to leading '"' of string, and to leave one byte space for
+        // first byte of multi-byte UTF-8
+        let string_value = format!(
+            "{}\u{10FFFF}{}",
+            "a".repeat(WRITER_BUF_SIZE - 2),
+            "test".repeat(100)
+        );
+        json_writer.string_value(&string_value)?;
+        assert_eq!(
+            "JsonStreamWriter { writer: debuggable-writer, buf_count: 404, buf...: [143, 191, 191], buf_str: \"...testtesttesttesttesttestt ... testtesttesttesttesttest\\\"\", is_empty: false, expects_member_name: false, stack: [], is_string_value_writer_active: false, indentation_level: 0, writer_settings: WriterSettings { pretty_print: false, escape_all_control_chars: false, escape_all_non_ascii: false, multi_top_level_value_separator: None } }",
+            format!("{json_writer:?}")
+        );
+        Ok(())
     }
 }

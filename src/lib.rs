@@ -12,6 +12,7 @@
 #![doc(test(attr(deny(warnings))))]
 
 //! Ron is a [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
+//!
 //! Its main purpose is allowing to read and write JSON data in a memory efficient way without having to store the
 //! complete JSON document structure in memory. It is however *not* an object mapper which converts structs
 //! to JSON and vice versa, a dedicated library such as [Serde](https://github.com/serde-rs/json) should be

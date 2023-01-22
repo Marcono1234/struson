@@ -9,14 +9,16 @@ use crate::{
 
 /// Module for JSONPath
 ///
-/// JSONPath is specified in [this article](https://goessner.net/articles/JsonPath/). This module only
-/// supports a small subset needed for JSON reader functionality, most notably for reporting the location
-/// of errors and for [`JsonReader::seek_to`].
+/// A JSONPath consists of zero or more [`JsonPathPiece`] elements which either represent the index of a
+/// JSON array item or the name of a JSON object member. These elements combined form the _path_ to a value
+/// in a JSON document.
 ///
-/// A JSONPath consists of zero or more [`JsonPathPiece`] which either represent the index of a
-/// JSON array item or the name of a JSON object member. The macro [`json_path!`](json_path::json_path)
-/// and the function [`parse_json_path`](json_path::parse_json_path) can be used to create a JSONPath
-/// in a concise way.
+/// The macro [`json_path!`](json_path::json_path) and the function [`parse_json_path`](json_path::parse_json_path)
+/// can be used to create a JSONPath in a concise way.
+///
+/// JSONPath was originally specified in [this article](https://goessner.net/articles/JsonPath/). However,
+/// this module only supports a small subset needed for JSON reader functionality, most notably for reporting
+/// the location of errors and for [`JsonReader::seek_to`].
 ///
 /// Consider for example the following code:
 /// ```
@@ -28,10 +30,10 @@ use crate::{
 /// # ;
 /// ```
 /// It means: Within a JSON object the member with name "a", and assuming the value of that member is
-/// a JSON array, of that array the item at index 2.  
-/// The string representation in dot-notation would be `a[2]`.
+/// a JSON array, of that array the item at index 2 (starting at 0). The string representation of the
+/// path in dot-notation would be `a[2]`.  
+/// For example in the JSON string `{"a": [0.5, 1.5, 2.5]}` it would point to the value `2.5`.
 pub mod json_path {
-    use std::fmt::Display;
     use std::str::FromStr;
 
     use thiserror::Error;
@@ -92,17 +94,12 @@ pub mod json_path {
 
     /// Error which occurred while [parsing a JSONPath](parse_json_path)
     #[derive(Error, Clone, Debug)]
+    #[error("parse error at index {index}: {message}")]
     pub struct JsonPathParseError {
         /// Index (starting at 0) where the error occurred within the string
         pub index: usize,
         /// Message describing why the error occurred
         pub message: String,
-    }
-
-    impl Display for JsonPathParseError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "Parse error at index {}: {}", self.index, self.message)
-        }
     }
 
     /// Parses a JSONPath in dot-notation, for example `outer[4].inner`
@@ -112,7 +109,7 @@ pub mod json_path {
     /// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. The path string must not be empty. For malformed path strings
     /// an error is returned.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::json_path::*;
     /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
@@ -263,7 +260,7 @@ pub mod json_path {
     ///
     /// At least one path piece argument must be provided.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::json_path::*;
     /// let json_path = json_path!["outer", 3, "inner"];
@@ -424,7 +421,7 @@ pub mod json_path {
 use thiserror::Error;
 
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     io::{ErrorKind, Read},
     str::FromStr,
 };
@@ -498,15 +495,17 @@ pub struct JsonErrorLocation {
     ///
     ///   For example the path `$.a` means, depending on the error type, that either the error occurred for the value
     ///   of the member with name "a", for example when the value of the member is malformed. Or it means that parsing
-    ///   the name of the member after "a" or the end of the object failed. The special name `<?>` is used to indicate
-    ///   that a JSON object was started, but the name of the first member has not been consumed yet.
+    ///   the name of the member after "a" or the end of the object failed.  
+    ///   The special name `<?>` is used to indicate that a JSON object was started, but the name of the first member
+    ///   has not been consumed yet. It is also used when skipping values (for example with [`JsonReader::skip_value`])
+    ///   and updating the path is [disabled in the `ReaderSettings`](ReaderSettings::update_path_during_skip).
     ///
     /// For the exact location of the error the [`line`](Self::line) and [`column`](Self::column) values should be used.
     pub path: String,
     /// Line number of the error, starting at 0
     ///
-    /// The characters `\r\n`, `\r` and `\n` are considered line breaks. Other characters and escaped line breaks in member
-    /// names and string values are not considered line breaks.
+    /// The characters _CR_ (U+000D), _LF_ (U+000A) and _CR LF_ are considered line breaks. Other characters and
+    /// escaped line breaks in member names and string values are not considered line breaks.
     pub line: u32,
     /// Character column of the error within the current line, starting at 0
     ///
@@ -514,7 +513,7 @@ pub struct JsonErrorLocation {
     /// such as UTF-8 might use more than one byte for the character, or whether encodings such as UTF-16
     /// might use two characters (a *surrogate pair*) to encode the character. Similarly the tab character
     /// (U+0009) is also considered a single character even though code editors might display it as if it
-    /// consisted of more than one space characters.
+    /// consisted of more than one space character.
     pub column: u32,
 }
 
@@ -629,13 +628,13 @@ pub enum UnexpectedStructureKind {
 #[derive(Error, Debug)]
 pub enum ReaderError {
     /// A syntax error was encountered
-    #[error("Syntax error: {0}")]
+    #[error("syntax error: {0}")]
     SyntaxError(#[from] JsonSyntaxError),
     /// The next JSON value had an unexpected type
     ///
     /// This error can occur for example when trying to read a JSON number when the next value is actually
     /// a JSON boolean.
-    #[error("Expected JSON value type {expected} but got {actual} at {location}")]
+    #[error("expected JSON value type {expected} but got {actual} at {location}")]
     UnexpectedValueType {
         /// The expected JSON value type
         expected: ValueType,
@@ -660,7 +659,7 @@ pub enum ReaderError {
     /// ```
     /// Note: For a JSON object [`skip_name`](JsonReader::skip_name) and [`skip_value`](JsonReader::skip_value)
     /// have to be called for every member to skip its name and value.
-    #[error("Unexpected JSON structure {kind} at {location}")]
+    #[error("unexpected JSON structure {kind} at {location}")]
     UnexpectedStructure {
         /// Describes why the JSON document is considered to have an invalid structure
         kind: UnexpectedStructureKind,
@@ -677,10 +676,10 @@ pub enum ReaderError {
 #[derive(Error, Debug)]
 pub enum TransferError {
     /// Error which occurred while readering from the JSON reader
-    #[error("Reader error: {0}")]
+    #[error("reader error: {0}")]
     ReaderError(#[from] ReaderError),
     /// Error which occurred while writing to the JSON writer
-    #[error("Writer error: {0}")]
+    #[error("writer error: {0}")]
     WriterError(#[from] IoError),
 }
 
@@ -729,7 +728,7 @@ pub enum TransferError {
 /// of optional whitespace only). To verify that there is no trailing data it is necessary
 /// to explicitly call [`consume_trailing_whitespace`](Self::consume_trailing_whitespace).
 ///
-/// # Example
+/// # Examples
 /// ```
 /// # use ron::reader::*;
 /// // In this example JSON data comes from a string;
@@ -784,7 +783,7 @@ pub trait JsonReader {
     /// not known in advance, or when a value could be of more than one type. The value can then be
     /// consumed with one of the other methods.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("true".as_bytes());
@@ -818,7 +817,7 @@ pub trait JsonReader {
     /// first call [`next_name`](Self::next_name) and afterwards one of the value reading methods such as [`next_number`](Self::next_number).
     /// At the end call [`end_object`](Self::end_object) to consume the closing bracket of the JSON object.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
@@ -892,7 +891,7 @@ pub trait JsonReader {
     /// Note that JSON arrays can contain values of different types, so for example the
     /// following is valid JSON: `[1, true, "a"]`
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("[1, 2, 3]".as_bytes());
@@ -960,7 +959,7 @@ pub trait JsonReader {
     /// This method can be useful as condition of a `while` loop when processing a JSON array or object
     /// of unknown size.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("[1]".as_bytes());
@@ -996,7 +995,7 @@ pub trait JsonReader {
     /// must implement this detection themselves to protect against exploits relying
     /// on different handling of duplicate names by different JSON parsing libraries.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
@@ -1025,7 +1024,7 @@ pub trait JsonReader {
     /// can be used to obtain a reader which allows lazily reading the value. Especially for
     /// large string values this can be useful.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#""text with \"quotes\"""#.as_bytes());
@@ -1068,7 +1067,7 @@ pub trait JsonReader {
     /// necessary to explicitly `drop(...)` it for the Rust compiler to allow using the original
     /// JSON reader again.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"["hello"]"#.as_bytes());
@@ -1115,7 +1114,7 @@ pub trait JsonReader {
     /// If parsing the number should be deferred to a later point or the exact format of the
     /// JSON number should be preserved, the method [`next_number_as_string`](Self::next_number_as_string) can be used.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12".as_bytes());
@@ -1151,7 +1150,7 @@ pub trait JsonReader {
     ///
     /// The method [`next_number`](Self::next_number) can be used instead to parse the number directly in place.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12.0e5".as_bytes());
@@ -1178,7 +1177,7 @@ pub trait JsonReader {
 
     /// Consumes and returns a JSON boolean value
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("true".as_bytes());
@@ -1209,7 +1208,7 @@ pub trait JsonReader {
     /// Either the JSON value is a JSON null, or otherwise an error is returned because the
     /// value had a different type (see "Errors" section below).
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new("null".as_bytes());
@@ -1246,7 +1245,7 @@ pub trait JsonReader {
     /// but discarding its result. However, `skip_name` nonetheless also verifies that the skipped
     /// name has valid syntax.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
@@ -1282,7 +1281,7 @@ pub trait JsonReader {
     /// methods (such as `next_string()`) but discarding their result.
     /// However, `skip_value` nonetheless also verifies that the skipped JSON data has valid syntax.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": [{}], "b": 1}"#.as_bytes());
@@ -1328,7 +1327,7 @@ pub trait JsonReader {
     /// Seeking to a specific location can be useful when parts of the processed JSON document
     /// are not relevant for the application processing it.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
@@ -1354,6 +1353,9 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
+    // TODO: Should this rather take a `IntoIterator<Item = JsonPathPiece>` as path?
+    //   Though use cases where the path is created dynamically and is not present as slice might be rare
+    //   When changing this method, might render the `JsonPath` type alias a bit pointless then
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
 
     /// Skips the remaining elements of all currently enclosing JSON arrays and objects
@@ -1372,7 +1374,7 @@ pub trait JsonReader {
     /// - or, multiple top-level values are enabled in the [`ReaderSettings`] and the next top-level
     ///   value should be consumed
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
@@ -1410,7 +1412,7 @@ pub trait JsonReader {
     /// [`seek_to`](Self::seek_to) to position the reader before calling this method. Embedding
     /// can be done by already writing JSON data to the JSON writer before calling this method.
     ///
-    /// # Example
+    /// # Examples
     /// ```
     /// # use ron::reader::*;
     /// # use ron::reader::json_path::*;
@@ -1505,7 +1507,7 @@ pub trait JsonReader {
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
 }
 
-#[derive(PartialEq, Clone, Copy, strum_macros::Display)]
+#[derive(PartialEq, Clone, Copy, strum_macros::Display, Debug)]
 enum PeekedValue {
     ObjectStart,
     ObjectEnd,
@@ -1523,7 +1525,7 @@ enum PeekedValue {
 
 #[derive(Error, Debug)]
 enum StringReadingError {
-    #[error("Syntax error: {0}")]
+    #[error("syntax error: {0}")]
     SyntaxError(#[from] JsonSyntaxError),
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
@@ -1543,7 +1545,12 @@ const READER_BUF_SIZE: usize = 1024;
 /// A JSON reader implementation which consumes data from a [`Read`]
 ///
 /// This reader internally buffers data so it is normally not necessary to wrap the provided
-/// reader in a [`std::io::BufReader`].
+/// reader in a [`std::io::BufReader`]. However, due to this buffering it should not be
+/// attempted to use the provided `Read` after this JSON reader was dropped (in case the
+/// `Read` was provided by reference only), unless [`JsonReader::consume_trailing_whitespace`]
+/// was called and therefore the end of the `Read` stream was reached. Otherwise due to
+/// the buffering it is unpredictable how much additional data this JSON reader has consumed
+/// from the `Read`.
 ///
 /// The data provided by the underlying reader is expected to be valid UTF-8 data.
 /// The JSON reader methods will return a [`ReaderError::IoError`] if invalid UTF-8 data
@@ -1586,6 +1593,7 @@ const READER_BUF_SIZE: usize = 1024;
 /// When processing JSON data from an untrusted source, users of this JSON reader must implement protections
 /// against the above mentioned security issues themselves.
 pub struct JsonStreamReader<R: Read> {
+    // When adding more fields to this struct, adjust the Debug implementation below, if necessary
     reader: R,
     buf: [u8; READER_BUF_SIZE],
     buf_pos: usize,
@@ -1594,7 +1602,8 @@ pub struct JsonStreamReader<R: Read> {
     reached_eof: bool,
 
     peeked: Option<PeekedValue>,
-    // Whether the current object or array is empty, or at top-level whether at least one value has been consumed already
+    /// Whether the current array or object is empty, or at top-level whether
+    /// at least one value has been consumed already
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<ValueType>,
@@ -1605,6 +1614,72 @@ pub struct JsonStreamReader<R: Read> {
     json_path: Vec<JsonPathPiece>,
 
     reader_settings: ReaderSettings,
+}
+
+// TODO: Is there a way to have `R` only optionally implement `Debug`?
+impl<R: Read + Debug> Debug for JsonStreamReader<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug_struct = f.debug_struct("JsonStreamReader");
+        debug_struct.field("reader", &self.reader);
+
+        if self.reached_eof {
+            debug_struct.field("reached_eof", &"true");
+        } else {
+            debug_struct.field("buf_count", &(self.buf_end_pos - self.buf_pos));
+            let buf_content = &self.buf[self.buf_pos..self.buf_end_pos];
+
+            fn limit_str(s: &str, add_ellipsis: bool) -> String {
+                match s.char_indices().nth(45) {
+                    None => s.to_owned(),
+                    Some((index, _)) => {
+                        let s = s[..index].to_owned();
+                        if add_ellipsis {
+                            format!("{s}...")
+                        } else {
+                            s
+                        }
+                    }
+                }
+            }
+
+            match std::str::from_utf8(buf_content) {
+                Ok(buf_string) => {
+                    debug_struct.field("buf_str", &limit_str(buf_string, true));
+                }
+                Err(e) => {
+                    let prefix_end = e.valid_up_to();
+                    let buf_string_prefix = limit_str(
+                        std::str::from_utf8(&buf_content[..prefix_end]).unwrap(),
+                        // Don't conditionally add ellipsis; code below will always add ellipsis
+                        false,
+                    );
+                    debug_struct.field("buf_str", &format!("{buf_string_prefix}..."));
+                    if buf_string_prefix.len() < 15 {
+                        // Include some of the invalid bytes which start after the prefix
+                        debug_struct.field(
+                            "...buf...",
+                            &&buf_content[prefix_end..(prefix_end + 30).min(buf_content.len())],
+                        );
+                    }
+                }
+            }
+        }
+
+        debug_struct
+            .field("peeked", &self.peeked)
+            .field("is_empty", &self.is_empty)
+            .field("expects_member_name", &self.expects_member_name)
+            .field("stack", &self.stack)
+            .field(
+                "is_string_value_reader_active",
+                &self.is_string_value_reader_active,
+            )
+            .field("line", &self.line)
+            .field("column", &self.column)
+            .field("json_path", &self.json_path)
+            .field("reader_settings", &self.reader_settings)
+            .finish()
+    }
 }
 
 // 4 (max bytes for UTF-8 encoded char) - 1, since at least one byte was already consumed
@@ -1642,7 +1717,7 @@ pub struct ReaderSettings {
     /// Note that unlike for member names and string values, control characters in the range
     /// `0x00` to `0x1F` (inclusive) are allowed in comments.
     ///
-    /// # Example
+    /// # Examples
     /// ```json
     /// [
     ///     // This is the first value
@@ -2251,10 +2326,17 @@ impl<R: Read> JsonStreamReader<R> {
         byte1: u8,
         consumer: &mut C,
     ) -> Result<(), StringReadingError> {
+        fn invalid_utf8_err() -> Result<(), StringReadingError> {
+            Err(StringReadingError::IoError(IoError::new(
+                ErrorKind::InvalidData,
+                "invalid UTF-8 data",
+            )))
+        }
+
         let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
         if (byte2 & 0b1100_0000) != 0b1000_0000 {
-            return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+            return invalid_utf8_err();
         }
 
         if (byte1 & 0b1110_0000) == 0b1100_0000 {
@@ -2262,7 +2344,7 @@ impl<R: Read> JsonStreamReader<R> {
                 (u32::from(byte1) & !0b1110_0000) << 6 | (u32::from(byte2) & !0b1100_0000);
             // Check for 'overlong encoding'
             if code_point < 0x80 {
-                return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                return invalid_utf8_err();
             }
             consumer(byte1);
             consumer(byte2);
@@ -2270,7 +2352,7 @@ impl<R: Read> JsonStreamReader<R> {
             let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
             if (byte3 & 0b1100_0000) != 0b1000_0000 {
-                return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                return invalid_utf8_err();
             }
 
             if (byte1 & 0b1111_0000) == 0b1110_0000 {
@@ -2279,7 +2361,7 @@ impl<R: Read> JsonStreamReader<R> {
                     | (u32::from(byte3) & !0b1100_0000);
                 // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
                 if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
-                    return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                    return invalid_utf8_err();
                 }
 
                 consumer(byte1);
@@ -2295,7 +2377,7 @@ impl<R: Read> JsonStreamReader<R> {
 
                     // Check for 'overlong encoding', or encoding of invalid code point
                     if !(0x10000..=0x10FFFF).contains(&code_point) {
-                        return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                        return invalid_utf8_err();
                     }
 
                     consumer(byte1);
@@ -2303,10 +2385,10 @@ impl<R: Read> JsonStreamReader<R> {
                     consumer(byte3);
                     consumer(byte4);
                 } else {
-                    return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                    return invalid_utf8_err();
                 }
             } else {
-                return Err(IoError::new(ErrorKind::InvalidData, "Invalid UTF-8 data"))?;
+                return invalid_utf8_err();
             }
         }
         Ok(())
@@ -2993,7 +3075,7 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
                 }
                 Err(e) => match e {
                     StringReadingError::SyntaxError(e) => {
-                        return Err(IoError::new(ErrorKind::Other, e.to_string()))
+                        return Err(IoError::new(ErrorKind::Other, e))
                     }
                     StringReadingError::IoError(e) => return Err(e),
                 },
@@ -3322,7 +3404,7 @@ mod tests {
                 Err(e) => match e {
                     ReaderError::IoError(e) => {
                         assert_eq!(ErrorKind::InvalidData, e.kind());
-                        assert_eq!("Invalid UTF-8 data", format!("{}", e));
+                        assert_eq!("invalid UTF-8 data", format!("{}", e));
                     }
                     other => panic!("Unexpected error: {other}"),
                 },
@@ -3445,6 +3527,22 @@ mod tests {
                 assert_eq!(
                     "JSON syntax error UnknownEscapeSequence at line 0, column 1 at path $",
                     e.to_string()
+                );
+                let cause: &JsonSyntaxError = e
+                    .get_ref()
+                    .unwrap()
+                    .downcast_ref::<JsonSyntaxError>()
+                    .unwrap();
+                assert_eq!(
+                    &JsonSyntaxError {
+                        kind: SyntaxErrorKind::UnknownEscapeSequence,
+                        location: JsonErrorLocation {
+                            path: "$".to_owned(),
+                            line: 0,
+                            column: 1
+                        }
+                    },
+                    cause
                 );
             }
         }
@@ -4199,6 +4297,11 @@ mod tests {
         let mut json_reader = new_reader(r#"[1, {"a": 2, "b": {"c": [3, 4]}, "b": 5}]"#);
         json_reader.seek_to(&json_path![1, "b", "c", 0])?;
         assert_eq!("3", json_reader.next_number_as_string()?);
+
+        assert_eq!(ValueType::Number, json_reader.peek()?);
+        // Calling seek_to with empty path should have no effect
+        json_reader.seek_to(&[])?;
+        assert_eq!("4", json_reader.next_number_as_string()?);
 
         Ok(())
     }
@@ -5088,7 +5191,7 @@ mod tests {
             Err(e) => match e {
                 ReaderError::IoError(e) => {
                     assert_eq!(ErrorKind::InvalidData, e.kind());
-                    assert_eq!("Invalid UTF-8 data", format!("{}", e));
+                    assert_eq!("invalid UTF-8 data", format!("{}", e));
                 }
                 other => panic!("Unexpected error: {other}"),
             },
@@ -5313,6 +5416,121 @@ mod tests {
         }
         json_reader.end_array()?;
         json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
+    struct DebuggableReader<'a> {
+        bytes: &'a [u8],
+        has_read: bool,
+    }
+
+    impl<'a> Read for DebuggableReader<'a> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.has_read {
+                return Ok(0);
+            }
+
+            let bytes_len = self.bytes.len();
+
+            // For simplicity of this test assume that buf is large enough
+            assert!(buf.len() >= bytes_len);
+            buf[..bytes_len].copy_from_slice(self.bytes);
+            self.has_read = true;
+            Ok(bytes_len)
+        }
+    }
+
+    impl<'a> Debug for DebuggableReader<'a> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "debuggable-reader")
+        }
+    }
+
+    fn new_with_debuggable_reader(bytes: &[u8]) -> JsonStreamReader<DebuggableReader> {
+        JsonStreamReader::new(DebuggableReader {
+            bytes,
+            has_read: false,
+        })
+    }
+
+    // The following Debug output tests mainly exist to make sure the buffer content is properly displayed
+    // Besides that they heavily rely on implementation details
+
+    #[test]
+    fn debug_reader() -> TestResult {
+        let json_number = "123";
+        let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
+
+        assert_eq!(ValueType::Number, json_reader.peek()?);
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
+
+        assert_eq!(json_number, json_reader.next_number_as_string()?);
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
+    #[test]
+    fn debug_reader_long() -> TestResult {
+        let json_number = "123456".repeat(100);
+        let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
+
+        assert_eq!(ValueType::Number, json_reader.peek()?);
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
+
+        assert_eq!(json_number, json_reader.next_number_as_string()?);
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
+    #[test]
+    fn debug_reader_incomplete() -> TestResult {
+        // Incomplete UTF-8 multi-byte
+        let json = b"\"this is a test\xC3";
+        let mut json_reader = new_with_debuggable_reader(json);
+        assert_eq!(ValueType::String, json_reader.peek()?);
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug_reader_invalid_short() -> TestResult {
+        // Malformed UTF-8
+        let json = b"\"a\xFF";
+        let mut json_reader = new_with_debuggable_reader(json);
+        assert_eq!(ValueType::String, json_reader.peek()?);
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug_reader_invalid_long() -> TestResult {
+        // Malformed UTF-8 after long valid prefix
+        let mut json = vec![b'\"'];
+        json.extend(b"abcdef".repeat(20));
+        json.push(b'\xFF');
+
+        let mut json_reader = new_with_debuggable_reader(json.as_slice());
+        assert_eq!(ValueType::String, json_reader.peek()?);
+        assert_eq!(
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            format!("{json_reader:?}")
+        );
         Ok(())
     }
 }
