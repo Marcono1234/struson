@@ -2493,6 +2493,7 @@ impl<R: Read> JsonStreamReader<R> {
             }
         }
 
+        // Update column afterwards, so in case of error start position of escape sequence or multi-byte UTF-8 char is reported
         self.column += consumed_chars_count;
         Ok(false)
     }
@@ -2593,7 +2594,7 @@ impl<R: Read> JsonStreamReader<R> {
         let mut consumed_bytes = 0;
         let is_valid = consume_json_number(
             &mut || {
-                // Should not fail since last peek() succeeded
+                // Should not fail since last peek_byte() succeeded
                 self.skip_peeked_byte();
                 self.peek_byte()
             },
@@ -5376,9 +5377,8 @@ mod tests {
             if self.pos >= self.bytes.len() {
                 return Ok(0);
             }
-            let read_count =
-                // Always reads at most 3 bytes
-                (if buf.len() < 3 { buf.len() } else { 3 }).min(self.bytes.len() - self.pos);
+            // Always reads at most 3 bytes
+            let read_count = 3.min(buf.len().min(self.bytes.len() - self.pos));
             buf[..read_count].copy_from_slice(&self.bytes[self.pos..(self.pos + read_count)]);
             self.pos += read_count;
 
@@ -5415,6 +5415,7 @@ mod tests {
             assert_eq!(true, json_reader.next_bool()?);
         }
         json_reader.end_array()?;
+        assert_eq!(json.len() as u32, json_reader.column);
         json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
@@ -5531,6 +5532,33 @@ mod tests {
             "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
             format!("{json_reader:?}")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn large_number() -> TestResult {
+        let count = READER_BUF_SIZE;
+        let number_json = "123".repeat(count);
+        let mut json_reader = new_reader(number_json.as_str());
+
+        assert_eq!(number_json, json_reader.next_number_as_string()?);
+        assert_eq!(number_json.len() as u32, json_reader.column);
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
+    #[test]
+    fn large_string() -> TestResult {
+        let count = READER_BUF_SIZE;
+        let string_json = "abc\u{10FFFF}d\\u1234e\\n".repeat(count);
+        let expected_string_value = "abc\u{10FFFF}d\u{1234}e\n".repeat(count);
+        let json = "\"".to_owned() + string_json.as_str() + "\"";
+        let mut json_reader = new_reader(json.as_str());
+
+        assert_eq!(expected_string_value, json_reader.next_string()?);
+        // `- (3 * count)` to account for \u{10FFFF} taking up 4 bytes but representing a single char
+        assert_eq!((json.len() - (3 * count)) as u32, json_reader.column);
+        json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
 }

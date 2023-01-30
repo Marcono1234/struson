@@ -1062,7 +1062,10 @@ impl<W: Write + Debug> Debug for JsonStreamWriter<W> {
                 debug_struct.field("buf...", &&self.buf[..substring_start]);
 
                 // If no valid suffix could be decoded use "..."
-                debug_struct.field("buf_str", &buf_string_suffix.unwrap_or("...".to_owned()));
+                debug_struct.field(
+                    "buf_str",
+                    &buf_string_suffix.unwrap_or_else(|| "...".to_owned()),
+                );
             }
         }
 
