@@ -793,12 +793,10 @@ impl<W: Write> JsonStreamWriter<W> {
             match &self.writer_settings.multi_top_level_value_separator {
                 None => panic!("Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"),
                 Some(separator) => {
-                    let separator = separator.as_bytes();
-                    // Workaround to allow borrowing immutable separator while at the same time `write_bytes` has a mutable borrow
-                    // TODO Check if there is a saner solution to this
-                    unsafe {
-                        self.write_bytes(std::slice::from_raw_parts(separator.as_ptr(), separator.len()))?;
-                    }
+                    // TODO: Avoid clone() here; compiler currently does not allow borrowing it because
+                    // `write_bytes` has a mutable borrow to self
+                    let separator = separator.clone();
+                    self.write_bytes(separator.as_bytes())?;
                 },
             }
         } else if self.is_in_array() {

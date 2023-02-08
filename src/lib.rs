@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 // Allow needless `return` because that makes it sometimes more obvious that
 // an expression is the result of the function
 #![allow(clippy::needless_return)]
