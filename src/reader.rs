@@ -1622,6 +1622,12 @@ impl From<StringReadingError> for ReaderError {
     }
 }
 
+#[derive(PartialEq, Debug)]
+enum StackValue {
+    Array,
+    Object,
+}
+
 const READER_BUF_SIZE: usize = 1024;
 
 /// A JSON reader implementation which consumes data from a [`Read`]
@@ -1688,7 +1694,7 @@ pub struct JsonStreamReader<R: Read> {
     /// at least one value has been consumed already
     is_empty: bool,
     expects_member_name: bool,
-    stack: Vec<ValueType>,
+    stack: Vec<StackValue>,
     is_string_value_reader_active: bool,
 
     line: u32,
@@ -1957,11 +1963,13 @@ impl<R: Read> JsonStreamReader<R> {
     }
 
     fn is_in_array(&self) -> bool {
-        self.stack.last().map_or(false, |v| v == &ValueType::Array)
+        self.stack.last().map_or(false, |v| v == &StackValue::Array)
     }
 
     fn is_in_object(&self) -> bool {
-        self.stack.last().map_or(false, |v| v == &ValueType::Object)
+        self.stack
+            .last()
+            .map_or(false, |v| v == &StackValue::Object)
     }
 
     fn expects_member_value(&self) -> bool {
@@ -2752,7 +2760,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn begin_array(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Array)?;
-        self.stack.push(ValueType::Array);
+        self.stack.push(StackValue::Array);
         self.json_path.push(JsonPathPiece::ArrayItem(0));
         // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
         self.expects_member_name = false;
@@ -2778,7 +2786,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn begin_object(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Object)?;
-        self.stack.push(ValueType::Object);
+        self.stack.push(StackValue::Object);
         // Push a placeholder which is replaced once the name of the first member is read
         // Important: When changing this placeholder in the future also have to update documentation mentioning to it
         self.json_path
@@ -3032,13 +3040,13 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
         while let Some(value_type) = self.stack.last() {
             match value_type {
-                ValueType::Array => {
+                StackValue::Array => {
                     while self.has_next()? {
                         self.skip_value()?;
                     }
                     self.end_array()?;
                 }
-                ValueType::Object => {
+                StackValue::Object => {
                     while self.has_next()? {
                         // Uses variant which updates the JSON path when skipping the name, otherwise the error
                         // location would point to name of an unrelated previously consumed member in the same object
@@ -3047,7 +3055,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     }
                     self.end_object()?;
                 }
-                _ => unreachable!("Stack should only contain either array or object type"),
             }
         }
         Ok(())
