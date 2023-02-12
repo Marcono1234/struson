@@ -11,28 +11,47 @@ strum = "0.24"
 strum_macros = "0.24"
 duplicate = "0.4.1"
 
+serde = { version = "1.0.152", optional = true }
+
 [dev-dependencies]
 criterion = {version = "0.4.0", features = ["html_reports"] }
-# Serde is used for comparison in benchmarks
+# Serde is used for comparison in benchmarks and for tests
 serde = "1.0.152"
 serde_json = "1.0.91"
 
+# docs.rs specific configuration
+[package.metadata.docs.rs]
+# Document all features
+all-features = true
+# Set configuration flag to enable docs.rs specific doc attributes, such as `doc_auto_cfg`
+# See https://stackoverflow.com/q/61417452
+rustdoc-args = ["--cfg", "docsrs"]
+
+
+# For all these benchmarks disable default harness (`harness = false`) because Criterion creates its own
+
 [[bench]]
 name = "reader_benchmark"
-# Disable default harness because Criterion creates its own
 harness = false
 
 [[bench]]
 name = "reader_struct_benchmark"
-# Disable default harness because Criterion creates its own
 harness = false
 
 [[bench]]
 name = "writer_benchmark"
-# Disable default harness because Criterion creates its own
 harness = false
 
 [[bench]]
 name = "writer_struct_benchmark"
-# Disable default harness because Criterion creates its own
 harness = false
+
+[[bench]]
+name = "serde_serialize_benchmark"
+harness = false
+required-features = ["serde"]
+
+[[bench]]
+name = "serde_deserialize_benchmark"
+harness = false
+required-features = ["serde"]

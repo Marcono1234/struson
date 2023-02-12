@@ -11,6 +11,9 @@
 #![doc(test(attr(warn(unused))))]
 // Fail on warnings in doc tests
 #![doc(test(attr(deny(warnings))))]
+// When `docsrs` configuration flag is set enable banner for features in documentation
+// See https://stackoverflow.com/q/61417452
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 //! Ron is a [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
 //!
@@ -20,6 +23,9 @@
 //! used for that.
 //!
 //! The API of Ron was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson).
+//! It is rather low-level and corresponds to the elements of a JSON document, with little
+//! abstraction on top of it, allowing to read and write any valid JSON document regardless
+//! of its structure or content.
 //!
 //! # Terminology
 //!
@@ -81,8 +87,16 @@
 //! assert_eq!(r#"{"a":[1,true]}"#, std::str::from_utf8(&writer)?);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Serde integration
+//! Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to
+//! allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from
+//! a `JsonReader`. See the [`serde`](crate::serde) module of this crate for more information.
 
 pub mod reader;
 pub mod writer;
+
+#[cfg(feature = "serde")]
+pub mod serde;
 
 mod json_number;

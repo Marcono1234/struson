@@ -28,6 +28,7 @@ type IoError = std::io::Error;
 ///     - [`number_value`](Self::number_value), [`fp_number_value`](Self::fp_number_value), [`number_value_from_string`](Self::number_value_from_string): Writing a JSON number value
 ///     - [`bool_value`](Self::bool_value): Writing a JSON boolean value
 ///     - [`null_value`](Self::null_value): Writing a JSON null value
+///     - [`serialize_value`](Self::serialize_value): Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value (optional feature)
 ///  - Other:
 ///     - [`finish_document`](Self::finish_document): Ensuring that the JSON document is complete and flushing the buffer
 ///
@@ -41,7 +42,7 @@ type IoError = std::io::Error;
 /// Once the JSON document is complete, [`finish_document`](Self::finish_document) has to be called to ensure that the
 /// JSON document really is complete and to flush the internal buffer to the underlying writer.
 /// Forgetting to call [`finish_document`](Self::finish_document) leads to unspecified behavior; most likely the written
-/// JSON document will be incomplete.
+/// JSON document will be incomplete. However, no _undefined_ behavior occurs.
 ///
 /// # Examples
 /// ```
@@ -72,7 +73,7 @@ type IoError = std::io::Error;
 /// the JSON document. In most cases the error can only be an IO error which was caused
 /// by the underlying writer. When encountering such an error, writing the JSON document
 /// **must** be aborted. Trying to call any writer methods afterwards can lead to unspecified
-/// behavior.
+/// behavior, such as errors, panics or incorrect data. However, no _undefined_ behavior occurs.
 ///
 /// In general it is recommended to handle errors with the `?` operator of Rust, for example
 /// `json_writer.bool_value(true)?` and to abort writing the JSON document when an error occurs.
@@ -322,10 +323,12 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    // TODO: Instead of Box<dyn ...> should this directly declare struct as return type
-    //   (and not have separate trait StringValueWriter)?
-    //   But then users might not be able to implement JsonWriter themselves anymore easily;
-    //   would also be inconsistent with JsonReader::next_string_reader
+    /*
+     * TODO: Instead of Box<dyn ...> should this directly declare struct as return type
+     *   (and not have separate trait StringValueWriter)?
+     *   But then users might not be able to implement JsonWriter themselves anymore easily;
+     *   would also be inconsistent with JsonReader::next_string_reader
+     */
     fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError>;
 
     /// Writes the string representation of a JSON number value
@@ -363,7 +366,7 @@ pub trait JsonWriter {
     /// Writes an integral JSON number value
     ///
     /// This method supports all standard primitive integral number types, such as `u32`.
-    /// To write a floating point value use [`fp_number_value`](Self::fp_number_value), to write a number in a
+    /// To write a floating point number use [`fp_number_value`](Self::fp_number_value), to write a number in a
     /// specific format use [`number_value_from_string`](Self::number_value_from_string).
     ///
     /// # Examples
@@ -419,9 +422,75 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    // TODO: Maybe give this method a better name?
-    // TODO: Maybe also support writing in scientifict notation, e.g. `4.1e1`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
+    /*
+     * TODO: Maybe give this method a better name?
+     * TODO: Maybe also support writing in scientific notation, e.g. `4.1e20`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
+     */
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError>;
+
+    /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
+    ///
+    /// This method is part of the optional Serde integration feature, see the
+    /// [`serde`](crate::serde) module of this crate for more information.
+    ///
+    /// If it is not possible to directly serialize a value in place, instead of using
+    /// this method a [`JsonWriterSerializer`](crate::serde::JsonWriterSerializer)
+    /// can be constructed and serialization can be performed using it later on. However,
+    /// this should only be rarely necessary.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ron::writer::*;
+    /// # use serde::*;
+    /// // In this example JSON bytes are stored in a Vec;
+    /// // normally they would be written to a file or network connection
+    /// let mut writer = Vec::<u8>::new();
+    /// let mut json_writer = JsonStreamWriter::new(&mut writer);
+    ///
+    /// // Start writing the enclosing data using the regular JsonWriter methods
+    /// json_writer.begin_object()?;
+    /// json_writer.name("outer")?;
+    ///
+    /// #[derive(Serialize)]
+    /// struct MyStruct {
+    ///     text: String,
+    ///     number: u64,
+    /// }
+    ///
+    /// let value = MyStruct {
+    ///     text: "some text".to_owned(),
+    ///     number: 5,
+    /// };
+    /// // Serialize the value as next JSON value
+    /// json_writer.serialize_value(&value)?;
+    ///
+    /// // Write the remainder of the enclosing data
+    /// json_writer.end_object()?;
+    ///
+    /// // Ensures that the JSON document is complete and flushes the buffer
+    /// json_writer.finish_document()?;
+    ///
+    /// assert_eq!(
+    ///     r#"{"outer":{"text":"some text","number":5}}"#,
+    ///     std::str::from_utf8(&writer)?
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Errors can occur when either this JSON writer or the `Serialize` encounters an
+    /// error. In which situations this can happen depends on the `Serialize` implementation.
+    ///
+    /// # Panics
+    /// Panics when called on a JSON writer which currently expects a member name, or
+    /// when called after the top-level value has already been written and multiple top-level
+    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
+    /// usage by the user.
+    #[cfg(feature = "serde")]
+    fn serialize_value<S: serde::ser::Serialize>(
+        &mut self,
+        value: &S,
+    ) -> Result<(), crate::serde::SerializerError>;
 
     /// Verifies that the JSON document is complete and flushes the buffer
     ///
@@ -436,9 +505,11 @@ pub trait JsonWriter {
     /// Panics when called on a JSON writer which has not written any top-level yet, or when
     /// called while the top-level value has not been fully written yet. Both cases
     /// indicate incorrect usage by the user.
-    // Consumes 'self'
-    // Note: Dropping writer will not automatically finish document since that would silently discard errors which might occur
-    // TODO: Does consuming 'self' here really guarantee that writer cannot be used afterwards anymore; can this be bypassed with reference somehow?
+    /*
+     * Consumes 'self'
+     * Note: Dropping writer will not automatically finish document since that would silently discard errors which might occur
+     * TODO: Does consuming 'self' here really guarantee that writer cannot be used afterwards anymore; can this be bypassed with reference somehow?
+     */
     fn finish_document(self) -> Result<(), IoError>;
 }
 
@@ -454,13 +525,13 @@ pub trait JsonWriter {
 /// Otherwise the string value writer will still be considered 'active' and all
 /// methods of the original JSON writer will panic. Dropping the writer will not
 /// automatically finish the value.
-// Note: Dropping writer will not automatically finish value since that would silently discard errors which might occur
+/* Note: Dropping writer will not automatically finish value since that would silently discard errors which might occur */
 pub trait StringValueWriter: Write {
     /// Finishes the JSON string value
     ///
     /// This method must be called when writing the string value is done to allow
     /// using the original JSON writer again.
-    // Consumes 'self'
+    /* Consumes 'self' */
     fn finish_value(self: Box<Self>) -> Result<(), IoError>;
 }
 
@@ -473,6 +544,7 @@ pub trait IntegralNumber: private::Sealed + ToString + Copy {
     /// Converts this to number to a JSON number string
     #[doc(hidden)]
     fn to_json_number(self) -> String {
+        // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
         self.to_string()
     }
 }
@@ -511,7 +583,7 @@ pub enum JsonNumberError {
     InvalidNumber(String),
     /// An IO error occurred while writing the number
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    IoError(#[from] IoError),
 }
 
 // Use `duplicate` create to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
@@ -522,6 +594,8 @@ impl IntegralNumber for type_template {}
 impl FloatingPointNumber for type_template {
     fn to_json_number(self) -> Result<String, JsonNumberError> {
         if self.is_finite() {
+            // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
+            //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
             Ok(self.to_string())
         } else {
             Err(JsonNumberError::InvalidNumber(
@@ -972,6 +1046,18 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
                 "Invalid JSON number: ".to_owned() + value,
             ))
         }
+    }
+
+    #[cfg(feature = "serde")]
+    fn serialize_value<S: serde::ser::Serialize>(
+        &mut self,
+        value: &S,
+    ) -> Result<(), crate::serde::SerializerError> {
+        let mut serializer = crate::serde::JsonWriterSerializer::new(self);
+        value.serialize(&mut serializer)?;
+        // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
+        // might not be necessary because Serde's Serialize API enforces this
+        Ok(())
     }
 
     fn finish_document(mut self) -> Result<(), IoError> {
@@ -2069,5 +2155,68 @@ mod tests {
             format!("{json_writer:?}")
         );
         Ok(())
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde {
+        use std::collections::HashMap;
+
+        use ::serde::{ser::SerializeStruct, Serialize, Serializer};
+
+        use crate::serde::SerializerError;
+
+        use super::*;
+
+        #[test]
+        fn serialize_value() -> TestResult {
+            let mut writer = Vec::<u8>::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
+            json_writer.begin_object()?;
+            json_writer.name("outer")?;
+
+            struct CustomStruct;
+            impl Serialize for CustomStruct {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    let mut struc = serializer.serialize_struct("name", 3)?;
+                    struc.serialize_field("a", &1)?;
+                    struc.serialize_field("b", &HashMap::from([("key", "value")]))?;
+                    struc.serialize_field("c", &[1, 2])?;
+                    struc.end()
+                }
+            }
+            json_writer.serialize_value(&CustomStruct)?;
+
+            json_writer.end_object()?;
+
+            json_writer.finish_document()?;
+            assert_eq!(
+                r#"{"outer":{"a":1,"b":{"key":"value"},"c":[1,2]}}"#,
+                std::str::from_utf8(&writer)?
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn serialize_value_invalid() {
+            let mut json_writer = JsonStreamWriter::new(std::io::sink());
+            match json_writer.serialize_value(&f32::NAN) {
+                Err(SerializerError::InvalidNumber(message)) => {
+                    assert_eq!("Non-finite number", message);
+                }
+                r => panic!("Unexpected result: {r:?}"),
+            }
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect writer usage: Cannot write value when name is expected"
+        )]
+        fn serialize_value_no_value_expected() {
+            let mut json_writer = JsonStreamWriter::new(std::io::sink());
+            json_writer.begin_object().unwrap();
+
+            json_writer.serialize_value(&"test").unwrap();
+        }
     }
 }

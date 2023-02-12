@@ -75,7 +75,7 @@ pub mod json_path {
     /// A JSONPath as represented by this module are zero or more [`JsonPathPiece`] elements.
     /// The macro [`json_path!`] and the function [`parse_json_path`] can be used to create
     /// a JSONPath in a concise way.
-    // TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then)
+    /* TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then) */
     pub type JsonPath = [JsonPathPiece];
 
     pub(crate) fn format_abs_json_path(json_path: &JsonPath) -> String {
@@ -125,7 +125,7 @@ pub mod json_path {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    // TODO: Is there a proper specification (maybe even RFC?) for JSONPath, if so, should this function follow that specification?
+    /* TODO: Is there a proper specification (maybe even RFC?) for JSONPath, if so, should this function follow that specification? */
     pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
         if path.is_empty() {
             return Err(JsonPathParseError {
@@ -273,8 +273,11 @@ pub mod json_path {
     ///     ]
     /// );
     /// ```
-    // TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
-    //       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
+    /*
+     * TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
+     *       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
+     * TODO: Instead of returning [...], should this directly return &[...] to make usage easier?
+     */
     #[macro_export]
     macro_rules! json_path {
         ( $( $piece:expr ),+ ) => {
@@ -701,6 +704,7 @@ pub enum TransferError {
 ///     - [`next_number`](Self::next_number), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
+///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value (optional feature)
 ///  - Skipping values
 ///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
 ///     - [`skip_value`](Self::skip_value): Skipping a value
@@ -759,7 +763,8 @@ pub enum TransferError {
 ///
 /// When encountering [`ReaderError::SyntaxError`] and [`ReaderError::IoError`] processing the
 /// JSON document **must** be aborted. Trying to call any reader methods afterwards can lead
-/// to unspecified behavior.
+/// to unspecified behavior, such as errors, panics or incorrect data. However, no _undefined_
+/// behavior occurs.
 ///
 /// When encountering [`ReaderError::UnexpectedValueType`] or [`ReaderError::UnexpectedStructure`]
 /// depending on the use case it might be possible to continue processing the JSON document
@@ -1137,8 +1142,10 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
-    // TODO: Maybe restrict FromStr somehow to numbers?
-    // TODO: Solve this in a cleaner way than Result<Result<...>, ...>?
+    /*
+     * TODO: Maybe restrict FromStr somehow to numbers?
+     * TODO: Solve this in a cleaner way than Result<Result<...>, ...>?
+     */
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError>;
 
     /// Consumes and returns the string representation of a JSON number value
@@ -1232,6 +1239,70 @@ pub trait JsonReader {
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
     fn next_null(&mut self) -> Result<(), ReaderError>;
+
+    /// Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value
+    ///
+    /// This method is part of the optional Serde integration feature, see the
+    /// [`serde`](crate::serde) module of this crate for more information.
+    ///
+    /// If it is not possible to directly deserialize a value in place, instead of using
+    /// this method a [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer)
+    /// can be constructed and deserialization can be performed using it later on. However,
+    /// this should only be rarely necessary.
+    ///
+    /// # Examples
+    /// ```
+    /// # use ron::reader::*;
+    /// # use ron::reader::json_path::*;
+    /// # use serde::*;
+    /// // In this example JSON data comes from a string;
+    /// // normally it would come from a file or a network connection
+    /// let json = r#"{"outer": {"text": "some text", "number": 5}}"#;
+    /// let mut json_reader = JsonStreamReader::new(json.as_bytes());
+    ///
+    /// // Skip outer data using the regular JsonReader methods
+    /// json_reader.seek_to(&json_path!["outer"])?;
+    ///
+    /// #[derive(Deserialize, PartialEq, Debug)]
+    /// struct MyStruct {
+    ///     text: String,
+    ///     number: u64,
+    /// }
+    ///
+    /// let value: MyStruct = json_reader.deserialize_next()?;
+    ///
+    /// // Skip the remainder of the JSON document
+    /// json_reader.skip_to_top_level()?;
+    ///
+    /// // Ensures that there is no trailing data
+    /// json_reader.consume_trailing_whitespace()?;
+    ///
+    /// assert_eq!(
+    ///     MyStruct { text: "some text".to_owned(), number: 5 },
+    ///     value
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Security
+    /// Since JSON data can have an arbitrary structure and can contain arbitrary
+    /// data, care must be taken when processing untrusted data. See the documentation
+    /// of [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer) for
+    /// security considerations.
+    ///
+    /// # Errors
+    /// Errors can occur when either this JSON reader or the `Deserialize` encounters an
+    /// error. In which situations this can happen depends on the `Deserialize` implementation.
+    ///
+    /// # Panics
+    /// Panics when called on a JSON reader which currently expects a member name, or
+    /// when called after the top-level value has already been consumed and multiple top-level
+    /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
+    /// usage by the user and are unrelated to the JSON data.
+    #[cfg(feature = "serde")]
+    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+        &mut self,
+    ) -> Result<D, crate::serde::DeserializerError>;
 
     /// Skips the name of the next JSON object member
     ///
@@ -1353,9 +1424,11 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
-    // TODO: Should this rather take a `IntoIterator<Item = JsonPathPiece>` as path?
-    //   Though use cases where the path is created dynamically and is not present as slice might be rare
-    //   When changing this method, might render the `JsonPath` type alias a bit pointless then
+    /*
+     * TODO: Should this rather take a `IntoIterator<Item = JsonPathPiece>` as path?
+     *   Though use cases where the path is created dynamically and is not present as slice might be rare
+     *   When changing this method, might render the `JsonPath` type alias a bit pointless then
+     */
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
 
     /// Skips the remaining elements of all currently enclosing JSON arrays and objects
@@ -1460,8 +1533,10 @@ pub trait JsonReader {
     /// [`WriterSettings`]($crate::writer::WriterSettings).
     ///
     /// These cases indicate incorrect usage by the user and are unrelated to the JSON data.
-    // TODO: Choose a different name which makes it clearer that only the next value is transferred, e.g. `transfer_next_to`?
-    // TODO: Are the use cases common enough to justify the existence of this method?
+    /*
+     * TODO: Choose a different name which makes it clearer that only the next value is transferred, e.g. `transfer_next_to`?
+     * TODO: Are the use cases common enough to justify the existence of this method?
+     */
     fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError>;
 
     /// Consumes trailing whitespace at the end of the top-level value
@@ -1503,7 +1578,7 @@ pub trait JsonReader {
     /// Panics when called on a JSON reader which has not read any top-level yet, or when
     /// called while the top-level value has not been fully consumed yet. Both cases
     /// indicate incorrect usage by the user and are unrelated to the JSON data.
-    // Consumes 'self'
+    /* Consumes 'self' */
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
 }
 
@@ -1574,14 +1649,14 @@ const READER_BUF_SIZE: usize = 1024;
 ///
 /// - Detect duplicate member names
 ///
-///   The JSON documentation allows duplicate member names, but does not dictate how to handle
+///   The JSON specification allows duplicate member names, but does not dictate how to handle
 ///   them. Different JSON libraries might therefore handle them in inconsistent ways (for example one
-///   using the first occurrence, another one using the last) which could be exploited.
+///   using the first occurrence, another one using the last), which could be exploited.
 ///
-/// - Impose a limit the length on member names and string values
+/// - Impose a limit on the length on member names and string values, or on arrays and objects
 ///
 ///   Especially when the JSON data comes from a compressed data stream (such as gzip) large member names
-///   and string values could be used for denial of service attacks.
+///   and string values or large arrays and objects could be used for denial of service attacks.
 ///
 /// - Impose restrictions on number values
 ///
@@ -1589,6 +1664,12 @@ const READER_BUF_SIZE: usize = 1024;
 ///   the JSON specification. However, no restrictions are imposed on the precision or size of number
 ///   values. Care must be taken when parsing them as arbitrary-precision "big integer" / "big decimal"
 ///   values, because values such as `1e4000` could consume excessive amounts of memory.
+///
+/// - Impose restrictions on content of member names and string values
+///
+///   The only restriction is that member names and string values are valid UTF-8 strings, besides
+///   that they can contain any code point. They may contain control characters such as the NULL
+///   character (`\0`), code points which are not yet assigned a character or invalid graphemes.
 ///
 /// When processing JSON data from an untrusted source, users of this JSON reader must implement protections
 /// against the above mentioned security issues themselves.
@@ -2527,7 +2608,6 @@ impl<R: Read> JsonStreamReader<R> {
     /// parameter of the function is `self`; this is necessary for callers to avoid directly
     /// accessing `self` which would not be permitted since `consume_name` is already called
     /// on `self`.
-    // TODO: Is there a cleaner solution than having to pass `self` as argument to `read_name`?
     fn consume_name<T, F: FnOnce(&mut Self) -> Result<T, ReaderError>>(
         &mut self,
         read_name: F,
@@ -2549,6 +2629,7 @@ impl<R: Read> JsonStreamReader<R> {
         self.expects_member_name = false;
         self.consume_peeked();
 
+        // TODO: Is there a cleaner solution than having to pass `self` as argument to `read_name`?
         let result = read_name(self)?;
 
         let byte = self.skip_whitespace_no_eof(SyntaxErrorKind::MissingColon)?;
@@ -2832,6 +2913,19 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         self.collect_next_number_bytes(&mut |byte| buf.push(byte))?;
         // Unwrap should be safe since number bytes are valid UTF-8 chars
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[cfg(feature = "serde")]
+    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+        &mut self,
+    ) -> Result<D, crate::serde::DeserializerError> {
+        // peek here to fail fast if reader is currently not expecting a value
+        self.peek()?;
+        let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
+        D::deserialize(&mut deserializer)
+        // TODO: Verify that value was properly deserialized (only single value; no incomplete array or object)
+        // might not be necessary because Serde's Deserializer API enforces this by consuming `self`, and
+        // JsonReaderDeserializer makes sure JSON arrays and objects are read completely
     }
 
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
@@ -3262,7 +3356,9 @@ mod tests {
 
         json_reader.begin_array()?;
         assert_eq!(123, json_reader.next_number::<i32>()??);
-        assert_eq!(45_u32, json_reader.next_number()??);
+        // TODO This should also work without explicitly specifying `::<u32>`, but then (depending on what
+        // other code in this project exists) Rust Analyzer reports errors here occasionally
+        assert_eq!(45_u32, json_reader.next_number::<u32>()??);
         assert_eq!(0.5, json_reader.next_number::<f32>()??);
         // Cannot parse floating point number as i32
         assert!(json_reader.next_number::<i32>()?.is_err());
@@ -3405,7 +3501,7 @@ mod tests {
                 Err(e) => match e {
                     ReaderError::IoError(e) => {
                         assert_eq!(ErrorKind::InvalidData, e.kind());
-                        assert_eq!("invalid UTF-8 data", format!("{}", e));
+                        assert_eq!("invalid UTF-8 data", e.to_string());
                     }
                     other => panic!("Unexpected error: {other}"),
                 },
@@ -4575,6 +4671,14 @@ mod tests {
                 Err(JsonNumberError::IoError(err()))
             }
 
+            #[cfg(feature = "serde")]
+            fn serialize_value<S: ::serde::ser::Serialize>(
+                &mut self,
+                _value: &S,
+            ) -> Result<(), crate::serde::SerializerError> {
+                panic!("Not needed for test")
+            }
+
             fn finish_document(self) -> Result<(), IoError> {
                 Err(err())
             }
@@ -5192,7 +5296,7 @@ mod tests {
             Err(e) => match e {
                 ReaderError::IoError(e) => {
                     assert_eq!(ErrorKind::InvalidData, e.kind());
-                    assert_eq!("invalid UTF-8 data", format!("{}", e));
+                    assert_eq!("invalid UTF-8 data", e.to_string());
                 }
                 other => panic!("Unexpected error: {other}"),
             },
@@ -5560,5 +5664,76 @@ mod tests {
         assert_eq!((json.len() - (3 * count)) as u32, json_reader.column);
         json_reader.consume_trailing_whitespace()?;
         Ok(())
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde {
+        use std::{collections::HashMap, vec};
+
+        use ::serde::Deserialize;
+
+        use crate::serde::DeserializerError;
+
+        use super::*;
+
+        #[test]
+        fn deserialize_next() -> TestResult {
+            let mut json_reader = new_reader(r#"{"a": 5, "b":{"key": "value"}, "c": [1, 2]}"#);
+
+            #[derive(Deserialize, PartialEq, Debug)]
+            struct CustomStruct {
+                a: u64,
+                b: HashMap<String, String>,
+                c: Vec<i32>,
+            }
+            let value = json_reader.deserialize_next()?;
+            json_reader.consume_trailing_whitespace()?;
+
+            assert_eq!(
+                CustomStruct {
+                    a: 5,
+                    b: HashMap::from([("key".to_owned(), "value".to_owned())]),
+                    c: vec![1, 2]
+                },
+                value
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn deserialize_next_invalid() {
+            let mut json_reader = new_reader("true");
+            match json_reader.deserialize_next::<u64>() {
+                Err(DeserializerError::ReaderError(ReaderError::UnexpectedValueType {
+                    expected,
+                    actual,
+                    location,
+                })) => {
+                    assert_eq!(ValueType::Number, expected);
+                    assert_eq!(ValueType::Boolean, actual);
+                    assert_eq!(
+                        JsonErrorLocation {
+                            path: "$".to_owned(),
+                            line: 0,
+                            column: 0
+                        },
+                        location
+                    );
+                }
+                r => panic!("Unexpected result: {r:?}"),
+            }
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect reader usage: Cannot peek value when expecting member name"
+        )]
+        fn deserialize_next_no_value_expected() {
+            let mut json_reader = new_reader(r#"{"a": 1}"#);
+            json_reader.begin_object().unwrap();
+
+            json_reader.deserialize_next::<String>().unwrap();
+        }
     }
 }
