@@ -611,7 +611,17 @@ impl FloatingPointNumber for type_template {
 /// settings only have an effect on how the JSON output will look like without affecting
 /// its data in any way. All compliant JSON readers should consider the data identical.
 ///
-/// These settings are used by [`JsonStreamWriter::new_custom`].
+/// These settings are used by [`JsonStreamWriter::new_custom`]. To avoid repeating the
+/// default values for unchanged settings `..Default::default()` can be used:
+/// ```
+/// # use ron::writer::WriterSettings;
+/// WriterSettings {
+///     pretty_print: true,
+///     // For all other settings use the default
+///     ..Default::default()
+/// }
+/// # ;
+/// ```
 #[derive(Clone, Debug)]
 pub struct WriterSettings {
     /// Whether to pretty print the JSON output
@@ -1315,7 +1325,10 @@ fn is_valid_json_number(value: &str) -> bool {
         &mut |_| {},
         value_bytes[0],
     )
-    .unwrap();
+    .unwrap()
+    // Just check that number is valid, ignore exponent digits count
+    .is_some();
+
     // Is valid and complete string was consumed
     is_valid && index >= value_bytes.len()
 }
@@ -1885,10 +1898,8 @@ mod tests {
             JsonStreamWriter::new_custom(
                 writer,
                 WriterSettings {
-                    pretty_print: false,
-                    escape_all_control_chars: false,
-                    escape_all_non_ascii: false,
                     multi_top_level_value_separator: Some(top_level_separator.to_owned()),
+                    ..Default::default()
                 },
             )
         }
@@ -1940,9 +1951,8 @@ mod tests {
             &mut writer,
             WriterSettings {
                 pretty_print: true,
-                escape_all_control_chars: false,
-                escape_all_non_ascii: false,
                 multi_top_level_value_separator: Some("#".to_owned()),
+                ..Default::default()
             },
         );
 
@@ -1990,10 +2000,8 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new_custom(
             &mut writer,
             WriterSettings {
-                pretty_print: false,
                 escape_all_control_chars: true,
-                escape_all_non_ascii: false,
-                multi_top_level_value_separator: None,
+                ..Default::default()
             },
         );
 
@@ -2014,10 +2022,8 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new_custom(
             &mut writer,
             WriterSettings {
-                pretty_print: false,
-                escape_all_control_chars: false,
                 escape_all_non_ascii: true,
-                multi_top_level_value_separator: None,
+                ..Default::default()
             },
         );
         json_writer.string_value("\u{0000}\u{001F} test \" \u{007F}\u{0080}\u{10000}\u{10FFFF}")?;
@@ -2031,10 +2037,9 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new_custom(
             &mut writer,
             WriterSettings {
-                pretty_print: false,
                 escape_all_control_chars: true,
                 escape_all_non_ascii: true,
-                multi_top_level_value_separator: None,
+                ..Default::default()
             },
         );
         json_writer.string_value("\u{0000} test \" \u{007F}\u{0080}\u{10FFFF}")?;

@@ -35,7 +35,7 @@ pub enum DeserializerError {
     /// The maximum nesting depth was exceeded while deserializing
     ///
     /// See [`JsonReaderDeserializer::new_with_custom_nesting_limit`] for more information.
-    #[error("Maximum nesting depth {0} exceeded")]
+    #[error("maximum nesting depth {0} exceeded")]
     MaxNestingDepthExceeded(u32),
     /// The underlying [`JsonReader`] encountered an error
     #[error("{0}")]
@@ -997,7 +997,9 @@ mod tests {
     use serde::de::VariantAccess;
     use serde_json::de::StrRead;
 
-    use crate::reader::{JsonStreamReader, SyntaxErrorKind, UnexpectedStructureKind};
+    use crate::reader::{
+        JsonStreamReader, ReaderSettings, SyntaxErrorKind, UnexpectedStructureKind,
+    };
 
     use super::*;
 
@@ -1625,23 +1627,33 @@ mod tests {
         assert_deserialized_cmp!("-0.0", deserialize_f64, [Visited::F64(-0.0)]);
         assert_deserialized_cmp!("123e-45", deserialize_f64, [Visited::F64(123e-45)]);
 
-        assert_deserialized_cmp!(
-            &f64::MIN_POSITIVE.to_string(),
-            deserialize_f64,
-            [Visited::F64(f64::MIN_POSITIVE)]
-        );
-        // Note: Does not use assert_deserialized_cmp! because serde_json fails parsing this number
-        assert_deserialized!(
-            &f64::MIN.to_string(),
-            deserialize_f64,
-            [Visited::F64(f64::MIN)]
-        );
-        // Note: Does not use assert_deserialized_cmp! because serde_json fails parsing this number
-        assert_deserialized!(
-            &f64::MAX.to_string(),
-            deserialize_f64,
-            [Visited::F64(f64::MAX)]
-        );
+        fn assert_deserialized_f64(json: &str, value: f64) {
+            let mut json_reader = JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    // Must disable number restriction because f64::MIN_POSITIVE, f64::MIN and f64::MAX
+                    // are not allowed by default because they are too large
+                    restrict_number_values: false,
+                    ..Default::default()
+                },
+            );
+            let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
+            let mut visitor = TrackingVisitor::new(EnumVariantHandling::Unit);
+            deserializer.deserialize_f64(&mut visitor).unwrap();
+            json_reader.consume_trailing_whitespace().unwrap();
+
+            assert_eq!(vec![Visited::F64(value)], visitor.visited);
+
+            // Note: Does not compare with serde_json because it fails parsing f64::MIN and f64::MAX strings
+        }
+
+        assert_deserialized_f64(&f64::MIN_POSITIVE.to_string(), f64::MIN_POSITIVE);
+        assert_deserialized_f64("4.9E-324", 4.9E-324);
+
+        assert_deserialized_f64(&f64::MIN.to_string(), f64::MIN);
+        assert_deserialized_f64(&f64::MAX.to_string(), f64::MAX);
+        assert_deserialized_f64("-1.7976931348623157E308", f64::MIN);
+        assert_deserialized_f64("1.7976931348623157E308", f64::MAX);
 
         assert_deserialize_error!(
             "true",

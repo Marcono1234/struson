@@ -1,10 +1,13 @@
 //! Internal module for parsing / validating JSON numbers
 
+/// Returns `None` if the number is invalid and `Some(exponent_digits_count)` if
+/// the number is valid. The `exponent_digits_count` is the number of exponent
+/// digits, without sign.
 pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>(
     consume_current_peek_next: &mut F,
     consumer: &mut C,
     first_byte: u8,
-) -> Result<bool, E> {
+) -> Result<Option<u32>, E> {
     #[derive(PartialEq)]
     enum State {
         Start,
@@ -23,6 +26,7 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
     // Used to track unexpected trailing number chars, to detect the whole number
     // as invalid, e.g. "01"
     let mut has_trailing_number_chars = true;
+    let mut exponent_digits_count = 0;
 
     loop {
         // TODO: Rewrite this to first check state, then byte, to make it easier to read?
@@ -44,6 +48,7 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
                 state = State::DecimalDigit;
             } else if state == State::ExpE || state == State::ExpSign || state == State::ExpDigit {
                 state = State::ExpDigit;
+                exponent_digits_count += 1;
             } else {
                 break;
             }
@@ -54,6 +59,7 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
                 state = State::DecimalDigit;
             } else if state == State::ExpE || state == State::ExpSign || state == State::ExpDigit {
                 state = State::ExpDigit;
+                exponent_digits_count += 1;
             } else {
                 break;
             }
@@ -98,8 +104,8 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
             || state == State::DecimalDigit
             || state == State::ExpDigit)
     {
-        Ok(false)
+        Ok(None)
     } else {
-        Ok(true)
+        Ok(Some(exponent_digits_count))
     }
 }

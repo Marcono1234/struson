@@ -669,6 +669,13 @@ pub enum ReaderError {
         /// Location where the error occurred in the JSON document
         location: JsonErrorLocation,
     },
+    /// An unsupported JSON number value was encountered
+    ///
+    /// See [`ReaderSettings::restrict_number_values`] for more information.
+    #[error("unsupported number value at {0}")]
+    // TODO: If possible also include the number string, but this is currently not easily possible
+    // in all cases without duplicating code, and while still reporting the correct location
+    UnsupportedNumberValue(JsonErrorLocation),
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
     #[error("IO error: {0}")]
@@ -1632,8 +1639,9 @@ const READER_BUF_SIZE: usize = 1024;
 /// is detected. A leading byte order mark (BOM) is not allowed.
 ///
 /// # Security
-/// Besides UTF-8 validation this JSON reader does not implement any security related measures.
-/// In particular it does **not**:
+/// Besides UTF-8 validation this JSON reader only implements a basic restriction on JSON numbers,
+/// see [`ReaderSettings::restrict_number_values`], but does not implement any other security
+/// related measures. In particular it does **not**:
 ///
 /// - Impose a limit on the length of the document
 ///
@@ -1657,13 +1665,6 @@ const READER_BUF_SIZE: usize = 1024;
 ///
 ///   Especially when the JSON data comes from a compressed data stream (such as gzip) large member names
 ///   and string values or large arrays and objects could be used for denial of service attacks.
-///
-/// - Impose restrictions on number values
-///
-///   This JSON reader implementation only makes sure that JSON numbers match the format described by
-///   the JSON specification. However, no restrictions are imposed on the precision or size of number
-///   values. Care must be taken when parsing them as arbitrary-precision "big integer" / "big decimal"
-///   values, because values such as `1e4000` could consume excessive amounts of memory.
 ///
 /// - Impose restrictions on content of member names and string values
 ///
@@ -1779,7 +1780,17 @@ struct StringValueReader<'j, R: Read> {
 
 /// Settings to customize the JSON reader behavior
 ///
-/// These settings are used by [`JsonStreamReader::new_custom`].
+/// These settings are used by [`JsonStreamReader::new_custom`]. To avoid repeating the
+/// default values for unchanged settings `..Default::default()` can be used:
+/// ```
+/// # use ron::reader::ReaderSettings;
+/// ReaderSettings {
+///     allow_comments: true,
+///     // For all other settings use the default
+///     ..Default::default()
+/// }
+/// # ;
+/// ```
 #[derive(Clone, Debug)]
 pub struct ReaderSettings {
     /// Whether to allow comments in the JSON document
@@ -1853,6 +1864,24 @@ pub struct ReaderSettings {
     /// This setting has no effect on the JSON parsing behavior, it only affects the information included
     /// for errors.
     pub update_path_during_skip: bool,
+
+    /// Whether to restrict which JSON number values are supported
+    ///
+    /// The JSON specification does not impose any restrictions on the size or precision of JSON numbers.
+    /// This means values such as `1e4000` or `1e-4000` are valid JSON numbers. However, parsing such numbers
+    /// or performing calculations with them later on can lead to performance issues and can potentially
+    /// be exploited for denial of service attacks, especially when they are parsed as arbitrary-precision
+    /// "big integer" / "big decimal".
+    ///
+    /// When enabled exponent values smaller than -99, larger than 99 (e.g. `5e100`) and numbers whose
+    /// string representation has more than 100 characters will be rejected and a
+    /// [`ReaderError::UnsupportedNumberValue`] is returned. Otherwise, when disabled, all JSON
+    /// number values are allowed.
+    ///
+    /// Note that depending on the use case even these restrictions might not be enough. If necessary
+    /// users have to implement additional restrictions themselves, or if possible parse the number as
+    /// fixed size integral number such as `u32` instead of "big integer" types.
+    pub restrict_number_values: bool,
 }
 
 impl Default for ReaderSettings {
@@ -1862,6 +1891,7 @@ impl Default for ReaderSettings {
     /// - trailing comma: disallowed
     /// - multiple top-level values: disallowed
     /// - update path during skip: enabled
+    /// - restrict number values: enabled
     ///
     /// These defaults are compliant with the JSON specification.
     fn default() -> Self {
@@ -1870,6 +1900,7 @@ impl Default for ReaderSettings {
             allow_trailing_comma: false,
             allow_multiple_top_level: false,
             update_path_during_skip: true,
+            restrict_number_values: true,
         }
     }
 }
@@ -2673,7 +2704,7 @@ impl<R: Read> JsonStreamReader<R> {
         // unwrap() is safe because start_expected_value_type already peeked at first number byte
         let first_byte = self.peek_byte()?.unwrap();
         let mut consumed_bytes = 0;
-        let is_valid = consume_json_number(
+        let number_result = consume_json_number(
             &mut || {
                 // Should not fail since last peek_byte() succeeded
                 self.skip_peeked_byte();
@@ -2685,8 +2716,18 @@ impl<R: Read> JsonStreamReader<R> {
             },
             first_byte,
         )?;
-        if !is_valid {
-            return self.create_syntax_value_error(SyntaxErrorKind::MalformedNumber);
+        let exponent_digits_count = match number_result {
+            None => return self.create_syntax_value_error(SyntaxErrorKind::MalformedNumber),
+            Some(exponent_digits_count) => exponent_digits_count,
+        };
+
+        if self.reader_settings.restrict_number_values {
+            // >= e100, <= e-100 or complete number longer than 100 chars
+            if exponent_digits_count > 2 || consumed_bytes > 100 {
+                return Err(ReaderError::UnsupportedNumberValue(
+                    self.create_error_location(),
+                ));
+            }
         }
 
         self.column += consumed_bytes;
@@ -2694,6 +2735,7 @@ impl<R: Read> JsonStreamReader<R> {
         if let Some(byte) = self.peek_byte()? {
             self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
         }
+
         self.on_value_end();
         Ok(())
     }
@@ -3402,6 +3444,81 @@ mod tests {
     }
 
     #[test]
+    fn numbers_restriction() -> TestResult {
+        let mut json_reader = new_reader("1e99");
+        assert_eq!("1e99", json_reader.next_number_as_string()?);
+
+        let mut json_reader = new_reader("1e+99");
+        assert_eq!("1e+99", json_reader.next_number_as_string()?);
+
+        let mut json_reader = new_reader("1e-99");
+        assert_eq!("1e-99", json_reader.next_number_as_string()?);
+
+        let number = "1".repeat(100);
+        let mut json_reader = new_reader(&number);
+        assert_eq!(number, json_reader.next_number_as_string()?);
+
+        fn assert_unsupported_number(json: &str) {
+            let mut json_reader = new_reader(json);
+            match json_reader.next_number_as_string() {
+                Err(ReaderError::UnsupportedNumberValue(location)) => {
+                    assert_eq!(
+                        JsonErrorLocation {
+                            line: 0,
+                            column: 0,
+                            path: "$".to_owned(),
+                        },
+                        location
+                    );
+                }
+                r => panic!("Unexpected result: {r:?}"),
+            }
+
+            let mut json_reader = new_reader(json);
+            match json_reader.next_number::<f64>() {
+                Err(ReaderError::UnsupportedNumberValue(location)) => {
+                    assert_eq!(
+                        JsonErrorLocation {
+                            line: 0,
+                            column: 0,
+                            path: "$".to_owned(),
+                        },
+                        location
+                    );
+                }
+                r => panic!("Unexpected result: {r:?}"),
+            }
+        }
+
+        assert_unsupported_number("1e100");
+        assert_unsupported_number("1e+100");
+        assert_unsupported_number("1e-100");
+        assert_unsupported_number(&"1".repeat(101));
+
+        // TODO: These should actually be supported, but implementing this might be difficult,
+        // especially for skipping of numbers; not sure if that is worth it
+        assert_unsupported_number("1e0000");
+        assert_unsupported_number("1e005");
+
+        let json = format!("[1e100, 1e+100, 1e-100, {}]", "1".repeat(101));
+        let mut json_reader = JsonStreamReader::new_custom(
+            json.as_bytes(),
+            ReaderSettings {
+                restrict_number_values: false,
+                ..Default::default()
+            },
+        );
+        json_reader.begin_array()?;
+        assert_eq!("1e100", json_reader.next_number_as_string()?);
+        assert_eq!("1e+100", json_reader.next_number_as_string()?);
+        assert_eq!("1e-100", json_reader.next_number_as_string()?);
+        assert_eq!("1".repeat(101), json_reader.next_number_as_string()?);
+        json_reader.end_array()?;
+
+        Ok(())
+    }
+
+    #[test]
     fn strings() -> TestResult {
         let json = r#"["", "a b", "a\"b", "a\\\\\"b", "a\\", "\"\\\/\b\f\n\r\t\u0000\u0080\u0800\u12345\uD852\uDF62 \u1234\u5678\u90AB\uCDEF\uabcd\uefEF","#.to_owned() + "\"\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\u{2028}\u{2029}\"]";
         let mut json_reader = new_reader(json.as_str());
@@ -3663,6 +3780,16 @@ mod tests {
         json_reader.next_bool().unwrap();
     }
 
+    fn new_reader_with_trailing_comma(json: &str) -> JsonStreamReader<&[u8]> {
+        JsonStreamReader::new_custom(
+            json.as_bytes(),
+            ReaderSettings {
+                allow_trailing_comma: true,
+                ..Default::default()
+            },
+        )
+    }
+
     #[test]
     fn array_trailing_comma() -> TestResult {
         let mut json_reader = new_reader("[,]");
@@ -3686,30 +3813,14 @@ mod tests {
             2,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "[1,]".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("[1,]");
         json_reader.begin_array()?;
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_eq!(false, json_reader.has_next()?);
         json_reader.end_array()?;
         json_reader.consume_trailing_whitespace()?;
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "[,]".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("[,]");
         json_reader.begin_array()?;
         assert_parse_error_with_path(
             None,
@@ -3719,15 +3830,7 @@ mod tests {
             1,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "[1,,]".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("[1,,]");
         json_reader.begin_array()?;
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
@@ -3736,6 +3839,24 @@ mod tests {
             SyntaxErrorKind::UnexpectedComma,
             "$[1]",
             3,
+        );
+
+        let mut json_reader = JsonStreamReader::new_custom(
+            // `,` is not allowed as separator between multiple top-level values
+            "1, 2".as_bytes(),
+            ReaderSettings {
+                allow_trailing_comma: true,
+                allow_multiple_top_level: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::UnexpectedComma,
+            "$",
+            1,
         );
 
         Ok(())
@@ -3830,15 +3951,7 @@ mod tests {
             6,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "{\"a\":1,}".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("{\"a\":1,}");
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
@@ -3846,15 +3959,7 @@ mod tests {
         json_reader.end_object()?;
         json_reader.consume_trailing_whitespace()?;
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "{,}".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("{,}");
         json_reader.begin_object()?;
         assert_parse_error_with_path(
             None,
@@ -3864,15 +3969,7 @@ mod tests {
             1,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            "{\"a\":1,,}".as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: true,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
-            },
-        );
+        let mut json_reader = new_reader_with_trailing_comma("{\"a\":1,,}");
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
@@ -4204,15 +4301,18 @@ mod tests {
 
     #[test]
     fn skip_no_path_update() -> TestResult {
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"[{"a": 1, "b": [{"c": {}, "d": []}, true]}, 2]"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        fn new_reader_no_path_update(json: &str) -> JsonStreamReader<&[u8]> {
+            JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    update_path_during_skip: false,
+                    ..Default::default()
+                },
+            )
+        }
+
+        let mut json_reader =
+            new_reader_no_path_update(r#"[{"a": 1, "b": [{"c": {}, "d": []}, true]}, 2]"#);
         json_reader.begin_array()?;
         json_reader.skip_value()?;
         assert_unexpected_structure(
@@ -4224,15 +4324,7 @@ mod tests {
         assert_eq!("2", json_reader.next_number_as_string()?);
         json_reader.end_array()?;
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"{"a": 1, "b": [{"c": @}]}"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        let mut json_reader = new_reader_no_path_update(r#"{"a": 1, "b": [{"c": @}]}"#);
         assert_parse_error_with_path(
             None,
             json_reader.skip_value(),
@@ -4241,15 +4333,7 @@ mod tests {
             21,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"{"a": {"b": 1}}"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        let mut json_reader = new_reader_no_path_update(r#"{"a": {"b": 1}}"#);
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         // Skipping object should not affect path of current object
@@ -4261,15 +4345,7 @@ mod tests {
             14,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"{"a": @}"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        let mut json_reader = new_reader_no_path_update(r#"{"a": @}"#);
         json_reader.begin_object()?;
         // When only skipping name it should still be stored in path regardless of reader settings
         json_reader.skip_name()?;
@@ -4443,15 +4519,17 @@ mod tests {
 
     #[test]
     fn skip_to_top_level_no_path_update() -> TestResult {
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"{"a": 1, "b": @}"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        fn new_reader_no_path_update(json: &str) -> JsonStreamReader<&[u8]> {
+            JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    update_path_during_skip: false,
+                    ..Default::default()
+                },
+            )
+        }
+
+        let mut json_reader = new_reader_no_path_update(r#"{"a": 1, "b": @}"#);
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         assert_parse_error_with_path(
@@ -4463,15 +4541,7 @@ mod tests {
             14,
         );
 
-        let mut json_reader = JsonStreamReader::new_custom(
-            r#"{"a": {"b": @}}"#.as_bytes(),
-            ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: false,
-            },
-        );
+        let mut json_reader = new_reader_no_path_update(r#"{"a": {"b": @}}"#);
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         assert_parse_error_with_path(
@@ -4490,10 +4560,8 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "[1] [2] [3]".as_bytes(),
             ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
                 allow_multiple_top_level: true,
-                update_path_during_skip: true,
+                ..Default::default()
             },
         );
         json_reader.begin_array()?;
@@ -5005,10 +5073,8 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "[1] [2]".as_bytes(),
             ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
                 allow_multiple_top_level: true,
-                update_path_during_skip: true,
+                ..Default::default()
             },
         );
 
@@ -5061,10 +5127,8 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "[1]".as_bytes(),
             ReaderSettings {
-                allow_comments: false,
-                allow_trailing_comma: false,
                 allow_multiple_top_level: true,
-                update_path_during_skip: true,
+                ..Default::default()
             },
         );
 
@@ -5116,9 +5180,7 @@ mod tests {
             json.as_bytes(),
             ReaderSettings {
                 allow_comments: true,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
+                ..Default::default()
             },
         )
     }
@@ -5286,9 +5348,7 @@ mod tests {
             b"/*\x80*/" as &[u8],
             ReaderSettings {
                 allow_comments: true,
-                allow_trailing_comma: false,
-                allow_multiple_top_level: false,
-                update_path_during_skip: true,
+                ..Default::default()
             },
         );
         match json_reader.peek() {
@@ -5528,6 +5588,14 @@ mod tests {
         bytes: &'a [u8],
         has_read: bool,
     }
+    impl<'a> DebuggableReader<'a> {
+        fn new(bytes: &'a [u8]) -> Self {
+            DebuggableReader {
+                bytes,
+                has_read: false,
+            }
+        }
+    }
 
     impl<'a> Read for DebuggableReader<'a> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -5552,10 +5620,7 @@ mod tests {
     }
 
     fn new_with_debuggable_reader(bytes: &[u8]) -> JsonStreamReader<DebuggableReader> {
-        JsonStreamReader::new(DebuggableReader {
-            bytes,
-            has_read: false,
-        })
+        JsonStreamReader::new(DebuggableReader::new(bytes))
     }
 
     // The following Debug output tests mainly exist to make sure the buffer content is properly displayed
@@ -5566,13 +5631,13 @@ mod tests {
         let json_number = "123";
         let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
@@ -5584,11 +5649,17 @@ mod tests {
     #[test]
     fn debug_reader_long() -> TestResult {
         let json_number = "123456".repeat(100);
-        let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
+        let mut json_reader = JsonStreamReader::new_custom(
+            DebuggableReader::new(json_number.as_bytes()),
+            ReaderSettings {
+                restrict_number_values: false,
+                ..Default::default()
+            },
+        );
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: false } }",
             format!("{json_reader:?}")
         );
 
@@ -5604,7 +5675,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5617,7 +5688,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5633,7 +5704,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json.as_slice());
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5643,7 +5714,13 @@ mod tests {
     fn large_number() -> TestResult {
         let count = READER_BUF_SIZE;
         let number_json = "123".repeat(count);
-        let mut json_reader = new_reader(number_json.as_str());
+        let mut json_reader = JsonStreamReader::new_custom(
+            number_json.as_bytes(),
+            ReaderSettings {
+                restrict_number_values: false,
+                ..Default::default()
+            },
+        );
 
         assert_eq!(number_json, json_reader.next_number_as_string()?);
         assert_eq!(number_json.len() as u32, json_reader.column);

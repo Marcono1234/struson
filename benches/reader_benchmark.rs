@@ -154,7 +154,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
 
 fn benchmark_large_array(c: &mut Criterion) {
     let json = "[".to_owned()
-        + "true, false, null, 12345689.123e123, \"abcdabcdabcdabcd\","
+        + "true, false, null, 12345689.123e12, \"abcdabcdabcdabcd\","
             .repeat(1000)
             .as_str()
         + "true]";

@@ -81,7 +81,7 @@ pub fn get_expected_events() -> Vec<JsonEvent> {
         JsonEvent::NumberValue("-1234".to_owned()),
         JsonEvent::NumberValue("567.89".to_owned()),
         JsonEvent::NumberValue("100e-10".to_owned()),
-        JsonEvent::NumberValue("6.070e+010".to_owned()),
+        JsonEvent::NumberValue("6.070e+05".to_owned()),
         // Booleans
         JsonEvent::BoolValue(true),
         JsonEvent::BoolValue(false),
