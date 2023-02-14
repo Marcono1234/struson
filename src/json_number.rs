@@ -2,7 +2,7 @@
 
 /// Returns `None` if the number is invalid and `Some(exponent_digits_count)` if
 /// the number is valid. The `exponent_digits_count` is the number of exponent
-/// digits, without sign.
+/// digits, without sign and without leading 0s.
 pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>(
     consume_current_peek_next: &mut F,
     consumer: &mut C,
@@ -48,7 +48,11 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
                 state = State::DecimalDigit;
             } else if state == State::ExpE || state == State::ExpSign || state == State::ExpDigit {
                 state = State::ExpDigit;
-                exponent_digits_count += 1;
+
+                // Don't increment for leading 0s
+                if exponent_digits_count > 0 {
+                    exponent_digits_count += 1;
+                }
             } else {
                 break;
             }

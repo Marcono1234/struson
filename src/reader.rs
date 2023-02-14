@@ -3460,18 +3460,21 @@ mod tests {
 
     #[test]
     fn numbers_restriction() -> TestResult {
-        let mut json_reader = new_reader("1e99");
-        assert_eq!("1e99", json_reader.next_number_as_string()?);
-
-        let mut json_reader = new_reader("1e+99");
-        assert_eq!("1e+99", json_reader.next_number_as_string()?);
-
-        let mut json_reader = new_reader("1e-99");
-        assert_eq!("1e-99", json_reader.next_number_as_string()?);
-
-        let number = "1".repeat(100);
-        let mut json_reader = new_reader(&number);
-        assert_eq!(number, json_reader.next_number_as_string()?);
+        let numbers = vec![
+            "1e99".to_owned(),
+            "1e+99".to_owned(),
+            "1e-99".to_owned(),
+            // Leading 0s should be ignored
+            "1e000000".to_owned(),
+            "1e0000001".to_owned(),
+            "1e+0000001".to_owned(),
+            "1e-0000001".to_owned(),
+            "1".repeat(100),
+        ];
+        for number in numbers {
+            let mut json_reader = new_reader(&number);
+            assert_eq!(number, json_reader.next_number_as_string()?);
+        }
 
         fn assert_unsupported_number(json: &str) {
             let mut json_reader = new_reader(json);
@@ -3508,27 +3511,25 @@ mod tests {
         assert_unsupported_number("1e100");
         assert_unsupported_number("1e+100");
         assert_unsupported_number("1e-100");
+        assert_unsupported_number("1e000100");
         assert_unsupported_number(&"1".repeat(101));
 
-        // TODO: These should actually be supported, but implementing this might be difficult,
-        // especially for skipping of numbers; not sure if that is worth it
-        assert_unsupported_number("1e0000");
-        assert_unsupported_number("1e005");
-
-        let json = format!("[1e100, 1e+100, 1e-100, {}]", "1".repeat(101));
-        let mut json_reader = JsonStreamReader::new_custom(
-            json.as_bytes(),
-            ReaderSettings {
-                restrict_number_values: false,
-                ..Default::default()
-            },
-        );
-        json_reader.begin_array()?;
-        assert_eq!("1e100", json_reader.next_number_as_string()?);
-        assert_eq!("1e+100", json_reader.next_number_as_string()?);
-        assert_eq!("1e-100", json_reader.next_number_as_string()?);
-        assert_eq!("1".repeat(101), json_reader.next_number_as_string()?);
-        json_reader.end_array()?;
+        let numbers = vec![
+            "1e100".to_owned(),
+            "1e+100".to_owned(),
+            "1e-100".to_owned(),
+            "1".repeat(101),
+        ];
+        for number in numbers {
+            let mut json_reader = JsonStreamReader::new_custom(
+                number.as_bytes(),
+                ReaderSettings {
+                    restrict_number_values: false,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(number, json_reader.next_number_as_string()?);
+        }
 
         Ok(())
     }
