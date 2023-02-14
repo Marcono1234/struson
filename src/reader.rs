@@ -1144,6 +1144,9 @@ pub trait JsonReader {
     /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
+    /// If the number is too large or has too many decimal places a [`ReaderError::UnsupportedNumberValue`]
+    /// is returned, depending on the [reader settings](ReaderSettings::restrict_number_values).
+    ///
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
@@ -1181,6 +1184,9 @@ pub trait JsonReader {
     /// If the next value is not a JSON number value but is a value of a different type
     /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
+    ///
+    /// If the number is too large or has too many decimal places a [`ReaderError::UnsupportedNumberValue`]
+    /// is returned, depending on the [reader settings](ReaderSettings::restrict_number_values).
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
@@ -2729,6 +2735,8 @@ impl<R: Read> JsonStreamReader<R> {
             Some(exponent_digits_count) => exponent_digits_count,
         };
 
+        // Note: This currently also affects skip_value (and its callers); maybe restricting number
+        // values during skipping is not really necessary
         if self.reader_settings.restrict_number_values {
             // >= e100, <= e-100 or complete number longer than 100 chars
             if exponent_digits_count > 2 || consumed_bytes > 100 {
