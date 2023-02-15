@@ -672,10 +672,13 @@ pub enum ReaderError {
     /// An unsupported JSON number value was encountered
     ///
     /// See [`ReaderSettings::restrict_number_values`] for more information.
-    #[error("unsupported number value at {0}")]
-    // TODO: If possible also include the number string, but this is currently not easily possible
-    // in all cases without duplicating code, and while still reporting the correct location
-    UnsupportedNumberValue(JsonErrorLocation),
+    #[error("unsupported number value '{number}' at {location}")]
+    UnsupportedNumberValue {
+        /// The unsupported number value
+        number: String,
+        /// Location of the number value within the JSON document
+        location: JsonErrorLocation,
+    },
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
     #[error("IO error: {0}")]
@@ -2712,6 +2715,7 @@ impl<R: Read> JsonStreamReader<R> {
     fn collect_next_number_bytes<C: FnMut(u8)>(
         &mut self,
         consumer: &mut C,
+        restrict_number: bool,
     ) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Number)?;
 
@@ -2735,14 +2739,13 @@ impl<R: Read> JsonStreamReader<R> {
             Some(exponent_digits_count) => exponent_digits_count,
         };
 
-        // Note: This currently also affects skip_value (and its callers); maybe restricting number
-        // values during skipping is not really necessary
-        if self.reader_settings.restrict_number_values {
+        if restrict_number {
             // >= e100, <= e-100 or complete number longer than 100 chars
             if exponent_digits_count > 2 || consumed_bytes > 100 {
-                return Err(ReaderError::UnsupportedNumberValue(
-                    self.create_error_location(),
-                ));
+                return Err(ReaderError::UnsupportedNumberValue {
+                    number: String::new(), // caller which collected number bytes will fill in number value
+                    location: self.create_error_location(),
+                });
             }
         }
 
@@ -2927,7 +2930,11 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                             self.on_value_end();
                         }
                         ValueType::Number => {
-                            self.collect_next_number_bytes(&mut |_| {})?;
+                            self.collect_next_number_bytes(
+                                &mut |_| {},
+                                // Don't restrict number values while skipping
+                                false,
+                            )?;
                         }
                         ValueType::Boolean => {
                             self.next_bool()?;
@@ -2968,7 +2975,21 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
         let mut buf = Vec::new();
-        self.collect_next_number_bytes(&mut |byte| buf.push(byte))?;
+        let mut result = self.collect_next_number_bytes(
+            &mut |byte| buf.push(byte),
+            self.reader_settings.restrict_number_values,
+        );
+        match &mut result {
+            // Fill in number value for UnsupportedNumberValue error
+            Err(ReaderError::UnsupportedNumberValue { number, .. }) => {
+                // Unwrap should be safe since number bytes are valid UTF-8 chars
+                number.push_str(&String::from_utf8(buf).unwrap());
+                return Err(result.unwrap_err());
+            }
+            Err(..) => return Err(result.unwrap_err()),
+            _ => (),
+        }
+
         // Unwrap should be safe since number bytes are valid UTF-8 chars
         Ok(String::from_utf8(buf).unwrap())
     }
@@ -3474,12 +3495,14 @@ mod tests {
         for number in numbers {
             let mut json_reader = new_reader(&number);
             assert_eq!(number, json_reader.next_number_as_string()?);
+            json_reader.consume_trailing_whitespace()?;
         }
 
-        fn assert_unsupported_number(json: &str) {
-            let mut json_reader = new_reader(json);
+        fn assert_unsupported_number(number_json: &str) {
+            let mut json_reader = new_reader(number_json);
             match json_reader.next_number_as_string() {
-                Err(ReaderError::UnsupportedNumberValue(location)) => {
+                Err(ReaderError::UnsupportedNumberValue { number, location }) => {
+                    assert_eq!(number_json, number);
                     assert_eq!(
                         JsonErrorLocation {
                             line: 0,
@@ -3492,9 +3515,10 @@ mod tests {
                 r => panic!("Unexpected result: {r:?}"),
             }
 
-            let mut json_reader = new_reader(json);
+            let mut json_reader = new_reader(number_json);
             match json_reader.next_number::<f64>() {
-                Err(ReaderError::UnsupportedNumberValue(location)) => {
+                Err(ReaderError::UnsupportedNumberValue { number, location }) => {
+                    assert_eq!(number_json, number);
                     assert_eq!(
                         JsonErrorLocation {
                             line: 0,
@@ -3513,6 +3537,11 @@ mod tests {
         assert_unsupported_number("1e-100");
         assert_unsupported_number("1e000100");
         assert_unsupported_number(&"1".repeat(101));
+
+        // Skipping should not enforce number restriction
+        let mut json_reader = new_reader("1e100");
+        json_reader.skip_value()?;
+        json_reader.consume_trailing_whitespace()?;
 
         let numbers = vec![
             "1e100".to_owned(),
