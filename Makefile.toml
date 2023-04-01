@@ -1,0 +1,76 @@
+# Uses https://github.com/sagiegurari/cargo-make
+
+[config]
+# Skip core tasks; they overlap with some of the tasks below
+skip_core_tasks = true
+
+[env]
+RUSTFLAGS = "--deny warnings"
+RUSTDOCFLAGS = "--deny warnings"
+
+
+# The following differentiates between default features and Serde interoperability feature
+# to detect build issues when Serde feature is not enabled
+
+# Default features
+[tasks.build-default]
+command = "cargo"
+args = ["build", "--all-targets"]
+
+[tasks.test-default]
+command = "cargo"
+# Important: Don't use `--all-targets` here; that would exclude doc tests (see https://github.com/rust-lang/cargo/issues/6669)
+# and would include benchmarks, which should not be executed here
+args = ["test"]
+dependencies = ["build-default"]
+
+# Serde interoperability feature
+[tasks.build-serde-interop]
+command = "cargo"
+args = ["build", "--all-targets", "--features", "serde"]
+
+[tasks.test-serde-interop]
+command = "cargo"
+# Important: Don't use `--all-targets` here; that would exclude doc tests (see https://github.com/rust-lang/cargo/issues/6669)
+# and would include benchmarks, which should not be executed here
+args = ["test", "--features", "serde"]
+dependencies = ["build-serde-interop"]
+
+
+[tasks.build]
+dependencies = [
+    "build-default",
+    "build-serde-interop",
+]
+
+[tasks.test]
+dependencies = [
+    "test-default",
+    "test-serde-interop",
+]
+
+# Note: Running Clippy should hopefully suffice, no need to run `cargo check`, see https://stackoverflow.com/q/57449356
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "--deny", "warnings"]
+
+[tasks.doc]
+command = "cargo"
+args = ["doc", "--all-features", "--no-deps"]
+
+[tasks.format-check]
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+
+# Note: 'default' task is called when `cargo make` is used without explicit task name
+[tasks.default]
+# Dependencies here are ordered by 'severity'; first fail for build errors and eventually
+# fail in case of format check errors
+dependencies = [
+    "build",
+    "test",
+    "clippy",
+    "doc",
+    "format-check",
+]

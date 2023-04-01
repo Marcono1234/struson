@@ -183,7 +183,7 @@ pub mod json_path {
 
                 #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
                 for i in index..end_index {
-                    if !(b'0'..=b'9').contains(&path_bytes[i]) {
+                    if !path_bytes[i].is_ascii_digit() {
                         return Err(JsonPathParseError {
                             index: i,
                             message: "Invalid index digit".to_owned(),
@@ -209,12 +209,7 @@ pub mod json_path {
                 #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
                 for i in index..end_index {
                     let b = path_bytes[i];
-                    if !((b'a'..=b'z').contains(&b)
-                        || (b'A'..=b'Z').contains(&b)
-                        || (b'0'..=b'9').contains(&b)
-                        || b == b'-'
-                        || b == b'_')
-                    {
+                    if !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
                         return Err(JsonPathParseError {
                             index: i,
                             message: "Unsupported char in member name".to_owned(),
