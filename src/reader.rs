@@ -33,6 +33,7 @@ use crate::{
 /// a JSON array, of that array the item at index 2 (starting at 0). The string representation of the
 /// path in dot-notation would be `a[2]`.  
 /// For example in the JSON string `{"a": [0.5, 1.5, 2.5]}` it would point to the value `2.5`.
+#[allow(deprecated)] // TODO: Only for JsonPathParseError, remove this allow(deprecated) attribute once JsonPathParseError was removed
 pub mod json_path {
     use std::str::FromStr;
 
@@ -93,6 +94,7 @@ pub mod json_path {
     }
 
     /// Error which occurred while [parsing a JSONPath](parse_json_path)
+    #[deprecated = "Only used by parse_json_path, which is deprecated"]
     #[derive(Error, Clone, Debug)]
     #[error("parse error at index {index}: {message}")]
     pub struct JsonPathParseError {
@@ -111,6 +113,7 @@ pub mod json_path {
     ///
     /// # Examples
     /// ```
+    /// # #![allow(deprecated)]
     /// # use ron::reader::json_path::*;
     /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
     /// assert_eq!(
@@ -126,6 +129,8 @@ pub mod json_path {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     /* TODO: Is there a proper specification (maybe even RFC?) for JSONPath, if so, should this function follow that specification? */
+    #[deprecated = "Use json_path! instead"]
+    #[allow(deprecated)] // Allow usage of deprecated JsonPathParseError
     pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
         if path.is_empty() {
             return Err(JsonPathParseError {
@@ -334,6 +339,7 @@ pub mod json_path {
         }
 
         #[test]
+        #[allow(deprecated)]
         fn test_parse_json_path() -> TestResult {
             assert_eq!(
                 vec![JsonPathPiece::ObjectMember("abc".to_owned())],
