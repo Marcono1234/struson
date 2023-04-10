@@ -1,11 +1,11 @@
 [package]
-name = "ron"
+name = "struson"
 version = "0.1.0"
 authors = ["Marcono1234"]
 edition = "2021"
 description = "A low-level streaming JSON reader and writer"
 license = "MIT"
-repository = "https://github.com/Marcono1234/ron"
+repository = "https://github.com/Marcono1234/struson"
 keywords = ["json", "streaming", "parser"]
 categories = ["parser-implementations"]
 

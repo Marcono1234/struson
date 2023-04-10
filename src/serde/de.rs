@@ -108,8 +108,8 @@ impl serde::de::Error for DeserializerError {
 ///
 /// # Examples
 /// ```
-/// # use ron::reader::*;
-/// # use ron::serde::*;
+/// # use struson::reader::*;
+/// # use struson::serde::*;
 /// # use serde::*;
 /// // In this example JSON data comes from a string;
 /// // normally it would come from a file or a network connection
@@ -288,8 +288,8 @@ impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
 /// If the exact behavior of Serde JSON is needed, the following workaround can be used, at the
 /// cost of potentially worse performance:
 /// ```
-/// # use ron::reader::*;
-/// # use ron::writer::*;
+/// # use struson::reader::*;
+/// # use struson::writer::*;
 /// # use serde::Deserialize;
 /// #
 /// # let mut json_reader = JsonStreamReader::new(r#"{"text": "some text", "number": 5}"#.as_bytes());

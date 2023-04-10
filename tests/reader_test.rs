@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug, fs::File};
 
-use ron::reader::{JsonReader, JsonStreamReader, ValueType};
+use struson::reader::{JsonReader, JsonStreamReader, ValueType};
 
 use crate::test_lib::{get_expected_events, get_test_data_file_path, JsonEvent};
 

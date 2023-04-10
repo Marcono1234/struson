@@ -46,7 +46,7 @@ type IoError = std::io::Error;
 ///
 /// # Examples
 /// ```
-/// # use ron::writer::*;
+/// # use struson::writer::*;
 /// // In this example JSON bytes are stored in a Vec;
 /// // normally they would be written to a file or network connection
 /// let mut writer = Vec::<u8>::new();
@@ -94,7 +94,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -136,7 +136,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -181,7 +181,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -208,7 +208,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -231,7 +231,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -264,7 +264,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -301,7 +301,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -339,7 +339,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -371,7 +371,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -400,7 +400,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -440,7 +440,7 @@ pub trait JsonWriter {
     ///
     /// # Examples
     /// ```
-    /// # use ron::writer::*;
+    /// # use struson::writer::*;
     /// # use serde::*;
     /// // In this example JSON bytes are stored in a Vec;
     /// // normally they would be written to a file or network connection
@@ -614,7 +614,7 @@ impl FloatingPointNumber for type_template {
 /// These settings are used by [`JsonStreamWriter::new_custom`]. To avoid repeating the
 /// default values for unchanged settings `..Default::default()` can be used:
 /// ```
-/// # use ron::writer::WriterSettings;
+/// # use struson::writer::WriterSettings;
 /// WriterSettings {
 ///     pretty_print: true,
 ///     // For all other settings use the default

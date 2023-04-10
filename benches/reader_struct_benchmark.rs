@@ -1,12 +1,12 @@
 use std::error::Error;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ron::reader::{JsonReader, JsonStreamReader, ReaderSettings};
 use serde::Deserialize;
 use serde_json::{
     de::{IoRead, Read, StrRead},
     StreamDeserializer,
 };
+use struson::reader::{JsonReader, JsonStreamReader, ReaderSettings};
 
 #[derive(Deserialize)]
 #[allow(dead_code)] // suppress warnings for not read fields
@@ -24,7 +24,7 @@ fn benchmark_struct(c: &mut Criterion) {
     let json = r#"{"bool_value": true, "integer": 123456, "float": 1234.56, "string": "this is a string value"}"#.repeat(COUNT);
     let json = json.as_str();
 
-    group.bench_with_input("ron", json, |b, json| {
+    group.bench_with_input("struson", json, |b, json| {
         b.iter(|| {
             let mut json_reader = JsonStreamReader::new_custom(
                 json.as_bytes(),

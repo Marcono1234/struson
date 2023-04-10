@@ -1,8 +1,8 @@
 use std::{error::Error, io::Sink, iter};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use ron::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 use serde::Serialize;
+use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
 #[derive(Serialize, Clone)]
 struct StructValue {
@@ -23,7 +23,7 @@ fn benchmark_struct(c: &mut Criterion) {
     .take(10_000)
     .collect();
 
-    fn ron_write(
+    fn struson_write(
         mut json_writer: JsonStreamWriter<Sink>,
         values: &Vec<StructValue>,
     ) -> Result<(), Box<dyn Error>> {
@@ -52,13 +52,13 @@ fn benchmark_struct(c: &mut Criterion) {
         Ok(())
     }
 
-    group.bench_with_input("ron", &values, |b, values| {
+    group.bench_with_input("struson", &values, |b, values| {
         b.iter(|| {
             let json_writer = JsonStreamWriter::new(std::io::sink());
-            ron_write(json_writer, values).unwrap()
+            struson_write(json_writer, values).unwrap()
         })
     });
-    group.bench_with_input("ron (pretty)", &values, |b, values| {
+    group.bench_with_input("struson (pretty)", &values, |b, values| {
         b.iter(|| {
             let json_writer = JsonStreamWriter::new_custom(
                 std::io::sink(),
@@ -67,7 +67,7 @@ fn benchmark_struct(c: &mut Criterion) {
                     ..Default::default()
                 },
             );
-            ron_write(json_writer, values).unwrap()
+            struson_write(json_writer, values).unwrap()
         })
     });
 

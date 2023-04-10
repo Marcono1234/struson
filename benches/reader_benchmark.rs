@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use ron::reader::*;
 use serde::{de::Visitor, Deserializer};
 use serde_json::de::{IoRead, Read, StrRead};
+use struson::reader::*;
 
 fn call_unwrap<F: Fn() -> Result<(), Box<dyn Error>>>(f: F) {
     f().unwrap();
@@ -11,7 +11,7 @@ fn call_unwrap<F: Fn() -> Result<(), Box<dyn Error>>>(f: F) {
 
 fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
     let mut group = c.benchmark_group(name);
-    group.bench_with_input("ron-skip", json, |b, json| {
+    group.bench_with_input("struson-skip", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new(json.as_bytes());
@@ -21,7 +21,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
             });
         })
     });
-    group.bench_with_input("ron-skip (no path update)", json, |b, json| {
+    group.bench_with_input("struson-skip (no path update)", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new_custom(
@@ -38,7 +38,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
-    group.bench_with_input("ron-read", json, |b, json| {
+    group.bench_with_input("struson-read", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new(json.as_bytes());
@@ -188,7 +188,7 @@ fn benchmark_nested_object_pretty(c: &mut Criterion) {
 fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
     let mut group = c.benchmark_group(name);
 
-    group.bench_with_input("ron", json, |b, json| {
+    group.bench_with_input("struson", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new(json.as_bytes());

@@ -1,36 +1,40 @@
 use std::{error::Error, io::Sink};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use ron::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
 use serde::ser::Serializer;
 
 fn bench_compare<RF: Fn(&mut JsonStreamWriter<Sink>) -> Result<(), Box<dyn Error>>>(
     c: &mut Criterion,
     name: &str,
-    ron_function: RF,
+    struson_function: RF,
 ) {
     let mut group = c.benchmark_group(name);
-    group.bench_with_input("ron-write", &ron_function, |b, write_function| {
+    group.bench_with_input("struson-write", &struson_function, |b, write_function| {
         b.iter(|| {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             write_function(&mut json_writer).unwrap();
             json_writer.finish_document().unwrap();
         })
     });
-    group.bench_with_input("ron-write (pretty)", &ron_function, |b, write_function| {
-        b.iter(|| {
-            let mut json_writer = JsonStreamWriter::new_custom(
-                std::io::sink(),
-                WriterSettings {
-                    pretty_print: true,
-                    ..Default::default()
-                },
-            );
-            write_function(&mut json_writer).unwrap();
-            json_writer.finish_document().unwrap();
-        })
-    });
+    group.bench_with_input(
+        "struson-write (pretty)",
+        &struson_function,
+        |b, write_function| {
+            b.iter(|| {
+                let mut json_writer = JsonStreamWriter::new_custom(
+                    std::io::sink(),
+                    WriterSettings {
+                        pretty_print: true,
+                        ..Default::default()
+                    },
+                );
+                write_function(&mut json_writer).unwrap();
+                json_writer.finish_document().unwrap();
+            })
+        },
+    );
 
     // TODO: Maybe also try to support Serde, but Serializer API cannot be easily used for arbitrary data?
     //   Could test against serde_json's Formatter, but that might be too low level (especially string value writing)?
@@ -77,7 +81,7 @@ fn benchmark_nested_object(c: &mut Criterion) {
 fn bench_compare_string_writing(c: &mut Criterion, name: &str, string_value: &str) {
     let mut group = c.benchmark_group(name);
 
-    group.bench_with_input("ron", string_value, |b, string_value| {
+    group.bench_with_input("struson", string_value, |b, string_value| {
         b.iter(|| {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             json_writer.string_value(string_value).unwrap();

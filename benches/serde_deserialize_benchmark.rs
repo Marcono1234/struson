@@ -1,14 +1,14 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use ron::{
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use struson::{
     reader::{JsonReader, JsonStreamReader},
     serde::JsonReaderDeserializer,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 fn bench_compare<D: DeserializeOwned>(c: &mut Criterion, name: &str, json: &str) {
     let bytes = json.as_bytes();
     let mut group = c.benchmark_group(name);
-    group.bench_with_input("ron", bytes, |b, bytes| {
+    group.bench_with_input("struson", bytes, |b, bytes| {
         b.iter(|| {
             let mut json_reader = JsonStreamReader::new(bytes);
             let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);

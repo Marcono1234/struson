@@ -1,6 +1,6 @@
 use std::{error::Error, fs::read_to_string};
 
-use ron::{
+use struson::{
     reader::{json_path::json_path, JsonReader, JsonStreamReader},
     writer::{JsonStreamWriter, JsonWriter, WriterSettings},
 };

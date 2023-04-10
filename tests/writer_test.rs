@@ -1,6 +1,6 @@
 use std::{error::Error, fs::read_to_string};
 
-use ron::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
 use crate::test_lib::{get_expected_events, get_test_data_file_path, JsonEvent};
 

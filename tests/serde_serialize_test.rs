@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use ron::{
+use serde::Serialize;
+use struson::{
     serde::JsonWriterSerializer,
     writer::{JsonStreamWriter, JsonWriter},
 };
-use serde::Serialize;
 
 fn assert_serialized<S: Serialize>(s: S, expected_json: &str) {
     let mut writer = Vec::<u8>::new();

@@ -16,7 +16,7 @@
 //! for the dependency on this crate:
 //! ```toml
 //! [dependencies]
-//! ron = { version = "...", features = ["serde"] }
+//! struson = { version = "...", features = ["serde"] }
 //! ```
 //!
 //! The most convenient way to use the Serde integration is by using [`JsonWriter::serialize_value`](crate::writer::JsonWriter::serialize_value)
@@ -28,7 +28,7 @@
 //!
 //! ## Serialization
 //! ```
-//! # use ron::writer::*;
+//! # use struson::writer::*;
 //! # use serde::*;
 //! // In this example JSON bytes are stored in a Vec;
 //! // normally they would be written to a file or network connection
@@ -67,8 +67,8 @@
 //!
 //! # Deserialization
 //! ```
-//! # use ron::reader::*;
-//! # use ron::reader::json_path::*;
+//! # use struson::reader::*;
+//! # use struson::reader::json_path::*;
 //! # use serde::*;
 //! // In this example JSON data comes from a string;
 //! // normally it would come from a file or a network connection

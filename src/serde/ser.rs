@@ -74,8 +74,8 @@ impl serde::ser::Error for SerializerError {
 ///
 /// # Examples
 /// ```
-/// # use ron::writer::*;
-/// # use ron::serde::JsonWriterSerializer;
+/// # use struson::writer::*;
+/// # use struson::serde::JsonWriterSerializer;
 /// # use serde::*;
 /// // In this example JSON bytes are stored in a Vec;
 /// // normally they would be written to a file or network connection
@@ -153,8 +153,8 @@ fn map_number_err(e: JsonNumberError) -> SerializerError {
 /// If the exact behavior of Serde JSON is needed, the following workaround can be used, at the
 /// cost of potentially worse performance:
 /// ```
-/// # use ron::reader::*;
-/// # use ron::writer::*;
+/// # use struson::reader::*;
+/// # use struson::writer::*;
 /// # use serde::Serialize;
 /// #
 /// # let mut writer = Vec::<u8>::new();

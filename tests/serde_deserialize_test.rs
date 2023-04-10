@@ -4,11 +4,11 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use ron::{
+use serde::{de::DeserializeOwned, Deserialize};
+use struson::{
     reader::{JsonReader, JsonStreamReader, ReaderError, UnexpectedStructureKind, ValueType},
     serde::{DeserializerError, JsonReaderDeserializer},
 };
-use serde::{de::DeserializeOwned, Deserialize};
 
 fn assert_deserialized<D: DeserializeOwned + PartialEq + Debug>(
     json: &str,

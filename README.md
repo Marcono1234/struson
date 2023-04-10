@@ -1,10 +1,10 @@
-# <div align="center"> Ron </br> [![crates.io](https://img.shields.io/crates/v/ron)](https://crates.io/crates/ron) [![docs.rs](https://img.shields.io/docsrs/ron?label=docs.rs)](https://docs.rs/ron)</div>
+# <div align="center"> Struson </br> [![crates.io](https://img.shields.io/crates/v/struson)](https://crates.io/crates/struson) [![docs.rs](https://img.shields.io/docsrs/struson?label=docs.rs)](https://docs.rs/struson)</div>
 
-Ron is a [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
+Struson is an [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
 
 Its main purpose is to allow writing JSON documents in a memory efficient way without having to store the complete JSON document structure in memory.
 
-The API of Ron was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
+The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
 :information_source: This library is still experimental. The performance is not very good yet and the API might be changed in future versions. Feedback and suggestions for improvements are welcome!
 
@@ -17,7 +17,7 @@ The most popular JSON Rust crates [Serde JSON (`serde_json`)](https://github.com
 
 - json-rust provides an API for converting JSON into DOM like structures (enum `json::JsonValue`), this requires the complete value to be present in memory. The trait `json::codegen::Generator` offers a partial API for writing JSON in a streaming way, however it misses methods for writing JSON arrays and objects in a streaming way.
 
-If you need to process JSON in a DOM like way or want object mapper functionality to convert structs to JSON and vice versa, then Ron is _not_ suited for your use case and you should instead use one of the libraries above.
+If you need to process JSON in a DOM like way or want object mapper functionality to convert structs to JSON and vice versa, then Struson is _not_ suited for your use case and you should instead use one of the libraries above.
 
 ## Main features
 
@@ -28,9 +28,9 @@ If you need to process JSON in a DOM like way or want object mapper functionalit
 - API does not require recursion for JSON arrays and objects  
   Can theoretically read and write arbitrarily deeply nested JSON data
 - Read arbitrarily precise JSON numbers as string
-- Seek to specific location in JSON data ([`JsonReader::seek_to`](https://docs.rs/ron/latest/ron/reader/trait.JsonReader.html#tymethod.seek_to))
+- Seek to specific location in JSON data ([`JsonReader::seek_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.seek_to))
 - Read and write arbitrarily large JSON string values  
-  ([`JsonReader::next_string_reader`](https://docs.rs/ron/latest/ron/reader/trait.JsonReader.html#tymethod.next_string_reader) and [`JsonWriter::string_value_writer`](https://docs.rs/ron/latest/ron/writer/trait.JsonWriter.html#tymethod.string_value_writer))
+  ([`JsonReader::next_string_reader`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.next_string_reader) and [`JsonWriter::string_value_writer`](https://docs.rs/struson/latest/struson/writer/trait.JsonWriter.html#tymethod.string_value_writer))
 - Optional [Serde integration](#serde-integration)
 
 ## Usage examples
@@ -38,7 +38,7 @@ If you need to process JSON in a DOM like way or want object mapper functionalit
 ### Reading
 
 ```rust
-use ron::reader::*;
+use struson::reader::*;
 // In this example JSON data comes from a string;
 // normally it would come from a file or a network connection
 let json = r#"{"a": [1, true]}"#;
@@ -60,7 +60,7 @@ json_reader.consume_trailing_whitespace()?;
 ### Writing
 
 ```rust
-use ron::writer::*;
+use struson::writer::*;
 // In this example JSON bytes are stored in a Vec;
 // normally they would be written to a file or network connection
 let mut writer = Vec::<u8>::new();
@@ -83,11 +83,11 @@ assert_eq!(r#"{"a":[1,true]}"#, std::str::from_utf8(&writer)?);
 
 ## Serde integration
 
-Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from a `JsonReader`. See the [`serde`](https://crates.io/crates/ron/latest/ron/serde) module of this crate for more information.
+Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from a `JsonReader`. See the [`serde`](https://crates.io/crates/struson/latest/struson/serde) module of this crate for more information.
 
 ## Changelog
 
-See [GitHub releases](https://github.com/Marcono1234/ron/releases).
+See [GitHub releases](https://github.com/Marcono1234/struson/releases).
 
 ## Building
 

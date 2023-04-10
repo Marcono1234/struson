@@ -1,13 +1,13 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use ron::{
+use serde::Serialize;
+use struson::{
     serde::JsonWriterSerializer,
     writer::{JsonStreamWriter, JsonWriter},
 };
-use serde::Serialize;
 
 fn bench_compare<S: Serialize>(c: &mut Criterion, name: &str, value: S) {
     let mut group = c.benchmark_group(name);
-    group.bench_with_input("ron", &value, |b, value| {
+    group.bench_with_input("struson", &value, |b, value| {
         b.iter(|| {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             let mut serializer = JsonWriterSerializer::new(&mut json_writer);

@@ -22,7 +22,7 @@ use crate::{
 ///
 /// Consider for example the following code:
 /// ```
-/// # use ron::reader::json_path::*;
+/// # use struson::reader::json_path::*;
 /// vec![
 ///     JsonPathPiece::ObjectMember("a".to_owned()),
 ///     JsonPathPiece::ArrayItem(2),
@@ -114,7 +114,7 @@ pub mod json_path {
     /// # Examples
     /// ```
     /// # #![allow(deprecated)]
-    /// # use ron::reader::json_path::*;
+    /// # use struson::reader::json_path::*;
     /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
     /// assert_eq!(
     ///     json_path,
@@ -262,7 +262,7 @@ pub mod json_path {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::json_path::*;
+    /// # use struson::reader::json_path::*;
     /// let json_path = json_path!["outer", 3, "inner"];
     /// assert_eq!(
     ///     json_path,
@@ -291,7 +291,7 @@ pub mod json_path {
         };
     }
 
-    // Re-export the macro to be available under the `ron::reader::json_path` module path
+    // Re-export the macro to be available under the `struson::reader::json_path` module path
     #[doc(inline)]
     pub use json_path;
 
@@ -653,7 +653,7 @@ pub enum ReaderError {
     /// when trying to end a JSON array or object when there are still unprocessed elements in it.
     /// If these remaining elements should be ignored they can be skipped like this:
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
     /// # json_reader.begin_array()?;
     /// while json_reader.has_next()? {
@@ -745,7 +745,7 @@ pub enum TransferError {
 ///
 /// # Examples
 /// ```
-/// # use ron::reader::*;
+/// # use struson::reader::*;
 /// // In this example JSON data comes from a string;
 /// // normally it would come from a file or a network connection
 /// let json = r#"{"a": [1, 2, true]}"#;
@@ -801,7 +801,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("true".as_bytes());
     /// match json_reader.peek()? {
     ///     ValueType::Boolean => println!("A boolean: {}", json_reader.next_bool()?),
@@ -835,7 +835,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
@@ -878,7 +878,7 @@ pub trait JsonReader {
     /// [`skip_name`](Self::skip_name) and [`skip_value`](Self::skip_value) can be used to skip these
     /// remaining members in case they should be ignored:
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("{}".as_bytes());
     /// # json_reader.begin_object()?;
     /// while json_reader.has_next()? {
@@ -909,7 +909,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("[1, 2, 3]".as_bytes());
     /// json_reader.begin_array()?;
     ///
@@ -950,7 +950,7 @@ pub trait JsonReader {
     /// If there are remaining items in the array a [`ReaderError::UnexpectedStructure`] is returned.
     /// [`skip_value`](Self::skip_value) can be used to skip these remaining items in case they should be ignored:
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
     /// # json_reader.begin_array()?;
     /// while json_reader.has_next()? {
@@ -977,7 +977,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("[1]".as_bytes());
     /// json_reader.begin_array()?;
     ///
@@ -1013,7 +1013,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
     /// assert_eq!("a", json_reader.next_name()?);
@@ -1042,7 +1042,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#""text with \"quotes\"""#.as_bytes());
     /// assert_eq!("text with \"quotes\"", json_reader.next_string()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1085,7 +1085,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"["hello"]"#.as_bytes());
     /// json_reader.begin_array()?;
     ///
@@ -1132,7 +1132,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12".as_bytes());
     /// assert_eq!(12_u32, json_reader.next_number()??);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1173,7 +1173,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12.0e5".as_bytes());
     /// assert_eq!("12.0e5", json_reader.next_number_as_string()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1203,7 +1203,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("true".as_bytes());
     /// assert_eq!(true, json_reader.next_bool()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1234,7 +1234,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("null".as_bytes());
     /// json_reader.next_null()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1269,8 +1269,8 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
-    /// # use ron::reader::json_path::*;
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::*;
     /// # use serde::*;
     /// // In this example JSON data comes from a string;
     /// // normally it would come from a file or a network connection
@@ -1335,7 +1335,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
@@ -1371,7 +1371,7 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": [{}], "b": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
@@ -1417,8 +1417,8 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
-    /// # use ron::reader::json_path::*;
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::*;
     /// let mut json_reader = JsonStreamReader::new(
     ///     r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes()
     /// );
@@ -1466,8 +1466,8 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
-    /// # use ron::reader::json_path::*;
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::*;
     /// let mut json_reader = JsonStreamReader::new(
     ///     r#"{"bar": true, "foo": ["a", "b", "c"]}"#.as_bytes()
     /// );
@@ -1504,9 +1504,9 @@ pub trait JsonReader {
     ///
     /// # Examples
     /// ```
-    /// # use ron::reader::*;
-    /// # use ron::reader::json_path::*;
-    /// # use ron::writer::*;
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::*;
+    /// # use struson::writer::*;
     /// let mut json_reader = JsonStreamReader::new(
     ///     r#"{"bar": true, "foo": [1, 2]}"#.as_bytes()
     /// );
@@ -1568,7 +1568,7 @@ pub trait JsonReader {
     /// top-level values are relevant they can be skipped with of loop calling [`has_next`](Self::has_next) and [`skip_value`](Self::skip_value)
     /// to allow calling `consume_trailing_whitespace` eventually:
     /// ```
-    /// # use ron::reader::*;
+    /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new_custom("1".as_bytes(), ReaderSettings { allow_multiple_top_level: true, ..ReaderSettings::default() });
     /// # json_reader.skip_value()?;
     /// // Skip all remaining top-level values
@@ -1799,7 +1799,7 @@ struct StringValueReader<'j, R: Read> {
 /// These settings are used by [`JsonStreamReader::new_custom`]. To avoid repeating the
 /// default values for unchanged settings `..Default::default()` can be used:
 /// ```
-/// # use ron::reader::ReaderSettings;
+/// # use struson::reader::ReaderSettings;
 /// ReaderSettings {
 ///     allow_comments: true,
 ///     // For all other settings use the default
