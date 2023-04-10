@@ -12,18 +12,18 @@ categories = ["parser-implementations"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thiserror = "1.0.24"
-strum = "0.24"
-strum_macros = "0.24"
-duplicate = "0.4.1"
+thiserror = "1.0.40"
+strum = "0.24.1"
+strum_macros = "0.24.3"
+duplicate = "1.0.0"
 
-serde = { version = "1.0.152", optional = true }
+serde = { version = "1.0.159", optional = true }
 
 [dev-dependencies]
 criterion = {version = "0.4.0", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
-serde = "1.0.152"
-serde_json = "1.0.91"
+serde = "1.0.159"
+serde_json = "1.0.95"
 
 # docs.rs specific configuration
 [package.metadata.docs.rs]
