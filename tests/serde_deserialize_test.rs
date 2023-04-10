@@ -1,7 +1,5 @@
 #![cfg(feature = "serde")]
 
-// TODO: Use #[derive(Deserialize)] and test various data structures; make sure serde_json parses them in the same way
-
 use std::{collections::HashMap, fmt::Debug};
 
 use serde::{de::DeserializeOwned, Deserialize};

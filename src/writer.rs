@@ -878,7 +878,7 @@ impl<W: Write> JsonStreamWriter<W> {
                 None => panic!("Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"),
                 Some(separator) => {
                     // TODO: Avoid clone() here; compiler currently does not allow borrowing it because
-                    // `write_bytes` has a mutable borrow to self
+                    //   `write_bytes` has a mutable borrow to self
                     let separator = separator.clone();
                     self.write_bytes(separator.as_bytes())?;
                 },

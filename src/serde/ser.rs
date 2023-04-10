@@ -145,7 +145,7 @@ fn map_number_err(e: JsonNumberError) -> SerializerError {
     }
 }
 
-// TODO: Move this documentation to the struct documentation?
+/* TODO: Move this documentation to the struct documentation? */
 /// This implementation of [`Serializer`] tries to match Serde JSON's behavior, however there
 /// might be some minor differences. Where relevant the documentation of the methods describes
 /// how exactly a value is serialized to JSON.

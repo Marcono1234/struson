@@ -279,7 +279,7 @@ impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
     }
 }
 
-// TODO: Move this documentation to the struct documentation?
+/* TODO: Move this documentation to the struct documentation? */
 /// This implementation of [`Deserializer`] tries to match Serde JSON's behavior, however there
 /// might be some minor differences. Where relevant the documentation of the methods describes
 /// how exactly a value is deserialized from JSON. Borrowing strings or bytes with the lifetime
@@ -1994,7 +1994,7 @@ mod tests {
         #[test]
         fn string_key_conversion() {
             // TODO Add comparison with serde_json Deserializer behavior?
-            //   Might not be easily possible? at least not when trying to call serde_json::Deserializer.end()
+            //   Might not be easily possible? at least not when trying to call either serde_json::Deserializer.end()
             //   or JsonReader.consume_trailing_whitespace() at the end
             macro_rules! assert_deserialized_key {
                 ($key_content:expr, |$deserializer:ident, $visitor:ident| $deserializing_block:block, $expected_visited:expr) => {{

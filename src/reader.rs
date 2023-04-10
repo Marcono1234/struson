@@ -276,7 +276,7 @@ pub mod json_path {
     /*
      * TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
      *       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
-     * TODO: Instead of returning [...], should this directly return &[...] to make usage easier?
+     * TODO: Instead of returning [...], should this directly return &[...] to make usage easier? (is that even possible though?)
      */
     #[macro_export]
     macro_rules! json_path {
@@ -379,10 +379,10 @@ pub mod json_path {
             assert_parse_error("[01]", 1, "Leading 0 is not allowed");
             assert_parse_error("[00]", 1, "Leading 0 is not allowed");
             assert_parse_error("[-1]", 1, "Invalid index digit");
-            // TODO: Should this test really check for specific Rust library message?
             assert_parse_error(
                 "[99999999999999999999999999999999999999999999]",
                 1,
+                // TODO: Should this test really check for specific Rust library message?
                 "Invalid index value: number too large to fit in target type",
             );
             assert_parse_error("[1[0]]", 2, "Invalid index digit");
@@ -825,6 +825,7 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
+    /* TODO: Rename to peek_value (or peek_value_type)? */
     fn peek(&mut self) -> Result<ValueType, ReaderError>;
 
     /// Begins consuming a JSON object
@@ -1445,6 +1446,8 @@ pub trait JsonReader {
      * TODO: Should this rather take a `IntoIterator<Item = JsonPathPiece>` as path?
      *   Though use cases where the path is created dynamically and is not present as slice might be rare
      *   When changing this method, might render the `JsonPath` type alias a bit pointless then
+     * TODO: Rename this method? Name is based on file IO function `seek`, but not sure if "seek to"
+     *   is a proper phrase in this context
      */
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
 
@@ -3004,8 +3007,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
         D::deserialize(&mut deserializer)
         // TODO: Verify that value was properly deserialized (only single value; no incomplete array or object)
-        // might not be necessary because Serde's Deserializer API enforces this by consuming `self`, and
-        // JsonReaderDeserializer makes sure JSON arrays and objects are read completely
+        //       might not be necessary because Serde's Deserializer API enforces this by consuming `self`, and
+        //       JsonReaderDeserializer makes sure JSON arrays and objects are read completely
     }
 
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
