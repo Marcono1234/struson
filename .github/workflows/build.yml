@@ -1,0 +1,33 @@
+name: Build
+
+on: [push, pull_request]
+
+permissions:
+  contents: read # to fetch code (actions/checkout)
+
+env:
+  # Enable colored terminal output, see https://doc.rust-lang.org/cargo/reference/config.html#termcolor
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.os }})
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-make
+        # https://github.com/sagiegurari/cargo-make#installation
+        run: cargo install --no-default-features cargo-make
+
+      - name: Build
+        run: cargo make

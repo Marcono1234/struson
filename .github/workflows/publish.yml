@@ -1,0 +1,82 @@
+name: Publish
+
+on:
+  # Only run when manually triggered
+  workflow_dispatch:
+    inputs:
+      versionBump:
+        description: 'Part of the SemVer project version to bump for release (<major>.<minor>.<patch>)'
+        required: true
+        type: choice
+        options:
+        - major
+        - minor
+        - patch
+
+permissions:
+  contents: write # read repository content and push updated version and tag
+
+env:
+  # Enable colored terminal output, see https://doc.rust-lang.org/cargo/reference/config.html#termcolor
+  CARGO_TERM_COLOR: always
+
+# TODO: Maybe switch to https://github.com/crate-ci/cargo-release in the future, maybe even let it
+# automatically select new version number, see https://github.com/crate-ci/cargo-release/issues/62
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable
+
+      - name: Update project version
+        # https://github.com/killercup/cargo-edit
+        run: |
+          cargo install --no-default-features --features set-version cargo-edit
+          cargo set-version --bump ${{ inputs.versionBump }}
+
+      # There is currently no easy way to get the new version number (see also https://github.com/killercup/cargo-edit/issues/524),
+      # so have to get it by other means
+      - name: Get new version
+        id: get-new-version
+        # See https://stackoverflow.com/a/75023425
+        # and https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
+        run: |
+          VERSION=$(cargo metadata --format-version=1 --no-deps | jq --compact-output --exit-status '.packages[0].version')
+          echo "New version: $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit version update
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add .
+          git commit -m "Release version ${{ steps.get-new-version.outputs.VERSION }}"
+          git tag -a "v${{ steps.get-new-version.outputs.VERSION }}" -m "Release ${{ steps.get-new-version.outputs.VERSION }}"
+
+      # Perform full build to make sure there are no issues
+      - name: Build project
+        # https://github.com/sagiegurari/cargo-make#installation
+        run: |
+          cargo install --no-default-features cargo-make
+          cargo make
+
+      # TODO: Once this project is more stable, maybe include SemVer checks, e.g.
+      # https://github.com/rust-lang/rust-semverver or https://github.com/obi1kenobi/cargo-semver-checks
+
+      # Clean up results from build to not affect publish in any way
+      - name: Clean
+        run: cargo clean
+
+      - name: Publish
+        # TODO: Fail on any warnings (e.g. incorrect Cargo.toml values); not yet available, see https://github.com/rust-lang/cargo/issues/8424
+        run: cargo publish --all-features
+        env:
+          # CRATES_IO_TOKEN has to be set as GitHub environment secret
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Push Git changes
+        run: git push --follow-tags
