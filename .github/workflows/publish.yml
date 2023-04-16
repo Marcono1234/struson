@@ -20,8 +20,8 @@ env:
   # Enable colored terminal output, see https://doc.rust-lang.org/cargo/reference/config.html#termcolor
   CARGO_TERM_COLOR: always
 
-# TODO: Maybe switch to https://github.com/crate-ci/cargo-release in the future, maybe even let it
-# automatically select new version number, see https://github.com/crate-ci/cargo-release/issues/62
+# TODO: Maybe switch to https://github.com/crate-ci/cargo-release in the future, and if possible
+# let it check API SemVer compliance, see also https://github.com/crate-ci/cargo-release/issues/62
 
 jobs:
   publish:
