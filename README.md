@@ -115,4 +115,13 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 
 ## License
 
-This project uses the [MIT license](LICENSE.txt); all contributions are implicitly under that license.
+Licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT License](LICENSE-MIT)
+
+at your option.
+
+All contributions you make to this project are licensed implicitly under both licenses mentioned above, without any additional terms or conditions.
+
+Note: This dual-licensing is the same you see for the majority of Rust projects, see also the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/necessities.html#crate-and-its-dependencies-have-a-permissive-license-c-permissive).
