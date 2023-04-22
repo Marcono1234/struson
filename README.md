@@ -83,7 +83,7 @@ assert_eq!(r#"{"a":[1,true]}"#, std::str::from_utf8(&writer)?);
 
 ## Serde integration
 
-Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from a `JsonReader`. See the [`serde`](https://crates.io/crates/struson/latest/struson/serde) module of this crate for more information.
+Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from a `JsonReader`. See the [`serde`](https://docs.rs/struson/latest/struson/serde/index.html) module of this crate for more information.
 
 ## Changelog
 
