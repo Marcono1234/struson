@@ -29,6 +29,7 @@ If you need to process JSON in a DOM like way or want object mapper functionalit
   Can theoretically read and write arbitrarily deeply nested JSON data
 - Read arbitrarily precise JSON numbers as string
 - Seek to specific location in JSON data ([`JsonReader::seek_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.seek_to))
+- Transfer JSON data from a reader to a writer ([`JsonReader::transfer_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.transfer_to))
 - Read and write arbitrarily large JSON string values  
   ([`JsonReader::next_string_reader`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.next_string_reader) and [`JsonWriter::string_value_writer`](https://docs.rs/struson/latest/struson/writer/trait.JsonWriter.html#tymethod.string_value_writer))
 - Optional [Serde integration](#serde-integration)
