@@ -49,7 +49,7 @@ jobs:
         # See https://stackoverflow.com/a/75023425
         # and https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
         run: |
-          VERSION=$(cargo metadata --format-version=1 --no-deps | jq --compact-output --exit-status '.packages[0].version')
+          VERSION=$(cargo metadata --format-version=1 --no-deps | jq --compact-output --raw-output --exit-status '.packages[0].version')
           echo "New version: $VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
