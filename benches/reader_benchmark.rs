@@ -21,13 +21,13 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
             });
         })
     });
-    group.bench_with_input("struson-skip (no path update)", json, |b, json| {
+    group.bench_with_input("struson-skip (no path tracking)", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new_custom(
                     json.as_bytes(),
                     ReaderSettings {
-                        update_path_during_skip: false,
+                        track_path: false,
                         ..Default::default()
                     },
                 );
@@ -38,77 +38,97 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
+    fn struson_read<R: std::io::Read>(
+        mut json_reader: JsonStreamReader<R>,
+    ) -> Result<(), Box<dyn Error>> {
+        enum StackValue {
+            Array,
+            Object,
+        }
+
+        let mut stack = Vec::new();
+        loop {
+            if !stack.is_empty() {
+                match stack.last().unwrap() {
+                    StackValue::Array => {
+                        if !json_reader.has_next()? {
+                            stack.pop();
+                            json_reader.end_array()?;
+
+                            if stack.is_empty() {
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                    StackValue::Object => {
+                        if json_reader.has_next()? {
+                            json_reader.next_name()?;
+                            // fall through to value reading
+                        } else {
+                            stack.pop();
+                            json_reader.end_object()?;
+
+                            if stack.is_empty() {
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            match json_reader.peek()? {
+                ValueType::Array => {
+                    json_reader.begin_array()?;
+                    stack.push(StackValue::Array)
+                }
+                ValueType::Object => {
+                    json_reader.begin_object()?;
+                    stack.push(StackValue::Object)
+                }
+                ValueType::String => {
+                    json_reader.next_string()?;
+                }
+                ValueType::Number => {
+                    json_reader.next_number_as_string()?;
+                }
+                ValueType::Boolean => {
+                    json_reader.next_bool()?;
+                }
+                ValueType::Null => json_reader.next_null()?,
+            }
+
+            if stack.is_empty() {
+                break;
+            }
+        }
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
     group.bench_with_input("struson-read", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
-                let mut json_reader = JsonStreamReader::new(json.as_bytes());
-                enum StackValue {
-                    Array,
-                    Object,
-                }
+                let json_reader = JsonStreamReader::new(json.as_bytes());
+                struson_read(json_reader)
+            });
+        })
+    });
 
-                let mut stack = Vec::new();
-                loop {
-                    if !stack.is_empty() {
-                        match stack.last().unwrap() {
-                            StackValue::Array => {
-                                if !json_reader.has_next()? {
-                                    stack.pop();
-                                    json_reader.end_array()?;
-
-                                    if stack.is_empty() {
-                                        break;
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                            }
-                            StackValue::Object => {
-                                if json_reader.has_next()? {
-                                    json_reader.next_name()?;
-                                    // fall through to value reading
-                                } else {
-                                    stack.pop();
-                                    json_reader.end_object()?;
-
-                                    if stack.is_empty() {
-                                        break;
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    match json_reader.peek()? {
-                        ValueType::Array => {
-                            json_reader.begin_array()?;
-                            stack.push(StackValue::Array)
-                        }
-                        ValueType::Object => {
-                            json_reader.begin_object()?;
-                            stack.push(StackValue::Object)
-                        }
-                        ValueType::String => {
-                            json_reader.next_string()?;
-                        }
-                        ValueType::Number => {
-                            json_reader.next_number_as_string()?;
-                        }
-                        ValueType::Boolean => {
-                            json_reader.next_bool()?;
-                        }
-                        ValueType::Null => json_reader.next_null()?,
-                    }
-
-                    if stack.is_empty() {
-                        break;
-                    }
-                }
-                json_reader.consume_trailing_whitespace()?;
-
-                Ok(())
+    group.bench_with_input("struson-read (no path tracking)", json, |b, json| {
+        b.iter(|| {
+            call_unwrap(|| {
+                let json_reader = JsonStreamReader::new_custom(
+                    json.as_bytes(),
+                    ReaderSettings {
+                        track_path: false,
+                        ..Default::default()
+                    },
+                );
+                struson_read(json_reader)
             });
         })
     });
