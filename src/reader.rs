@@ -504,6 +504,9 @@ pub struct JsonErrorLocation {
     ///   has not been consumed yet. It is also used when skipping values (for example with [`JsonReader::skip_value`])
     ///   and updating the path is [disabled in the `ReaderSettings`](ReaderSettings::update_path_during_skip).
     ///
+    /// If tracking the JSON path is [disabled in the `ReaderSettings`](ReaderSettings::track_path) `<?>` will be
+    /// reported as path.
+    ///
     /// For the exact location of the error the [`line`](Self::line) and [`column`](Self::column) values should be used.
     pub path: String,
     /// Line number of the error, starting at 0
@@ -1712,7 +1715,7 @@ pub struct JsonStreamReader<R: Read> {
 
     line: u32,
     column: u32,
-    json_path: Vec<JsonPathPiece>,
+    json_path: Option<Vec<JsonPathPiece>>,
 
     reader_settings: ReaderSettings,
 }
@@ -1870,7 +1873,7 @@ pub struct ReaderSettings {
     /// might be use cases where supporting multiple top-level values can be useful.
     pub allow_multiple_top_level: bool,
 
-    /// Whether to update the error location path while skipping values
+    /// Whether to update the error location JSON path while skipping values
     ///
     /// When enabled, skipping JSON arrays and objects with methods such as [`JsonReader::skip_value`] or
     /// [`JsonReader::seek_to`] will update the path which is reported for [error locations](JsonErrorLocation::path).
@@ -1882,7 +1885,19 @@ pub struct ReaderSettings {
     ///
     /// This setting has no effect on the JSON parsing behavior, it only affects the information included
     /// for errors.
+    ///
+    /// If [`ReaderSettings::track_path`] is disabled this setting has no effect.
     pub update_path_during_skip: bool,
+
+    /// Whether to track the JSON path while parsing
+    ///
+    /// The JSON path is reported for [error locations](JsonErrorLocation::path) to make debugging
+    /// easier. Disabling path tracking can therefore make troubleshooting malformed JSON data more
+    /// difficult, but it might on the other hand improve performance.
+    ///
+    /// This setting has no effect on the JSON parsing behavior, it only affects the information included
+    /// for errors.
+    pub track_path: bool,
 
     /// Whether to restrict which JSON number values are supported
     ///
@@ -1910,6 +1925,7 @@ impl Default for ReaderSettings {
     /// - trailing comma: disallowed
     /// - multiple top-level values: disallowed
     /// - update path during skip: enabled
+    /// - track JSON path: enabled
     /// - restrict number values: enabled
     ///
     /// These defaults are compliant with the JSON specification.
@@ -1919,6 +1935,7 @@ impl Default for ReaderSettings {
             allow_trailing_comma: false,
             allow_multiple_top_level: false,
             update_path_during_skip: true,
+            track_path: true,
             restrict_number_values: true,
         }
     }
@@ -1935,6 +1952,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// The settings can be used to customize which JSON data the reader accepts and to allow
     /// JSON data which is considered invalid by the JSON specification.
     pub fn new_custom(reader: R, reader_settings: ReaderSettings) -> Self {
+        let initial_nesting_capacity = 32;
         Self {
             reader,
             buf: [0; READER_BUF_SIZE],
@@ -1944,18 +1962,26 @@ impl<R: Read> JsonStreamReader<R> {
             peeked: None,
             is_empty: true,
             expects_member_name: false,
-            stack: Vec::new(),
+            stack: Vec::with_capacity(initial_nesting_capacity),
             is_string_value_reader_active: false,
             line: 0,
             column: 0,
-            json_path: Vec::new(),
+            json_path: if reader_settings.track_path {
+                Some(Vec::with_capacity(initial_nesting_capacity))
+            } else {
+                None
+            },
             reader_settings,
         }
     }
 
     fn create_error_location(&self) -> JsonErrorLocation {
         JsonErrorLocation {
-            path: format_abs_json_path(&self.json_path),
+            path: self
+                .json_path
+                .as_ref()
+                // When changing this string, have to also update documentation for JsonErrorLocation
+                .map_or("<?>".to_owned(), |p| format_abs_json_path(p)),
             line: self.line,
             column: self.column,
         }
@@ -2405,7 +2431,9 @@ impl<R: Read> JsonStreamReader<R> {
 
     fn on_container_end(&mut self) {
         self.stack.pop();
-        self.json_path.pop();
+        if let Some(ref mut json_path) = self.json_path {
+            json_path.pop();
+        }
 
         // Clear expects_member_name in case current container is now an array; on_value_end() call
         // below will set expects_member_name again if current container is an object
@@ -2417,9 +2445,11 @@ impl<R: Read> JsonStreamReader<R> {
     fn on_value_end(&mut self) {
         // Update array path
         if self.is_in_array() {
-            match self.json_path.last_mut().unwrap() {
-                JsonPathPiece::ArrayItem(index) => *index += 1,
-                _ => unreachable!("Path should be array item"),
+            if let Some(ref mut json_path) = self.json_path {
+                match json_path.last_mut().unwrap() {
+                    JsonPathPiece::ArrayItem(index) => *index += 1,
+                    _ => unreachable!("Path should be array item"),
+                }
             }
         }
 
@@ -2696,12 +2726,14 @@ impl<R: Read> JsonStreamReader<R> {
 
     fn skip_name_impl(&mut self, update_path: bool) -> Result<(), ReaderError> {
         self.consume_name(|self_| {
-            if update_path {
+            if update_path && self_.json_path.is_some() {
                 // Similar to `next_name` implementation, except that `name` can directly be moved to
                 // json_path piece instead of having to be cloned
                 let name = self_.read_string_bytes_to_string()?;
 
-                match self_.json_path.last_mut().unwrap() {
+                // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
+                // would be two mutable borrows of `self_` then at the same time)
+                match self_.json_path.as_mut().unwrap().last_mut().unwrap() {
                     JsonPathPiece::ObjectMember(path_name) => *path_name = name,
                     _ => unreachable!("Path should be object member"),
                 }
@@ -2776,7 +2808,11 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn begin_array(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Array)?;
         self.stack.push(StackValue::Array);
-        self.json_path.push(JsonPathPiece::ArrayItem(0));
+
+        if let Some(ref mut json_path) = self.json_path {
+            json_path.push(JsonPathPiece::ArrayItem(0));
+        }
+
         // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
         self.expects_member_name = false;
         self.is_empty = true;
@@ -2802,10 +2838,13 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn begin_object(&mut self) -> Result<(), ReaderError> {
         self.start_expected_value_type(ValueType::Object)?;
         self.stack.push(StackValue::Object);
-        // Push a placeholder which is replaced once the name of the first member is read
-        // Important: When changing this placeholder in the future also have to update documentation mentioning to it
-        self.json_path
-            .push(JsonPathPiece::ObjectMember("<?>".to_owned()));
+
+        if let Some(ref mut json_path) = self.json_path {
+            // Push a placeholder which is replaced once the name of the first member is read
+            // Important: When changing this placeholder in the future also have to update documentation mentioning to it
+            json_path.push(JsonPathPiece::ObjectMember("<?>".to_owned()));
+        }
+
         self.is_empty = true;
         self.expects_member_name = true;
         Ok(())
@@ -2815,9 +2854,11 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         self.consume_name(|self_| {
             let name = self_.read_string_bytes_to_string()?;
 
-            match self_.json_path.last_mut().unwrap() {
-                JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
-                _ => unreachable!("Path should be object member"),
+            if let Some(ref mut json_path) = self_.json_path {
+                match json_path.last_mut().unwrap() {
+                    JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
+                    _ => unreachable!("Path should be object member"),
+                }
             }
             Ok(name)
         })
@@ -5633,6 +5674,49 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn no_path_tracking() -> TestResult {
+        let mut json_reader = JsonStreamReader::new_custom(
+            // Test with JSON data containing various values and a malformed `@` at the end
+            "[{\"a\": [[], [1], {}, {\"b\": 1}, {\"c\": 2}, @]}]".as_bytes(),
+            ReaderSettings {
+                track_path: false,
+                ..Default::default()
+            },
+        );
+        json_reader.begin_array()?;
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        json_reader.begin_array()?;
+
+        json_reader.begin_array()?;
+        json_reader.end_array()?;
+
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        json_reader.end_array()?;
+
+        json_reader.begin_object()?;
+        json_reader.end_object()?;
+
+        json_reader.begin_object()?;
+        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        json_reader.end_object()?;
+
+        json_reader.skip_value()?;
+        assert_parse_error_with_path(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::MalformedJson,
+            // Is '<?>' because path tracking is disabled
+            "<?>",
+            41,
+        );
+
+        Ok(())
+    }
+
     struct DebuggableReader<'a> {
         bytes: &'a [u8],
         has_read: bool,
@@ -5680,13 +5764,13 @@ mod tests {
         let json_number = "123";
         let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
@@ -5708,7 +5792,7 @@ mod tests {
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: false } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: false } }",
             format!("{json_reader:?}")
         );
 
@@ -5724,7 +5808,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5737,7 +5821,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5753,7 +5837,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json.as_slice());
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: [], reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, update_path_during_skip: true, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())

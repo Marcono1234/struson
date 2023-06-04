@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use struson::{
-    reader::{JsonReader, JsonStreamReader},
+    reader::{JsonReader, JsonStreamReader, ReaderSettings},
     serde::JsonReaderDeserializer,
 };
 
@@ -10,7 +10,14 @@ fn bench_compare<D: DeserializeOwned>(c: &mut Criterion, name: &str, json: &str)
     let mut group = c.benchmark_group(name);
     group.bench_with_input("struson", bytes, |b, bytes| {
         b.iter(|| {
-            let mut json_reader = JsonStreamReader::new(bytes);
+            let mut json_reader = JsonStreamReader::new_custom(
+                bytes,
+                ReaderSettings {
+                    // Disable path tracking for fairer comparison, because Serde JSON does not seem to track JSON path either
+                    track_path: false,
+                    ..Default::default()
+                },
+            );
             let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
             D::deserialize(&mut deserializer).unwrap();
             json_reader.consume_trailing_whitespace().unwrap();
