@@ -13,7 +13,7 @@ categories = ["parser-implementations"]
 
 [dependencies]
 thiserror = "1.0.40"
-strum = "0.24.1"
+strum = "0.25.0"
 strum_macros = "0.24.3"
 duplicate = "1.0.0"
 
