@@ -438,7 +438,7 @@ use self::json_path::json_path;
 type IoError = std::io::Error;
 
 /// Type of a JSON value
-#[derive(PartialEq, Eq, Clone, Copy, strum_macros::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
 pub enum ValueType {
     /// JSON array: `[ ... ]`
     Array,
@@ -544,7 +544,7 @@ pub struct JsonSyntaxError {
 }
 
 /// Describes why a syntax error occurred
-#[derive(PartialEq, Eq, Clone, Copy, strum_macros::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not enabled in the [`ReaderSettings`]
     CommentsNotEnabled,
@@ -608,7 +608,7 @@ pub enum SyntaxErrorKind {
 }
 
 /// Describes why the JSON document is considered to have an unexpected structure
-#[derive(PartialEq, Eq, Clone, strum_macros::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, strum::Display, Debug)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
     TooShortArray {
@@ -1604,7 +1604,7 @@ pub trait JsonReader {
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
 }
 
-#[derive(PartialEq, Clone, Copy, strum_macros::Display, Debug)]
+#[derive(PartialEq, Clone, Copy, strum::Display, Debug)]
 enum PeekedValue {
     ObjectStart,
     ObjectEnd,
