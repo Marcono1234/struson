@@ -1922,6 +1922,7 @@ impl Default for ReaderSettings {
     }
 }
 
+// Implementation with public constructor methods
 impl<R: Read> JsonStreamReader<R> {
     /// Creates a JSON reader with [default settings](ReaderSettings::default)
     pub fn new(reader: R) -> Self {
@@ -1955,7 +1956,10 @@ impl<R: Read> JsonStreamReader<R> {
             reader_settings,
         }
     }
+}
 
+// Implementation with error utility methods, and methods for inspecting JSON structure state
+impl<R: Read> JsonStreamReader<R> {
     fn create_error_location(&self) -> JsonErrorLocation {
         JsonErrorLocation {
             path: self
@@ -1995,7 +1999,10 @@ impl<R: Read> JsonStreamReader<R> {
     fn expects_member_value(&self) -> bool {
         self.is_in_object() && !self.expects_member_name
     }
+}
 
+// Implementation with low level byte reading methods
+impl<R: Read> JsonStreamReader<R> {
     fn ensure_non_empty_buffer(&mut self) -> Result<bool, IoError> {
         if self.reached_eof {
             return Ok(false);
@@ -2040,6 +2047,82 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
+    fn read_utf8_bytes<C: FnMut(u8)>(
+        &mut self,
+        byte1: u8,
+        consumer: &mut C,
+    ) -> Result<(), StringReadingError> {
+        fn invalid_utf8_err() -> Result<(), StringReadingError> {
+            Err(StringReadingError::IoError(IoError::new(
+                ErrorKind::InvalidData,
+                "invalid UTF-8 data",
+            )))
+        }
+
+        let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+
+        if (byte2 & 0b1100_0000) != 0b1000_0000 {
+            return invalid_utf8_err();
+        }
+
+        if (byte1 & 0b1110_0000) == 0b1100_0000 {
+            let code_point =
+                (u32::from(byte1) & !0b1110_0000) << 6 | (u32::from(byte2) & !0b1100_0000);
+            // Check for 'overlong encoding'
+            if code_point < 0x80 {
+                return invalid_utf8_err();
+            }
+            consumer(byte1);
+            consumer(byte2);
+        } else {
+            let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+
+            if (byte3 & 0b1100_0000) != 0b1000_0000 {
+                return invalid_utf8_err();
+            }
+
+            if (byte1 & 0b1111_0000) == 0b1110_0000 {
+                let code_point = (u32::from(byte1) & !0b1111_0000) << 12
+                    | (u32::from(byte2) & !0b1100_0000) << 6
+                    | (u32::from(byte3) & !0b1100_0000);
+                // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
+                if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
+                    return invalid_utf8_err();
+                }
+
+                consumer(byte1);
+                consumer(byte2);
+                consumer(byte3);
+            } else if (byte1 & 0b1111_1000) == 0b1111_0000 {
+                let byte4 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+                if (byte4 & 0b1100_0000) == 0b1000_0000 {
+                    let code_point = (u32::from(byte1) & !0b1111_1000) << 18
+                        | (u32::from(byte2) & !0b1100_0000) << 12
+                        | (u32::from(byte3) & !0b1100_0000) << 6
+                        | (u32::from(byte4) & !0b1100_0000);
+
+                    // Check for 'overlong encoding', or encoding of invalid code point
+                    if !(0x10000..=0x10FFFF).contains(&code_point) {
+                        return invalid_utf8_err();
+                    }
+
+                    consumer(byte1);
+                    consumer(byte2);
+                    consumer(byte3);
+                    consumer(byte4);
+                } else {
+                    return invalid_utf8_err();
+                }
+            } else {
+                return invalid_utf8_err();
+            }
+        }
+        Ok(())
+    }
+}
+
+// Implementation with whitespace skipping logic
+impl<R: Read> JsonStreamReader<R> {
     fn skip_to<P: Fn(u8) -> bool>(
         &mut self,
         stop_predicate: P,
@@ -2186,7 +2269,10 @@ impl<R: Read> JsonStreamReader<R> {
         // unwrap should be safe, skip_whitespace made sure that EOF has not been reached
         Ok(self.skip_whitespace(Some(eof_error_kind))?.unwrap())
     }
+}
 
+// Implementation with peeking (and consumption of literals) logic
+impl<R: Read> JsonStreamReader<R> {
     fn verify_value_separator(
         &self,
         byte: u8,
@@ -2386,7 +2472,10 @@ impl<R: Read> JsonStreamReader<R> {
         };
         self.column += peeked_length;
     }
+}
 
+// Implementation with general value consumption methods
+impl<R: Read> JsonStreamReader<R> {
     fn start_expected_value_type(
         &mut self,
         expected: ValueType,
@@ -2442,7 +2531,10 @@ impl<R: Read> JsonStreamReader<R> {
         // Enclosing container is not empty since this method call here is processing its child
         self.is_empty = false;
     }
+}
 
+// Implementation with string and object member name reading methods
+impl<R: Read> JsonStreamReader<R> {
     fn read_unicode_escape_hex_digit(&mut self) -> Result<u32, StringReadingError> {
         let byte = self.read_byte(SyntaxErrorKind::MalformedEscapeSequence)?;
         match byte {
@@ -2463,79 +2555,6 @@ impl<R: Read> JsonStreamReader<R> {
         let d4 = self.read_unicode_escape_hex_digit()?;
 
         Ok(d4 | d3 << 4 | d2 << 8 | d1 << 12)
-    }
-
-    fn read_utf8_bytes<C: FnMut(u8)>(
-        &mut self,
-        byte1: u8,
-        consumer: &mut C,
-    ) -> Result<(), StringReadingError> {
-        fn invalid_utf8_err() -> Result<(), StringReadingError> {
-            Err(StringReadingError::IoError(IoError::new(
-                ErrorKind::InvalidData,
-                "invalid UTF-8 data",
-            )))
-        }
-
-        let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-
-        if (byte2 & 0b1100_0000) != 0b1000_0000 {
-            return invalid_utf8_err();
-        }
-
-        if (byte1 & 0b1110_0000) == 0b1100_0000 {
-            let code_point =
-                (u32::from(byte1) & !0b1110_0000) << 6 | (u32::from(byte2) & !0b1100_0000);
-            // Check for 'overlong encoding'
-            if code_point < 0x80 {
-                return invalid_utf8_err();
-            }
-            consumer(byte1);
-            consumer(byte2);
-        } else {
-            let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-
-            if (byte3 & 0b1100_0000) != 0b1000_0000 {
-                return invalid_utf8_err();
-            }
-
-            if (byte1 & 0b1111_0000) == 0b1110_0000 {
-                let code_point = (u32::from(byte1) & !0b1111_0000) << 12
-                    | (u32::from(byte2) & !0b1100_0000) << 6
-                    | (u32::from(byte3) & !0b1100_0000);
-                // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
-                if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
-                    return invalid_utf8_err();
-                }
-
-                consumer(byte1);
-                consumer(byte2);
-                consumer(byte3);
-            } else if (byte1 & 0b1111_1000) == 0b1111_0000 {
-                let byte4 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-                if (byte4 & 0b1100_0000) == 0b1000_0000 {
-                    let code_point = (u32::from(byte1) & !0b1111_1000) << 18
-                        | (u32::from(byte2) & !0b1100_0000) << 12
-                        | (u32::from(byte3) & !0b1100_0000) << 6
-                        | (u32::from(byte4) & !0b1100_0000);
-
-                    // Check for 'overlong encoding', or encoding of invalid code point
-                    if !(0x10000..=0x10FFFF).contains(&code_point) {
-                        return invalid_utf8_err();
-                    }
-
-                    consumer(byte1);
-                    consumer(byte2);
-                    consumer(byte3);
-                    consumer(byte4);
-                } else {
-                    return invalid_utf8_err();
-                }
-            } else {
-                return invalid_utf8_err();
-            }
-        }
-        Ok(())
     }
 
     fn read_unicode_escape_char(&mut self) -> Result<char, StringReadingError> {
@@ -2704,7 +2723,10 @@ impl<R: Read> JsonStreamReader<R> {
             self.create_syntax_value_error(SyntaxErrorKind::MissingColon)
         };
     }
+}
 
+// Implementation with number reading methods
+impl<R: Read> JsonStreamReader<R> {
     fn collect_next_number_bytes<C: FnMut(u8)>(
         &mut self,
         consumer: &mut C,

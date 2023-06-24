@@ -736,6 +736,7 @@ pub struct JsonStreamWriter<W: Write> {
     writer_settings: WriterSettings,
 }
 
+// Implementation with public constructor methods
 impl<W: Write> JsonStreamWriter<W> {
     /// Creates a JSON writer with [default settings](WriterSettings::default)
     pub fn new(writer: W) -> Self {
@@ -758,42 +759,10 @@ impl<W: Write> JsonStreamWriter<W> {
             writer_settings,
         }
     }
+}
 
-    fn should_escape(&self, c: char) -> bool {
-        c == '"' || c == '\\'
-        // Control characters which must be escaped per JSON specification
-        || ('\u{0}'..='\u{1F}').contains(&c)
-            || (self.writer_settings.escape_all_non_ascii && !c.is_ascii())
-            || (self.writer_settings.escape_all_control_chars && c.is_control())
-    }
-
-    fn write_escaped_char(&mut self, c: char) -> Result<(), IoError> {
-        let escape = match c {
-            '"' => "\\\"",
-            '\\' => "\\\\",
-            '/' => "\\/",
-            '\u{0008}' => "\\b",
-            '\u{000C}' => "\\f",
-            '\n' => "\\n",
-            '\r' => "\\r",
-            '\t' => "\\t",
-            '\0'..='\u{FFFF}' => {
-                self.write_bytes(format!("\\u{:04X}", c as u32).as_bytes())?;
-                return Ok(());
-            }
-            _ => {
-                // Encode as surrogate pair
-                let temp = (c as u32) - 0x10000;
-                let high = (temp >> 10) + 0xD800;
-                let low = (temp & ((1 << 10) - 1)) + 0xDC00;
-                self.write_bytes(format!("\\u{:04X}\\u{:04X}", high, low).as_bytes())?;
-                return Ok(());
-            }
-        };
-        self.write_bytes(escape.as_bytes())?;
-        Ok(())
-    }
-
+// Implementation with low level byte writing methods
+impl<W: Write> JsonStreamWriter<W> {
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), IoError> {
         let mut pos = 0;
         while pos < bytes.len() {
@@ -818,7 +787,10 @@ impl<W: Write> JsonStreamWriter<W> {
         self.writer.flush()?;
         Ok(())
     }
+}
 
+// Implementation with JSON structure state inspection methods, and general value methods
+impl<W: Write> JsonStreamWriter<W> {
     fn is_in_array(&self) -> bool {
         self.stack.last().map_or(false, |v| v == &StackValue::Array)
     }
@@ -910,6 +882,44 @@ impl<W: Write> JsonStreamWriter<W> {
 
         // If after pop() call above currently in object, then expecting a member name
         self.expects_member_name = self.is_in_object();
+        Ok(())
+    }
+}
+
+// Implementation with string writing methods
+impl<W: Write> JsonStreamWriter<W> {
+    fn should_escape(&self, c: char) -> bool {
+        c == '"' || c == '\\'
+        // Control characters which must be escaped per JSON specification
+        || ('\u{0}'..='\u{1F}').contains(&c)
+            || (self.writer_settings.escape_all_non_ascii && !c.is_ascii())
+            || (self.writer_settings.escape_all_control_chars && c.is_control())
+    }
+
+    fn write_escaped_char(&mut self, c: char) -> Result<(), IoError> {
+        let escape = match c {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '/' => "\\/",
+            '\u{0008}' => "\\b",
+            '\u{000C}' => "\\f",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            '\0'..='\u{FFFF}' => {
+                self.write_bytes(format!("\\u{:04X}", c as u32).as_bytes())?;
+                return Ok(());
+            }
+            _ => {
+                // Encode as surrogate pair
+                let temp = (c as u32) - 0x10000;
+                let high = (temp >> 10) + 0xD800;
+                let low = (temp & ((1 << 10) - 1)) + 0xDC00;
+                self.write_bytes(format!("\\u{:04X}\\u{:04X}", high, low).as_bytes())?;
+                return Ok(());
+            }
+        };
+        self.write_bytes(escape.as_bytes())?;
         Ok(())
     }
 
