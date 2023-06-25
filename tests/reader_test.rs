@@ -47,7 +47,7 @@ fn reader_test() -> Result<(), Box<dyn Error>> {
                 }
                 StackValue::Object => {
                     if json_reader.has_next()? {
-                        events.push(JsonEvent::MemberName(json_reader.next_name()?));
+                        events.push(JsonEvent::MemberName(json_reader.next_name_owned()?));
                         // fall through to value reading
                     } else {
                         stack.pop();

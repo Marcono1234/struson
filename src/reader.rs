@@ -3,9 +3,10 @@
 //! [`JsonReader`] is the general trait for JSON readers, [`JsonStreamReader`] is an implementation
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 use crate::{
-    json_number::consume_json_number,
+    json_number::{consume_json_number, NumberBytesProvider},
     writer::{JsonNumberError, JsonWriter},
 };
+use bytes_value_reader::*;
 
 /// Module for JSONPath
 ///
@@ -84,10 +85,8 @@ pub mod json_path {
             + json_path
                 .iter()
                 .map(|p| match p {
-                    JsonPathPiece::ArrayItem(index) => {
-                        "[".to_owned() + index.to_string().as_str() + "]"
-                    }
-                    JsonPathPiece::ObjectMember(name) => ".".to_owned() + name.as_str(),
+                    JsonPathPiece::ArrayItem(index) => "[".to_owned() + &index.to_string() + "]",
+                    JsonPathPiece::ObjectMember(name) => ".".to_owned() + name,
                 })
                 .collect::<String>()
                 .as_str()
@@ -198,7 +197,7 @@ pub mod json_path {
                 let path_index =
                     u32::from_str(&path[index..end_index]).map_err(|e| JsonPathParseError {
                         index,
-                        message: "Invalid index value: ".to_owned() + e.to_string().as_str(),
+                        message: "Invalid index value: ".to_owned() + &e.to_string(),
                     })?;
                 parsed_path.push(JsonPathPiece::ArrayItem(path_index));
                 index = end_index + 1;
@@ -427,6 +426,7 @@ use thiserror::Error;
 use std::{
     fmt::{Debug, Display},
     io::{ErrorKind, Read},
+    mem::replace,
     str::FromStr,
 };
 
@@ -712,9 +712,9 @@ pub enum TransferError {
 /// - Reading values
 ///     - [`begin_array`](Self::begin_array), [`end_array`](Self::end_array): Starting and ending a JSON array
 ///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
-///     - [`next_name`](Self::next_name): Reading the name of a JSON object member
-///     - [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
-///     - [`next_number`](Self::next_number), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
+///     - [`next_name`](Self::next_name), [`next_name_owned`](Self::next_name_owned): Reading the name of a JSON object member
+///     - [`next_str`](Self::next_str), [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
+///     - [`next_number`](Self::next_number), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
 ///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value (optional feature)
@@ -807,7 +807,7 @@ pub trait JsonReader {
     /// # let mut json_reader = JsonStreamReader::new("true".as_bytes());
     /// match json_reader.peek()? {
     ///     ValueType::Boolean => println!("A boolean: {}", json_reader.next_bool()?),
-    ///     ValueType::String => println!("A string: {}", json_reader.next_string()?),
+    ///     ValueType::String => println!("A string: {}", json_reader.next_str()?),
     ///     _ => panic!("Unexpected type"),
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -832,8 +832,9 @@ pub trait JsonReader {
 
     /// Begins consuming a JSON object
     ///
-    /// The method [`has_next`](Self::has_next) can be used to check if there is a next object member. To consume a member
-    /// first call [`next_name`](Self::next_name) and afterwards one of the value reading methods such as [`next_number`](Self::next_number).
+    /// The method [`has_next`](Self::has_next) can be used to check if there is a next object member.
+    /// To consume a member first call [`next_name`](Self::next_name) or [`next_name_owned`](Self::next_name_owned)
+    /// and afterwards one of the value reading methods such as [`next_number`](Self::next_number).
     /// At the end call [`end_object`](Self::end_object) to consume the closing bracket of the JSON object.
     ///
     /// # Examples
@@ -844,7 +845,7 @@ pub trait JsonReader {
     ///
     /// // Prints "a: 1", "b: 2"
     /// while json_reader.has_next()? {
-    ///     let name = json_reader.next_name()?;
+    ///     let name = json_reader.next_name_owned()?;
     ///     let value: u32 = json_reader.next_number()??;
     ///     println!("{name}: {value}");
     /// }
@@ -1004,7 +1005,13 @@ pub trait JsonReader {
     /// should be no need to check for a next element since there must always be one.
     fn has_next(&mut self) -> Result<bool, ReaderError>;
 
-    /// Consumes and returns the name of the next JSON object member
+    /// Consumes and returns the name of the next JSON object member as `str`
+    ///
+    /// The name is returned as borrowed `str`. While that value is in scope, the Rust
+    /// compiler might not permit using the JSON reader in any other way.
+    /// If an owned `String` is needed, prefer [`next_name_owned`](Self::next_name_owned),
+    /// that will most likely be more efficient than using this method to obtain a `str`
+    /// and then converting that to an owned `String`.
     ///
     /// Afterwards one of the value reading methods such as [`next_number`](Self::next_number) can be
     /// used to read the corresponding member value.
@@ -1032,12 +1039,28 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This
     /// indicates incorrect usage by the user and is unrelated to the JSON data.
-    fn next_name(&mut self) -> Result<String, ReaderError>;
+    fn next_name(&mut self) -> Result<&'_ str, ReaderError>;
 
-    /// Consumes and returns a JSON string value
+    /// Consumes and returns the name of the next JSON object member as `String`
+    ///
+    /// The name is returned as owned `String`. If a borrowed `str` suffices for
+    /// your use case, prefer [`next_name`](Self::next_name), that will most likely
+    /// be more efficient.
+    ///
+    /// See the documentation of [`next_name`](Self::next_name) for a detailed
+    /// description of the behavior of reading a member name.
+    fn next_name_owned(&mut self) -> Result<String, ReaderError>;
+
+    /// Consumes and returns a JSON string value as `str`
     ///
     /// This method is only intended to consume string values, it cannot be used to consume
     /// JSON object member names. The method [`next_name`](Self::next_name) has to be used for that.
+    ///
+    /// The string value is returned as borrowed `str`. While that value is in scope, the Rust
+    /// compiler might not permit using the JSON reader in any other way.
+    /// If an owned `String` is needed, prefer [`next_string`](Self::next_string),
+    /// that will most likely be more efficient than using this method to obtain a `str`
+    /// and then converting that to an owned `String`.
     ///
     /// To avoid reading the complete string value into memory, the method [`next_string_reader`](Self::next_string_reader)
     /// can be used to obtain a reader which allows lazily reading the value. Especially for
@@ -1047,7 +1070,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#""text with \"quotes\"""#.as_bytes());
-    /// assert_eq!("text with \"quotes\"", json_reader.next_string()?);
+    /// assert_eq!("text with \"quotes\"", json_reader.next_str()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1066,12 +1089,22 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
+    fn next_str(&mut self) -> Result<&'_ str, ReaderError>;
+
+    /// Consumes and returns a JSON string value as `String`
+    ///
+    /// The string value is returned as owned `String`. If a borrowed `str` suffices
+    /// for your use case, prefer [`next_str`](Self::next_str), that will most likely
+    /// be more efficient.
+    ///
+    /// See the documentation of [`next_str`](Self::next_str) for a detailed
+    /// description of the behavior of reading a string value.
     fn next_string(&mut self) -> Result<String, ReaderError>;
 
     /// Provides a reader for lazily reading a JSON string value
     ///
     /// This method is mainly designed to process large string values in a memory efficient
-    /// way. If that is not a concern the method [`next_string`](Self::next_string) should be used instead.
+    /// way. If that is not a concern the method [`next_str`](Self::next_str) should be used instead.
     ///
     /// This method is only intended to consume string values, it cannot be used to consume
     /// JSON object member names. The method [`next_name`](Self::next_name) has to be used for that.
@@ -1131,7 +1164,8 @@ pub trait JsonReader {
     /// be inferred automatically.
     ///
     /// If parsing the number should be deferred to a later point or the exact format of the
-    /// JSON number should be preserved, the method [`next_number_as_string`](Self::next_number_as_string) can be used.
+    /// JSON number should be preserved, the method [`next_number_as_str`](Self::next_number_as_str)
+    /// can be used.
     ///
     /// # Examples
     /// ```
@@ -1165,20 +1199,26 @@ pub trait JsonReader {
      */
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError>;
 
-    /// Consumes and returns the string representation of a JSON number value
+    /// Consumes and returns the string representation of a JSON number value as `str`
     ///
     /// This method is mainly intended for situations where parsing the number should be
     /// deferred to a later point, or the exact format of the JSON number should be preserved.
-    /// However, this method nonetheless validates the JSON number matches the format
+    /// However, this method nonetheless validates that the JSON number matches the format
     /// described by the JSON specification.
     ///
     /// The method [`next_number`](Self::next_number) can be used instead to parse the number directly in place.
+    ///
+    /// The number value is returned as borrowed `str`. While that value is in scope, the Rust
+    /// compiler might not permit using the JSON reader in any other way.
+    /// If an owned `String` is needed, prefer [`next_number_as_string`](Self::next_number_as_string),
+    /// that will most likely be more efficient than using this method to obtain a `str`
+    /// and then converting that to an owned `String`.
     ///
     /// # Examples
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12.0e5".as_bytes());
-    /// assert_eq!("12.0e5", json_reader.next_number_as_string()?);
+    /// assert_eq!("12.0e5", json_reader.next_number_as_str()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1200,6 +1240,16 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
+    fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError>;
+
+    /// Consumes and returns the string representation of a JSON number value as `String`
+    ///
+    /// The string value is returned as owned `String`. If a borrowed `str` suffices
+    /// for your use case, prefer [`next_number_as_str`](Self::next_number_as_str), that
+    /// will most likely be more efficient.
+    ///
+    /// See the documentation of [`next_number_as_str`](Self::next_number_as_str) for
+    /// a detailed description of the behavior of reading a number value as string.
     fn next_number_as_string(&mut self) -> Result<String, ReaderError>;
 
     /// Consumes and returns a JSON boolean value
@@ -1345,7 +1395,7 @@ pub trait JsonReader {
     /// // Skip member name "a"
     /// json_reader.skip_name()?;
     ///
-    /// assert_eq!("1", json_reader.next_number_as_string()?);
+    /// assert_eq!("1", json_reader.next_number_as_str()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1369,7 +1419,7 @@ pub trait JsonReader {
     /// for the application processing it.
     ///
     /// Skipping values with this method is usually more efficient than calling regular value reading
-    /// methods (such as `next_string()`) but discarding their result.
+    /// methods (such as `next_str()`) but discarding their result.
     /// However, `skip_value` nonetheless also verifies that the skipped JSON data has valid syntax.
     ///
     /// # Examples
@@ -1428,7 +1478,7 @@ pub trait JsonReader {
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Can now consume the value to which the call seeked to
-    /// assert_eq!("c", json_reader.next_string()?);
+    /// assert_eq!("c", json_reader.next_str()?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1479,7 +1529,7 @@ pub trait JsonReader {
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Consume the value to which the call seeked to
-    /// assert_eq!("c", json_reader.next_string()?);
+    /// assert_eq!("c", json_reader.next_str()?);
     ///
     /// // Skip the remainder of the document
     /// json_reader.skip_to_top_level()?;
@@ -1644,6 +1694,7 @@ enum StackValue {
 }
 
 const READER_BUF_SIZE: usize = 1024;
+const INITIAL_VALUE_BYTES_BUF_CAPACITY: usize = 128;
 
 /// A JSON reader implementation which consumes data from a [`Read`]
 ///
@@ -1698,11 +1749,16 @@ const READER_BUF_SIZE: usize = 1024;
 pub struct JsonStreamReader<R: Read> {
     // When adding more fields to this struct, adjust the Debug implementation below, if necessary
     reader: R,
+    /// Buffer containing some bytes read from [`reader`](Self::reader)
     buf: [u8; READER_BUF_SIZE],
+    /// Start index (inclusive) at which data in [`buf`](Self::buf) starts
     buf_pos: usize,
     /// Index (exclusive) up to which [`buf`](Self::buf) is filled
     buf_end_pos: usize,
     reached_eof: bool,
+    /// Used as scratch buffer to temporarily store string and number values in case they cannot
+    /// be served directly from [`buf`](Self::buf)
+    value_bytes_buf: Vec<u8>,
 
     peeked: Option<PeekedValue>,
     /// Whether the current array or object is empty, or at top-level whether
@@ -1941,6 +1997,7 @@ impl<R: Read> JsonStreamReader<R> {
             buf_pos: 0,
             buf_end_pos: 0,
             reached_eof: false,
+            value_bytes_buf: Vec::with_capacity(INITIAL_VALUE_BYTES_BUF_CAPACITY),
             peeked: None,
             is_empty: true,
             expects_member_name: false,
@@ -2003,17 +2060,20 @@ impl<R: Read> JsonStreamReader<R> {
 
 // Implementation with low level byte reading methods
 impl<R: Read> JsonStreamReader<R> {
-    fn ensure_non_empty_buffer(&mut self) -> Result<bool, IoError> {
+    /// Fills the buffer, starting at `start_pos`
+    ///
+    /// The [`buf_pos`] is set to `start_pos`. If the end of the input has been
+    /// reached `false` is returned.
+    fn fill_buffer(&mut self, start_pos: usize) -> Result<bool, IoError> {
         if self.reached_eof {
             return Ok(false);
         }
-        if self.buf_pos < self.buf_end_pos {
-            return Ok(true);
-        }
+        debug_assert!(self.buf_pos >= self.buf_end_pos);
+        debug_assert!(start_pos < self.buf.len());
 
-        self.buf_pos = 0;
-        self.buf_end_pos = self.reader.read(&mut self.buf)?;
-        if self.buf_end_pos == 0 {
+        self.buf_pos = start_pos;
+        self.buf_end_pos = start_pos + self.reader.read(&mut self.buf[start_pos..])?;
+        if self.buf_end_pos == start_pos {
             self.reached_eof = true;
             Ok(false)
         } else {
@@ -2021,6 +2081,22 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
+    /// Ensures that the buffer is not empty
+    ///
+    /// If the buffer is currently empty it is refilled start at index 0.
+    /// If the end of the input has been reached, `false` is returned.
+    /// Otherwise the caller can read the next byte from [`buf`] starting
+    /// at [`start_pos`].
+    fn ensure_non_empty_buffer(&mut self) -> Result<bool, IoError> {
+        if self.buf_pos < self.buf_end_pos {
+            return Ok(true);
+        }
+        self.fill_buffer(0)
+    }
+
+    /// Peeks at the next byte without consuming it
+    ///
+    /// Returns `None` if the end of the input has been reached.
     fn peek_byte(&mut self) -> Result<Option<u8>, IoError> {
         if self.ensure_non_empty_buffer()? {
             Ok(Some(self.buf[self.buf_pos]))
@@ -2029,15 +2105,17 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
+    /// Skips the last byte returned by [`peek_byte`]
     fn skip_peeked_byte(&mut self) {
         debug_assert!(self.buf_pos < self.buf_end_pos);
         self.buf_pos += 1;
     }
 
+    /// Reads the next byte, throwing an error if the end of the
+    /// input has been reached
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
-        if self.ensure_non_empty_buffer()? {
-            let b = self.buf[self.buf_pos];
-            self.buf_pos += 1;
+        if let Some(b) = self.peek_byte()? {
+            self.skip_peeked_byte();
             Ok(b)
         } else {
             Err(JsonSyntaxError {
@@ -2045,79 +2123,6 @@ impl<R: Read> JsonStreamReader<R> {
                 location: self.create_error_location(),
             })?
         }
-    }
-
-    fn read_utf8_bytes<C: FnMut(u8)>(
-        &mut self,
-        byte1: u8,
-        consumer: &mut C,
-    ) -> Result<(), StringReadingError> {
-        fn invalid_utf8_err() -> Result<(), StringReadingError> {
-            Err(StringReadingError::IoError(IoError::new(
-                ErrorKind::InvalidData,
-                "invalid UTF-8 data",
-            )))
-        }
-
-        let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-
-        if (byte2 & 0b1100_0000) != 0b1000_0000 {
-            return invalid_utf8_err();
-        }
-
-        if (byte1 & 0b1110_0000) == 0b1100_0000 {
-            let code_point =
-                (u32::from(byte1) & !0b1110_0000) << 6 | (u32::from(byte2) & !0b1100_0000);
-            // Check for 'overlong encoding'
-            if code_point < 0x80 {
-                return invalid_utf8_err();
-            }
-            consumer(byte1);
-            consumer(byte2);
-        } else {
-            let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-
-            if (byte3 & 0b1100_0000) != 0b1000_0000 {
-                return invalid_utf8_err();
-            }
-
-            if (byte1 & 0b1111_0000) == 0b1110_0000 {
-                let code_point = (u32::from(byte1) & !0b1111_0000) << 12
-                    | (u32::from(byte2) & !0b1100_0000) << 6
-                    | (u32::from(byte3) & !0b1100_0000);
-                // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
-                if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
-                    return invalid_utf8_err();
-                }
-
-                consumer(byte1);
-                consumer(byte2);
-                consumer(byte3);
-            } else if (byte1 & 0b1111_1000) == 0b1111_0000 {
-                let byte4 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-                if (byte4 & 0b1100_0000) == 0b1000_0000 {
-                    let code_point = (u32::from(byte1) & !0b1111_1000) << 18
-                        | (u32::from(byte2) & !0b1100_0000) << 12
-                        | (u32::from(byte3) & !0b1100_0000) << 6
-                        | (u32::from(byte4) & !0b1100_0000);
-
-                    // Check for 'overlong encoding', or encoding of invalid code point
-                    if !(0x10000..=0x10FFFF).contains(&code_point) {
-                        return invalid_utf8_err();
-                    }
-
-                    consumer(byte1);
-                    consumer(byte2);
-                    consumer(byte3);
-                    consumer(byte4);
-                } else {
-                    return invalid_utf8_err();
-                }
-            } else {
-                return invalid_utf8_err();
-            }
-        }
-        Ok(())
     }
 }
 
@@ -2134,11 +2139,10 @@ impl<R: Read> JsonStreamReader<R> {
             if stop_predicate(byte) {
                 return Ok(());
             }
+            self.skip_peeked_byte();
 
             match byte {
                 b'\n' => {
-                    self.skip_peeked_byte();
-
                     // Only count \r\n as one line break
                     if !has_cr {
                         self.column = 0;
@@ -2146,20 +2150,17 @@ impl<R: Read> JsonStreamReader<R> {
                     }
                 }
                 b'\r' => {
-                    self.skip_peeked_byte();
                     self.column = 0;
                     self.line += 1;
                 }
                 // Skip ASCII character
                 0x00..=0x7F => {
-                    self.skip_peeked_byte();
                     self.column += 1;
                 }
                 _ => {
-                    self.skip_peeked_byte();
                     // Validate the UTF-8 data, but ignore it
-                    self.read_utf8_bytes(byte, &mut |_| {})
-                        .map_err(ReaderError::from)?;
+                    let mut buf = [0_u8; 4];
+                    let _ = self.read_utf8_multibyte(byte, &mut buf)?;
                     self.column += 1;
                 }
             }
@@ -2533,14 +2534,122 @@ impl<R: Read> JsonStreamReader<R> {
     }
 }
 
-// Implementation with string and object member name reading methods
-impl<R: Read> JsonStreamReader<R> {
-    fn read_unicode_escape_hex_digit(&mut self) -> Result<u32, StringReadingError> {
-        let byte = self.read_byte(SyntaxErrorKind::MalformedEscapeSequence)?;
-        match byte {
-            b'0'..=b'9' => Ok(u32::from(byte - b'0')),
-            b'a'..=b'f' => Ok(u32::from(byte - b'a' + 10)),
-            b'A'..=b'F' => Ok(u32::from(byte - b'A' + 10)),
+// TODO: Maybe try to find a cleaner solution than having this separate trait
+trait Utf8MultibyteReader {
+    fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError>;
+
+    /// Reads a UTF-8 char consisting of multiple bytes
+    ///
+    /// `byte0` is the first byte which has already been read by the caller. `destination_buf` is
+    /// used by this method to store all the UTF-8 bytes (including `byte0`). A slice of it containing
+    /// the read bytes is returned as result.
+    fn read_utf8_multibyte<'a>(
+        &mut self,
+        byte0: u8,
+        destination_buf: &'a mut [u8; 4],
+    ) -> Result<&'a [u8], StringReadingError> {
+        fn invalid_utf8_err<'a>() -> Result<&'a [u8], StringReadingError> {
+            Err(StringReadingError::IoError(IoError::new(
+                ErrorKind::InvalidData,
+                "invalid UTF-8 data",
+            )))
+        }
+
+        let result_slice: &'a mut [u8];
+        let byte1 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+
+        if (byte1 & 0b1100_0000) != 0b1000_0000 {
+            return invalid_utf8_err();
+        }
+
+        if (byte0 & 0b1110_0000) == 0b1100_0000 {
+            let code_point =
+                (u32::from(byte0) & !0b1110_0000) << 6 | (u32::from(byte1) & !0b1100_0000);
+            // Check for 'overlong encoding'
+            if code_point < 0x80 {
+                return invalid_utf8_err();
+            }
+
+            result_slice = &mut destination_buf[..2];
+            result_slice[0] = byte0;
+            result_slice[1] = byte1;
+        } else {
+            let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+
+            if (byte2 & 0b1100_0000) != 0b1000_0000 {
+                return invalid_utf8_err();
+            }
+
+            if (byte0 & 0b1111_0000) == 0b1110_0000 {
+                let code_point = (u32::from(byte0) & !0b1111_0000) << 12
+                    | (u32::from(byte1) & !0b1100_0000) << 6
+                    | (u32::from(byte2) & !0b1100_0000);
+                // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
+                if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
+                    return invalid_utf8_err();
+                }
+
+                result_slice = &mut destination_buf[..3];
+                result_slice[0] = byte0;
+                result_slice[1] = byte1;
+                result_slice[2] = byte2;
+            } else if (byte0 & 0b1111_1000) == 0b1111_0000 {
+                let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+                if (byte3 & 0b1100_0000) == 0b1000_0000 {
+                    let code_point = (u32::from(byte0) & !0b1111_1000) << 18
+                        | (u32::from(byte1) & !0b1100_0000) << 12
+                        | (u32::from(byte2) & !0b1100_0000) << 6
+                        | (u32::from(byte3) & !0b1100_0000);
+
+                    // Check for 'overlong encoding', or encoding of invalid code point
+                    if !(0x10000..=0x10FFFF).contains(&code_point) {
+                        return invalid_utf8_err();
+                    }
+
+                    result_slice = &mut destination_buf[..4];
+                    result_slice[0] = byte0;
+                    result_slice[1] = byte1;
+                    result_slice[2] = byte2;
+                    result_slice[3] = byte3;
+                } else {
+                    return invalid_utf8_err();
+                }
+            } else {
+                return invalid_utf8_err();
+            }
+        }
+        Ok(result_slice)
+    }
+}
+
+// Implementing this directly for JsonStreamReader should be harmless, since the methods of this
+// trait implemented below simply delegate to the JsonStreamReader ones
+impl<R: Read> Utf8MultibyteReader for JsonStreamReader<R> {
+    fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
+        self.read_byte(eof_error_kind)
+    }
+}
+
+/// A `char` which was represented by one or two (in case of surrogate pairs)
+/// JSON Unicode escape sequences
+struct UnicodeEscapeChar {
+    c: char,
+    /// Number of chars which were part of the escape sequence; does not include the
+    /// initial `\u` of the first escape sequence
+    consumed_chars_count: u32,
+}
+
+// TODO: Maybe try to find a cleaner solution than having this separate trait
+trait UnicodeEscapeReader {
+    fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError>;
+
+    fn create_error_location(&self) -> JsonErrorLocation;
+
+    fn parse_unicode_escape_hex_digit(&self, digit: u8) -> Result<u32, StringReadingError> {
+        match digit {
+            b'0'..=b'9' => Ok(u32::from(digit - b'0')),
+            b'a'..=b'f' => Ok(u32::from(digit - b'a' + 10)),
+            b'A'..=b'F' => Ok(u32::from(digit - b'A' + 10)),
             _ => Err(JsonSyntaxError {
                 kind: SyntaxErrorKind::MalformedEscapeSequence,
                 location: self.create_error_location(),
@@ -2548,17 +2657,26 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
+    fn read_hex_byte(&mut self) -> Result<u32, StringReadingError> {
+        let byte = self.read_byte(SyntaxErrorKind::MalformedEscapeSequence)?;
+        self.parse_unicode_escape_hex_digit(byte)
+    }
+
     fn read_unicode_escape(&mut self) -> Result<u32, StringReadingError> {
-        let d1 = self.read_unicode_escape_hex_digit()?;
-        let d2 = self.read_unicode_escape_hex_digit()?;
-        let d3 = self.read_unicode_escape_hex_digit()?;
-        let d4 = self.read_unicode_escape_hex_digit()?;
+        let d1 = self.read_hex_byte()?;
+        let d2 = self.read_hex_byte()?;
+        let d3 = self.read_hex_byte()?;
+        let d4 = self.read_hex_byte()?;
 
         Ok(d4 | d3 << 4 | d2 << 8 | d1 << 12)
     }
 
-    fn read_unicode_escape_char(&mut self) -> Result<char, StringReadingError> {
+    /// Reads a Unicode-escaped char
+    ///
+    /// The caller should have already read the initial `\u` prefix.
+    fn read_unicode_escape_char(&mut self) -> Result<UnicodeEscapeChar, StringReadingError> {
         let mut c = self.read_unicode_escape()?;
+        // 4 for `XXXX`, the prefix `\u` has already been accounted for by the caller
         let mut consumed_chars_count = 4;
 
         // Unpaired low surrogate
@@ -2568,7 +2686,7 @@ impl<R: Read> JsonStreamReader<R> {
                 location: self.create_error_location(),
             })?;
         }
-        // If char is high surrogate, expect unicode escaped low surrogate
+        // If char is high surrogate, expect Unicode-escaped low surrogate
         if (0xD800..=0xDBFF).contains(&c) {
             if !(self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'\\'
                 && self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'u')
@@ -2590,11 +2708,364 @@ impl<R: Read> JsonStreamReader<R> {
             c = ((c - 0xD800) << 10 | (c2 - 0xDC00)) + 0x10000;
         }
 
-        self.column += consumed_chars_count;
         // unwrap() here should be safe since checks above made sure this is a valid Rust `char`
-        Ok(char::from_u32(c).unwrap())
+        let c = char::from_u32(c).unwrap();
+        Ok(UnicodeEscapeChar {
+            c,
+            consumed_chars_count,
+        })
+    }
+}
+
+// Implementing this directly for JsonStreamReader should be harmless, since the methods of this
+// trait implemented below simply delegate to the JsonStreamReader ones
+impl<R: Read> UnicodeEscapeReader for JsonStreamReader<R> {
+    fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
+        self.read_byte(eof_error_kind)
     }
 
+    fn create_error_location(&self) -> JsonErrorLocation {
+        self.create_error_location()
+    }
+}
+
+mod bytes_value_reader {
+    use super::*;
+
+    /// Reader for a 'value' read from the underlying `JsonStreamReader`
+    ///
+    /// The 'value' can for example be a JSON string value or the string representation of
+    /// a JSON number. The main purpose of this struct is to allow retrieving either a
+    /// `str` or a `String` later for that value, but hiding the implementation details
+    /// of how this value is stored by `JsonStreamReader`.
+    /*
+     * TODO: Write dedicated unit tests for this which covers corner cases? Or is this covered well enough
+     * already by tests for `next_str`, `next_string`, ...
+     */
+    pub(super) struct BytesValueReader<'j, R: Read> {
+        pub(super) json_reader: &'j mut JsonStreamReader<R>,
+        /// Whether [`JsonStreamReader::value_bytes_buf`] is used to store the value;
+        /// in that case the start of the value might already be in `value_bytes_buf`,
+        /// while the remainder might be in [`JsonStreamReader::buf`], with [`buf_value_start`]
+        /// being the start and [`JsonStreamReader::buf_pos`] being the end (exclusive)
+        is_using_bytes_buf: bool,
+        /// Start index of the value (or its remainder) in [`JsonStreamReader::buf`], inclusive;
+        /// the end index is [`JsonStreamReader::buf_pos`] (exclusive)
+        buf_value_start: usize,
+        /// Whether the final byte of the value should be skipped
+        ///
+        /// This is a special case because unlike for [`skip_previous_byte`] it is not necessary
+        /// to save the so far read bytes to [`JsonStreamReader::value_bytes_buf`].
+        skip_final_byte: bool,
+    }
+
+    /// A bytes value, which is either a borrowed `&[u8]` which can be requested on demand
+    /// from the [`JsonStreamReader`], or an owned `Vec<u8>`.
+    ///
+    /// The caller who created this value must have validated that the collected bytes are
+    /// valid UTF-8 data.
+    #[derive(Debug)]
+    pub(super) enum BytesValue {
+        /// A borrowed `&[u8]`
+        BytesRef(BytesRefProvider),
+        /// An owned `Vec<u8>`
+        Vec(Vec<u8>),
+    }
+
+    /*
+     * == Implementation note ==
+     * Cleaner alternative to this would have been to store a reference to the `&[u8]` value
+     * in BytesValue, e.g.:
+     * ```
+     * enum BytesValue<'j> {
+     *     Slice(&'j [u8]),
+     *     Vec(Vec<u8>),
+     * }
+     * ```
+     * It would then have been transparent where that bytes slice came from (reader buf or bytes value buf),
+     * and the method returning the BytesValue could have used the same lifetime for it as for the
+     * JsonStreamReader. It would have also allowed to have a `StringValue` enum with a similar structure,
+     * containing either a `&'j str` or a `String`.
+     *
+     * However, this would then have caused issues for users of BytesValue because while they were holding
+     * a reference to the BytesValue they were also holding a reference to the JsonStreamReader and therefore
+     * the borrow checker would not have allowed any other usage of JsonStreamReader.
+     * Therefore this approach delays the access to the `&[u8]` until it is actually requested.
+     *
+     * Maybe there is a cleaner solution to this though.
+     */
+    /// Provides access to a `&[u8]` value.
+    #[derive(Debug)]
+    pub(super) enum BytesRefProvider {
+        /// Value is backed by [`JsonStreamReader::buf`]
+        ReaderBuf { start: usize, end: usize },
+        /// Value is backed by [`JsonStreamReader::value_bytes_buf`]
+        BytesValueBuf,
+    }
+
+    impl BytesRefProvider {
+        fn get_bytes_ref<'j, R: Read>(&self, json_reader: &'j JsonStreamReader<R>) -> &'j [u8] {
+            match self {
+                BytesRefProvider::ReaderBuf { start, end } => &json_reader.buf[*start..*end],
+                BytesRefProvider::BytesValueBuf => &json_reader.value_bytes_buf,
+            }
+        }
+
+        fn get_str<'j, R: Read>(&self, json_reader: &'j JsonStreamReader<R>) -> &'j str {
+            let bytes = self.get_bytes_ref(json_reader);
+            // unwrap() should be safe; creator of BytesRefProvider should have verified that bytes are valid
+            std::str::from_utf8(bytes).unwrap()
+        }
+    }
+
+    impl BytesValue {
+        /// Gets the read bytes as `String`
+        pub(super) fn get_string<R: Read>(self, json_reader: &JsonStreamReader<R>) -> String {
+            match self {
+                BytesValue::BytesRef(b) => b.get_str(json_reader).to_owned(),
+                // unwrap() should be safe; creator of BytesRefProvider should have verified that bytes are valid, if necessary
+                BytesValue::Vec(v) => String::from_utf8(v).unwrap(),
+            }
+        }
+
+        /// Gets the read bytes as `str`
+        ///
+        /// Must only be called if the `BytesValue` was obtained from [`BytesValueReader::get_bytes`] being
+        /// called with `requires_borrow=true`.
+        pub(super) fn get_str<'j, R: Read>(&self, json_reader: &'j JsonStreamReader<R>) -> &'j str {
+            match self {
+                BytesValue::BytesRef(b) => b.get_str(json_reader),
+                // Should be unreachable because when `str` is expected, `true` should have been provided
+                // as `requires_borrowed` value, in which case result won't be BytesValue::Vec
+                BytesValue::Vec(_) => {
+                    panic!("get_str should only be called when `requires_borrowed=true`")
+                }
+            }
+        }
+    }
+
+    impl<'j, R: Read> BytesValueReader<'j, R> {
+        pub(super) fn new(json_reader: &'j mut JsonStreamReader<R>) -> Self {
+            let old_buf_start = json_reader.buf_pos;
+            // Move buffer content to start of array to make sure complete buffer size is available
+            if old_buf_start > 0 {
+                let old_buf_end = json_reader.buf_end_pos;
+                json_reader.buf.copy_within(old_buf_start..old_buf_end, 0);
+                json_reader.buf_pos = 0;
+                json_reader.buf_end_pos = old_buf_end - old_buf_start;
+            }
+            json_reader.value_bytes_buf.clear();
+            // Shrink buffer in case it got excessively large during the previous usage
+            // TODO: Maybe perform this in `on_value_end` and `consume_name` instead
+            json_reader
+                .value_bytes_buf
+                .shrink_to(INITIAL_VALUE_BYTES_BUF_CAPACITY * 2);
+
+            BytesValueReader {
+                json_reader,
+                is_using_bytes_buf: false,
+                buf_value_start: 0,
+                skip_final_byte: false,
+            }
+        }
+
+        /// Peeks at the next byte without consuming it
+        ///
+        /// To consume the byte afterwards, call [`consume_peeked_byte`].
+        /// If the end of the input has been reached and `eof_error_kind` is `None`
+        /// `None` is returned. Otherwise an error is returned.
+        pub(super) fn peek_byte_optional(
+            &mut self,
+            eof_error_kind: Option<SyntaxErrorKind>,
+        ) -> Result<Option<u8>, StringReadingError> {
+            debug_assert!(
+                !self.skip_final_byte,
+                "Must not read more bytes after final byte was marked as skipped"
+            );
+
+            let end_pos = self.json_reader.buf_end_pos;
+
+            if self.json_reader.buf_pos < end_pos {
+                let byte = self.json_reader.buf[self.json_reader.buf_pos];
+                Ok(Some(byte))
+            }
+            // Else check if can / have to start at index 0 of `json_reader.buf`
+            else if self.is_using_bytes_buf
+                || self.json_reader.buf_pos >= self.json_reader.buf.len()
+            {
+                // Save all bytes which should be kept
+                if self.buf_value_start < end_pos {
+                    let bytes = &self.json_reader.buf[self.buf_value_start..end_pos];
+                    self.json_reader.value_bytes_buf.extend_from_slice(bytes);
+                    self.is_using_bytes_buf = true;
+                }
+
+                self.buf_value_start = 0;
+
+                if self.json_reader.fill_buffer(0)? {
+                    Ok(Some(self.json_reader.buf[0]))
+                } else if let Some(eof_error_kind) = eof_error_kind {
+                    Err(JsonSyntaxError {
+                        kind: eof_error_kind,
+                        location: self.json_reader.create_error_location(),
+                    })?
+                } else {
+                    Ok(None)
+                }
+            }
+            // Else continue filling `json_reader.buf` behind previously read data
+            else {
+                #[allow(clippy::collapsible_else_if)]
+                if self.json_reader.fill_buffer(end_pos)? {
+                    Ok(Some(self.json_reader.buf[end_pos]))
+                } else if let Some(eof_error_kind) = eof_error_kind {
+                    Err(JsonSyntaxError {
+                        kind: eof_error_kind,
+                        location: self.json_reader.create_error_location(),
+                    })?
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+
+        /// Reads the next byte
+        pub(super) fn read_byte(
+            &mut self,
+            eof_error_kind: SyntaxErrorKind,
+        ) -> Result<u8, StringReadingError> {
+            let byte = self
+                .peek_byte_optional(Some(eof_error_kind))
+                .map(|b| b.unwrap())?;
+            self.consume_peeked_byte();
+            Ok(byte)
+        }
+
+        /// Consumes the previous peeked byte which has just been peeked at using [`peek_byte_optional`]
+        #[inline(always)]
+        pub(super) fn consume_peeked_byte(&mut self) {
+            self.json_reader.buf_pos += 1;
+        }
+
+        /// Skips the previous byte which has just been read using [`read_byte`]
+        pub(super) fn skip_previous_byte(&mut self) {
+            debug_assert!(
+                !self.skip_final_byte,
+                "Cannot skip after byte has already been marked as skipped final byte"
+            );
+
+            // End position (exclusive) of the value; `buf_pos` is the index of the next not yet consumed byte
+            let end_pos = self.json_reader.buf_pos;
+
+            // If no bytes have been kept so far, can just increase index
+            if self.buf_value_start + 1 == end_pos {
+                self.buf_value_start += 1;
+            }
+            // Otherwise need to save the previous part of the value
+            else {
+                // `end_pos - 1` because the current byte should be skipped
+                let bytes = &self.json_reader.buf[self.buf_value_start..end_pos - 1];
+                self.json_reader.value_bytes_buf.extend_from_slice(bytes);
+                self.is_using_bytes_buf = true;
+                self.buf_value_start = end_pos;
+            }
+        }
+
+        /// Skips the final byte of the value, which has just been read using [`read_byte`]. Afterwards no
+        /// further bytes may be read and [`push_bytes`] should be called.
+        /// This method is intended for values where the final delimiter has been read, which should not
+        /// be part of the value, for example the closing `"` of a string.
+        pub(super) fn skip_final_byte(&mut self) {
+            self.skip_final_byte = true;
+        }
+
+        /// Pushes bytes into the value buffer
+        ///
+        /// This can be used in combination with [`skip_previous_byte`] to replace bytes
+        /// in the value, by first skipping the original bytes and then pushing a replacement,
+        /// for example for JSON string escape sequences.
+        pub(super) fn push_bytes(&mut self, bytes: &[u8]) {
+            let end_pos = self.json_reader.buf_pos;
+            if self.buf_value_start < end_pos {
+                // Push remainder into buffer
+                self.json_reader
+                    .value_bytes_buf
+                    .extend_from_slice(&self.json_reader.buf[self.buf_value_start..end_pos]);
+                self.buf_value_start = end_pos;
+            }
+
+            self.is_using_bytes_buf = true;
+            self.json_reader.value_bytes_buf.extend_from_slice(bytes);
+        }
+
+        /// Gets the final bytes value. Must be called at most once.
+        /*
+         * Ideally would use `self` instead of `&mut self` to prevent calling this method multiple times
+         * by accident, but in some cases need access to `json_reader` from field of this struct afterwards
+         * to obtain string value from `BytesValue`; therefore for now keep this as `&mut self`
+         */
+        pub(super) fn get_bytes(&mut self, requires_borrowed: bool) -> BytesValue {
+            let mut end_pos = self.json_reader.buf_pos;
+            if self.skip_final_byte {
+                end_pos -= 1;
+            }
+
+            if self.is_using_bytes_buf {
+                // Push remainder into buffer
+                self.json_reader
+                    .value_bytes_buf
+                    .extend_from_slice(&self.json_reader.buf[self.buf_value_start..end_pos]);
+
+                if requires_borrowed {
+                    // Indicate that value is in `value_bytes_buf`
+                    BytesValue::BytesRef(BytesRefProvider::BytesValueBuf)
+                } else {
+                    let bytes = replace(
+                        &mut self.json_reader.value_bytes_buf,
+                        Vec::with_capacity(INITIAL_VALUE_BYTES_BUF_CAPACITY),
+                    );
+                    BytesValue::Vec(bytes)
+                }
+            } else {
+                BytesValue::BytesRef(BytesRefProvider::ReaderBuf {
+                    start: self.buf_value_start,
+                    end: end_pos,
+                })
+            }
+        }
+    }
+
+    // 'newtype pattern' to avoid leaking `read_byte` implementation directly for BytesValueReader (and to avoid ambiguity)
+    pub(super) struct AsUtf8MultibyteReader<'a, 'j, R: Read>(
+        pub(super) &'a mut BytesValueReader<'j, R>,
+    );
+    impl<R: Read> Utf8MultibyteReader for AsUtf8MultibyteReader<'_, '_, R> {
+        fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
+            // Note: Don't need to skip byte because it will be part of the final value
+            self.0.read_byte(eof_error_kind)
+        }
+    }
+
+    // 'newtype pattern' to avoid leaking `read_byte` implementation directly for BytesValueReader (and to avoid ambiguity)
+    pub(super) struct AsUnicodeEscapeReader<'a, 'j, R: Read>(
+        pub(super) &'a mut BytesValueReader<'j, R>,
+    );
+    impl<R: Read> UnicodeEscapeReader for AsUnicodeEscapeReader<'_, '_, R> {
+        fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
+            let byte = self.0.read_byte(eof_error_kind)?;
+            // Skip byte which is part of escape sequence; should not be in the final value
+            self.0.skip_previous_byte();
+            Ok(byte)
+        }
+
+        fn create_error_location(&self) -> JsonErrorLocation {
+            self.0.json_reader.create_error_location()
+        }
+    }
+}
+
+// Implementation with string and object member name reading methods
+impl<R: Read> JsonStreamReader<R> {
     /// Reads the next character of a member name or string value
     ///
     /// If it is an unescaped `"` returns true. Otherwise passes the bytes of the char
@@ -2620,7 +3091,11 @@ impl<R: Read> JsonStreamReader<R> {
                     b'r' => consumer(b'\r'),
                     b't' => consumer(b'\t'),
                     b'u' => {
-                        let c = self.read_unicode_escape_char()?;
+                        let UnicodeEscapeChar {
+                            c,
+                            consumed_chars_count,
+                        } = self.read_unicode_escape_char()?;
+                        self.column += consumed_chars_count;
                         let mut char_encode_buf = [0; 4];
                         let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
                         for b in &char_encode_buf[..bytes_count] {
@@ -2650,9 +3125,13 @@ impl<R: Read> JsonStreamReader<R> {
             0x20..=0x7F => {
                 consumer(byte);
             }
-            // Read and validate UTF-8 encoded data
+            // Read and validate multibyte UTF-8 data
             _ => {
-                self.read_utf8_bytes(byte, consumer)?;
+                let mut buf = [0_u8; 4];
+                let bytes = self.read_utf8_multibyte(byte, &mut buf)?;
+                for b in bytes {
+                    consumer(*b);
+                }
             }
         }
 
@@ -2677,23 +3156,117 @@ impl<R: Read> JsonStreamReader<R> {
         self.read_all_string_bytes(&mut |_| {})
     }
 
-    fn read_string_bytes_to_string(&mut self) -> Result<String, StringReadingError> {
-        let mut buf = Vec::new();
-        self.read_all_string_bytes(&mut |byte| buf.push(byte))?;
-        // Unwrap should be safe since reader made sure UTF-8 content is valid
-        Ok(String::from_utf8(buf).unwrap())
+    /// Reads a JSON string value (either a JSON string or a member name) and returns a `BytesValue`
+    /// for access to it. The `BytesValue` is guaranteed to refer to valid UTF-8 bytes.
+    ///
+    /// `requires_borrowed` indicates whether the caller requires obtaining the string value
+    /// as `str` later by calling [`BytesValue::get_str`].
+    fn read_string(&mut self, requires_borrowed: bool) -> Result<BytesValue, StringReadingError> {
+        let mut bytes_reader = BytesValueReader::new(self);
+        let read_bytes: BytesValue;
+
+        loop {
+            let byte = bytes_reader.read_byte(SyntaxErrorKind::IncompleteDocument)?;
+            match byte {
+                // Read escape sequence
+                b'\\' => {
+                    // Exclude the '\' from the value
+                    bytes_reader.skip_previous_byte();
+                    let byte = bytes_reader.read_byte(SyntaxErrorKind::MalformedEscapeSequence)?;
+
+                    match byte {
+                        b'"' | b'\\' | b'/' => {} // do nothing, keep the literal char as part of the `bytes_reader` value
+                        b'b' => {
+                            // Skip the 'b' and instead push the represented char
+                            bytes_reader.skip_previous_byte();
+                            bytes_reader.push_bytes(&[0x08]);
+                        }
+                        b'f' => {
+                            // Skip the 'f' and instead push the represented char
+                            bytes_reader.skip_previous_byte();
+                            bytes_reader.push_bytes(&[0x0C]);
+                        }
+                        b'n' => {
+                            // Skip the 'n' and instead push the represented char
+                            bytes_reader.skip_previous_byte();
+                            bytes_reader.push_bytes(&[b'\n']);
+                        }
+                        b'r' => {
+                            // Skip the 'r' and instead push the represented char
+                            bytes_reader.skip_previous_byte();
+                            bytes_reader.push_bytes(&[b'\r']);
+                        }
+                        b't' => {
+                            // Skip the 't' and instead push the represented char
+                            bytes_reader.skip_previous_byte();
+                            bytes_reader.push_bytes(&[b'\t']);
+                        }
+                        b'u' => {
+                            // Skip the 'u'
+                            bytes_reader.skip_previous_byte();
+
+                            let UnicodeEscapeChar {
+                                c,
+                                consumed_chars_count,
+                            } = AsUnicodeEscapeReader(&mut bytes_reader)
+                                .read_unicode_escape_char()?;
+                            bytes_reader.json_reader.column += consumed_chars_count;
+                            let mut char_encode_buf = [0; 4];
+                            let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
+                            bytes_reader.push_bytes(&char_encode_buf[..bytes_count]);
+                        }
+                        _ => {
+                            return Err(JsonSyntaxError {
+                                kind: SyntaxErrorKind::UnknownEscapeSequence,
+                                location: bytes_reader.json_reader.create_error_location(),
+                            })?
+                        }
+                    }
+                    // After escape sequence was successfully read, update location information;
+                    // otherwise error message would point at the middle of escape sequence
+                    bytes_reader.json_reader.column += 2;
+                }
+                b'"' => {
+                    bytes_reader.json_reader.column += 1;
+                    // Don't include the '"' in the value
+                    bytes_reader.skip_final_byte();
+                    read_bytes = bytes_reader.get_bytes(requires_borrowed);
+                    break;
+                }
+                // Control characters must be written as Unicode escape
+                0x00..=0x1F => {
+                    return Err(JsonSyntaxError {
+                        kind: SyntaxErrorKind::NotEscapedControlCharacter,
+                        location: bytes_reader.json_reader.create_error_location(),
+                    })?;
+                }
+                // Non-control ASCII characters
+                0x20..=0x7F => {
+                    bytes_reader.json_reader.column += 1;
+                    // Note: bytes_reader will keep the byte in the final value because it is not skipped here
+                }
+                // Read and validate multibyte UTF-8 data
+                // Note: Technically this could be omitted, ASCII and multibyte UTF-8 could be treated the same
+                // and UTF-8 validation from Rust standard library could be used, however, then it would not be easily
+                // possible anymore to track the character location for error messages because it would not be clear
+                // how many bytes are part of a character
+                _ => {
+                    let mut buf = [0_u8; 4];
+                    // Ignore bytes here, bytes_reader will keep the bytes in the final value because they are not skipped here
+                    let _ = AsUtf8MultibyteReader(&mut bytes_reader)
+                        .read_utf8_multibyte(byte, &mut buf)?;
+                    bytes_reader.json_reader.column += 1;
+                }
+            }
+        }
+
+        // Code above manually performed UTF-8 validation, `read_bytes` should be safe to use for obtaining strings
+        Ok(read_bytes)
     }
 
-    /// Consumes the next member name
-    ///
-    /// `read_name` should read the name and if desired update the JSON path. The `Self`
-    /// parameter of the function is `self`; this is necessary for callers to avoid directly
-    /// accessing `self` which would not be permitted since `consume_name` is already called
-    /// on `self`.
-    fn consume_name<T, F: FnOnce(&mut Self) -> Result<T, ReaderError>>(
-        &mut self,
-        read_name: F,
-    ) -> Result<T, ReaderError> {
+    // Note: This is split into `before_name` and `after_name` to allow both `next_name` and `skip_name`
+    // to reuse this code
+    fn before_name(&mut self) -> Result<(), ReaderError> {
         if !self.expects_member_name {
             panic!("Incorrect reader usage: Cannot consume member name when not expecting it");
         }
@@ -2710,69 +3283,153 @@ impl<R: Read> JsonStreamReader<R> {
 
         self.expects_member_name = false;
         self.consume_peeked();
+        Ok(())
+    }
 
-        // TODO: Is there a cleaner solution than having to pass `self` as argument to `read_name`?
-        let result = read_name(self)?;
-
+    fn after_name(&mut self) -> Result<(), ReaderError> {
         let byte = self.skip_whitespace_no_eof(SyntaxErrorKind::MissingColon)?;
         return if byte == b':' {
             self.skip_peeked_byte();
             self.column += 1;
-            Ok(result)
+            Ok(())
         } else {
             self.create_syntax_value_error(SyntaxErrorKind::MissingColon)
         };
     }
 }
 
-// Implementation with number reading methods
-impl<R: Read> JsonStreamReader<R> {
-    fn collect_next_number_bytes<C: FnMut(u8)>(
-        &mut self,
-        consumer: &mut C,
-        restrict_number: bool,
-    ) -> Result<(), ReaderError> {
-        self.start_expected_value_type(ValueType::Number)?;
+// Implementation for number reading
+trait NumberBytesReader<T, E>: NumberBytesProvider<E> {
+    /// Gets the number of consumed bytes
+    fn get_consumed_bytes_count(&self) -> u32;
+    /// Returns whether this reader restricts the read number (length or exponent)
+    fn restricts_number(&self) -> bool;
+    /// If [`restricts_number`] returns true, gets the number string for error reporting in case
+    /// it does not match the restrictions.
+    fn get_number_string_for_error(self) -> String;
+    fn get_result(self) -> T;
+}
+
+// Using macro here to avoid issues with borrow checker; probably not the cleanest solution
+// TODO: Try to find a cleaner solution without using macro?
+macro_rules! collect_next_number_bytes {
+    ( |$self:ident| $reader_creator:expr ) => {{
+        $self.start_expected_value_type(ValueType::Number)?;
 
         // unwrap() is safe because start_expected_value_type already peeked at first number byte
-        let first_byte = self.peek_byte()?.unwrap();
-        let mut consumed_bytes = 0;
-        let number_result = consume_json_number(
-            &mut || {
-                // Should not fail since last peek_byte() succeeded
-                self.skip_peeked_byte();
-                self.peek_byte()
-            },
-            &mut |byte| {
-                consumed_bytes += 1;
-                consumer(byte);
-            },
-            first_byte,
-        )?;
+        let first_byte = $self.peek_byte()?.unwrap();
+        let mut reader = $reader_creator;
+        let number_result = consume_json_number(&mut reader, first_byte)?;
         let exponent_digits_count = match number_result {
-            None => return self.create_syntax_value_error(SyntaxErrorKind::MalformedNumber),
+            None => return $self.create_syntax_value_error(SyntaxErrorKind::MalformedNumber),
             Some(exponent_digits_count) => exponent_digits_count,
         };
 
-        if restrict_number {
+        let consumed_bytes = reader.get_consumed_bytes_count();
+        if reader.restricts_number() {
             // >= e100, <= e-100 or complete number longer than 100 chars
             if exponent_digits_count > 2 || consumed_bytes > 100 {
                 return Err(ReaderError::UnsupportedNumberValue {
-                    number: String::new(), // caller which collected number bytes will fill in number value
-                    location: self.create_error_location(),
+                    number: reader.get_number_string_for_error(),
+                    location: $self.create_error_location(),
                 });
             }
         }
 
-        self.column += consumed_bytes;
+        let result = reader.get_result();
+        $self.column += consumed_bytes;
         // Make sure there are no misleading chars directly afterwards, e.g. "123f"
-        if let Some(byte) = self.peek_byte()? {
-            self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
+        if let Some(byte) = $self.peek_byte()? {
+            $self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
         }
 
-        self.on_value_end();
-        Ok(())
+        $self.on_value_end();
+        result
+    }};
+}
+
+impl<R: Read> JsonStreamReader<R> {
+    /// Reads a JSON number and returns a `BytesValue` for access to its string representation.
+    /// The `BytesValue` is guaranteed to refer to valid UTF-8 bytes.
+    ///
+    /// `requires_borrowed` indicates whether the caller requires obtaining the string representation
+    /// as `str` later by calling [`BytesValue::get_str`].
+    fn read_number_bytes(&mut self, requires_borrowed: bool) -> Result<BytesValue, ReaderError> {
+        let restrict_number = self.reader_settings.restrict_number_values;
+
+        Ok(collect_next_number_bytes!(|self| NumberBytesValueReader {
+            reader: BytesValueReader::new(self),
+            consumed_bytes: 0,
+            restrict_number,
+            requires_borrowed_result: requires_borrowed,
+        }))
     }
+}
+
+struct NumberBytesValueReader<'j, R: Read> {
+    reader: BytesValueReader<'j, R>,
+    consumed_bytes: u32,
+    restrict_number: bool,
+    requires_borrowed_result: bool,
+}
+impl<'j, R: Read> NumberBytesProvider<ReaderError> for NumberBytesValueReader<'j, R> {
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ReaderError> {
+        // Note: The first byte was not actually read by `BytesValueReader`, instead it was peeked by creator
+        // of NumberBytesValueReader. However, consume it here to include it in the final value.
+        self.reader.consume_peeked_byte();
+        self.consumed_bytes += 1;
+        Ok(self.reader.peek_byte_optional(None)?)
+    }
+}
+impl<R: Read> NumberBytesReader<BytesValue, ReaderError> for NumberBytesValueReader<'_, R> {
+    fn get_consumed_bytes_count(&self) -> u32 {
+        self.consumed_bytes
+    }
+
+    fn restricts_number(&self) -> bool {
+        self.restrict_number
+    }
+
+    fn get_number_string_for_error(mut self) -> String {
+        self.reader
+            // No UTF-8 checks are needed because JSON number consists only of ASCII chars
+            .get_bytes(false)
+            .get_string(self.reader.json_reader)
+    }
+
+    fn get_result(mut self) -> BytesValue {
+        // No UTF-8 checks are needed because JSON number consists only of ASCII chars
+        self.reader.get_bytes(self.requires_borrowed_result)
+    }
+}
+
+struct SkippingNumberBytesReader<'j, R: Read> {
+    json_reader: &'j mut JsonStreamReader<R>,
+    consumed_bytes: u32,
+}
+impl<'j, R: Read> NumberBytesProvider<IoError> for SkippingNumberBytesReader<'j, R> {
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, IoError> {
+        // Should not fail since last peek_byte() succeeded
+        self.json_reader.skip_peeked_byte();
+        self.consumed_bytes += 1;
+        self.json_reader.peek_byte()
+    }
+}
+impl<R: Read> NumberBytesReader<(), IoError> for SkippingNumberBytesReader<'_, R> {
+    fn get_consumed_bytes_count(&self) -> u32 {
+        self.consumed_bytes
+    }
+
+    fn restricts_number(&self) -> bool {
+        // Don't restrict number values while skipping
+        false
+    }
+
+    fn get_number_string_for_error(self) -> String {
+        unreachable!("Should not be called since restricts_number() returns false")
+    }
+
+    fn get_result(self) {}
 }
 
 impl<R: Read> JsonReader for JsonStreamReader<R> {
@@ -2829,18 +3486,41 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(())
     }
 
-    fn next_name(&mut self) -> Result<String, ReaderError> {
-        self.consume_name(|self_| {
-            let name = self_.read_string_bytes_to_string()?;
+    fn next_name_owned(&mut self) -> Result<String, ReaderError> {
+        self.before_name()?;
 
-            if let Some(ref mut json_path) = self_.json_path {
-                match json_path.last_mut().unwrap() {
-                    JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
-                    _ => unreachable!("Path should be object member"),
-                }
+        let name = self.read_string(false)?.get_string(self);
+
+        if let Some(ref mut json_path) = self.json_path {
+            match json_path.last_mut().unwrap() {
+                JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
+                _ => unreachable!("Path should be object member"),
             }
-            Ok(name)
-        })
+        }
+
+        self.after_name()?;
+        Ok(name)
+    }
+
+    fn next_name(&mut self) -> Result<&'_ str, ReaderError> {
+        self.before_name()?;
+
+        let name_bytes = self.read_string(true)?;
+
+        if self.json_path.is_some() {
+            // TODO: Not ideal that this causes `std::str::from_utf8` to be called twice, once here and once
+            // for return value; not sure though if this can be solved
+            let name = name_bytes.get_str(self).to_owned();
+            // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
+            // would be two mutable borrows of `self` then at the same time)
+            match self.json_path.as_mut().unwrap().last_mut().unwrap() {
+                JsonPathPiece::ObjectMember(path_name) => *path_name = name,
+                _ => unreachable!("Path should be object member"),
+            }
+        }
+
+        self.after_name()?;
+        Ok(name_bytes.get_str(self))
     }
 
     fn end_object(&mut self) -> Result<(), ReaderError> {
@@ -2880,7 +3560,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
-        Ok(T::from_str(self.next_number_as_string()?.as_str()))
+        Ok(T::from_str(self.next_number_as_str()?))
     }
 
     fn has_next(&mut self) -> Result<bool, ReaderError> {
@@ -2915,23 +3595,25 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn skip_name(&mut self) -> Result<(), ReaderError> {
-        self.consume_name(|self_| {
-            if self_.json_path.is_some() {
-                // Similar to `next_name` implementation, except that `name` can directly be moved to
-                // json_path piece instead of having to be cloned
-                let name = self_.read_string_bytes_to_string()?;
+        self.before_name()?;
 
-                // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
-                // would be two mutable borrows of `self_` then at the same time)
-                match self_.json_path.as_mut().unwrap().last_mut().unwrap() {
-                    JsonPathPiece::ObjectMember(path_name) => *path_name = name,
-                    _ => unreachable!("Path should be object member"),
-                }
-            } else {
-                self_.skip_all_string_bytes()?;
+        if self.json_path.is_some() {
+            // Similar to `next_name` implementation, except that `name` can directly be moved to
+            // json_path piece instead of having to be cloned
+            let name = self.read_string(false)?.get_string(self);
+
+            // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
+            // would be two mutable borrows of `self` then at the same time)
+            match self.json_path.as_mut().unwrap().last_mut().unwrap() {
+                JsonPathPiece::ObjectMember(path_name) => *path_name = name,
+                _ => unreachable!("Path should be object member"),
             }
-            Ok(())
-        })
+        } else {
+            self.skip_all_string_bytes()?;
+        }
+
+        self.after_name()?;
+        Ok(())
     }
 
     fn skip_value(&mut self) -> Result<(), ReaderError> {
@@ -2967,11 +3649,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                             self.on_value_end();
                         }
                         ValueType::Number => {
-                            self.collect_next_number_bytes(
-                                &mut |_| {},
-                                // Don't restrict number values while skipping
-                                false,
-                            )?;
+                            collect_next_number_bytes!(|self| SkippingNumberBytesReader {
+                                json_reader: self,
+                                consumed_bytes: 0,
+                            });
                         }
                         ValueType::Boolean => {
                             self.next_bool()?;
@@ -2993,9 +3674,16 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn next_string(&mut self) -> Result<String, ReaderError> {
         self.start_expected_value_type(ValueType::String)?;
-        let result = Ok(self.read_string_bytes_to_string()?);
+        let result = self.read_string(false)?.get_string(self);
         self.on_value_end();
-        result
+        Ok(result)
+    }
+
+    fn next_str(&mut self) -> Result<&'_ str, ReaderError> {
+        self.start_expected_value_type(ValueType::String)?;
+        let str_bytes = self.read_string(true)?;
+        self.on_value_end();
+        Ok(str_bytes.get_str(self))
     }
 
     fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError> {
@@ -3011,24 +3699,11 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
-        let mut buf = Vec::new();
-        let mut result = self.collect_next_number_bytes(
-            &mut |byte| buf.push(byte),
-            self.reader_settings.restrict_number_values,
-        );
-        match &mut result {
-            // Fill in number value for UnsupportedNumberValue error
-            Err(ReaderError::UnsupportedNumberValue { number, .. }) => {
-                // Unwrap should be safe since number bytes are valid UTF-8 chars
-                number.push_str(&String::from_utf8(buf).unwrap());
-                return Err(result.unwrap_err());
-            }
-            Err(..) => return Err(result.unwrap_err()),
-            _ => (),
-        }
+        self.read_number_bytes(false).map(|b| b.get_string(self))
+    }
 
-        // Unwrap should be safe since number bytes are valid UTF-8 chars
-        Ok(String::from_utf8(buf).unwrap())
+    fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError> {
+        self.read_number_bytes(true).map(|b| b.get_str(self))
     }
 
     #[cfg(feature = "serde")]
@@ -3070,7 +3745,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
                     let mut found_member = false;
                     while self.has_next()? {
-                        if self.next_name()?.eq(name) {
+                        if self.next_name()? == name {
                             found_member = true;
                             break;
                         } else {
@@ -3143,7 +3818,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             } else {
                 if self.expects_member_name {
                     let name = self.next_name()?;
-                    json_writer.name(&name)?;
+                    json_writer.name(name)?;
                 }
 
                 match self.peek()? {
@@ -3183,9 +3858,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         self.on_value_end();
                     }
                     ValueType::Number => {
-                        let number = self.next_number_as_string()?;
+                        let number = self.next_number_as_str()?;
                         // Should not fail since next_number_as_string would have returned Err for invalid JSON number
-                        if let Err(e) = json_writer.number_value_from_string(&number) {
+                        if let Err(e) = json_writer.number_value_from_string(number) {
                             match e {
                                 JsonNumberError::InvalidNumber(e) => panic!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}"),
                                 JsonNumberError::IoError(e) => return Err(TransferError::WriterError(e)),
@@ -3309,7 +3984,7 @@ mod tests {
     where
         Self::Item: Display,
     {
-        fn assert_all<A: Fn(&Self::Item) -> TestResult>(self, assert: A)
+        fn assert_all<A: FnMut(&Self::Item) -> TestResult>(self, mut assert: A)
         where
             Self: Sized,
         {
@@ -3409,7 +4084,7 @@ mod tests {
     fn literals_valid_trailing_data() -> TestResult {
         ["", " ", "\t", "\r", "\n", "\r\n"].assert_all(|whitespace| {
             let json = "true".to_owned() + whitespace;
-            let mut json_reader = new_reader(json.as_str());
+            let mut json_reader = new_reader(&json);
             assert_eq!(true, json_reader.next_bool()?);
             json_reader.consume_trailing_whitespace()?;
             Ok(())
@@ -3423,7 +4098,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a":true}"#);
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!(true, json_reader.next_bool()?);
         json_reader.end_object()?;
 
@@ -3434,33 +4109,68 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn numbers_as_string() -> TestResult {
-        let mut json_reader =
-            new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
-        let mut actual = Vec::new();
+    duplicate::duplicate! {
+        [
+            method;
+            [next_number_as_str];
+            [next_number_as_string];
+        ]
+        #[test]
+        fn method() -> TestResult {
+            let mut json_reader =
+                new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
 
-        json_reader.begin_array()?;
-        while json_reader.has_next()? {
-            actual.push(json_reader.next_number_as_string()?);
+            json_reader.begin_array()?;
+
+            [
+                "0",
+                "-0",
+                "-1",
+                "-9",
+                "123",
+                "56.0030",
+                "-0.1",
+                "1.01e+03",
+                "-4.50E-40",
+            ].assert_all(|expected| {
+                assert_eq!(*expected, json_reader.method()?);
+                Ok(())
+            });
+
+            json_reader.end_array()?;
+            json_reader.consume_trailing_whitespace()?;
+
+
+            // Also include large number to make sure value buffer is correctly reused / replaced
+            let large_number = "123".repeat(READER_BUF_SIZE);
+            let json = format!("[1, {large_number}, {large_number}, 2, {large_number}, 3]");
+            let mut json_reader = JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    restrict_number_values: false,
+                    ..Default::default()
+                },
+            );
+
+            json_reader.begin_array()?;
+
+            [
+                "1",
+                &large_number,
+                &large_number,
+                "2",
+                &large_number,
+                "3",
+            ].assert_all(|expected| {
+                assert_eq!(*expected, json_reader.method()?);
+                Ok(())
+            });
+
+            json_reader.end_array()?;
+            json_reader.consume_trailing_whitespace()?;
+
+            Ok(())
         }
-        json_reader.end_array()?;
-        json_reader.consume_trailing_whitespace()?;
-
-        let expected = vec![
-            "0",
-            "-0",
-            "-1",
-            "-9",
-            "123",
-            "56.0030",
-            "-0.1",
-            "1.01e+03",
-            "-4.50E-40",
-        ];
-        assert_eq!(expected, actual);
-
-        Ok(())
     }
 
     #[test]
@@ -3598,10 +4308,67 @@ mod tests {
         Ok(())
     }
 
+    duplicate::duplicate! {
+        [
+            method;
+            [next_str];
+            [next_string];
+        ]
+        #[test]
+        fn method() -> TestResult {
+            fn pair(json_string: &str, expected_value: &str) -> (String, String) {
+                (json_string.to_owned(), expected_value.to_owned())
+            }
+
+            let test_data = [
+                pair("", ""),
+                pair("a", "a"),
+                pair("\\n", "\n"),
+                pair("\\na", "\na"),
+                pair("\\n\\na", "\n\na"),
+                pair("a\\n", "a\n"),
+                pair("a\\na\\n\\na", "a\na\n\na"),
+                pair("a\u{10FFFF}", "a\u{10FFFF}"),
+                ("a".repeat(READER_BUF_SIZE - 2), "a".repeat(READER_BUF_SIZE - 2)),
+                ("a".repeat(READER_BUF_SIZE - 1), "a".repeat(READER_BUF_SIZE - 1)),
+                ("a".repeat(READER_BUF_SIZE), "a".repeat(READER_BUF_SIZE)),
+                ("a".repeat(READER_BUF_SIZE + 1), "a".repeat(READER_BUF_SIZE + 1)),
+                ("a".repeat(READER_BUF_SIZE - 1) + "\\n", "a".repeat(READER_BUF_SIZE - 1) + "\n"),
+                ("a".repeat(READER_BUF_SIZE) + "\\na", "a".repeat(READER_BUF_SIZE) + "\na"),
+            ];
+            for (json_string, expected_value) in test_data {
+                let json_value = format!("\"{json_string}\"");
+                let mut json_reader = new_reader(&json_value);
+                assert_eq!(expected_value, json_reader.method()?);
+                json_reader.consume_trailing_whitespace()?;
+            }
+
+            // Also test reading array of multiple string values, including ones which cannot
+            // be read directly from reader buf array, to verify that value buffer is correctly
+            // reused / replaced
+            let large_json_string = "abc".repeat(READER_BUF_SIZE);
+            let json_value = format!("[\"a\", \"{large_json_string}\", \"\\n\", \"{large_json_string}\", \"a\", \"\\n\"]");
+            let mut json_reader = new_reader(&json_value);
+            json_reader.begin_array()?;
+
+            assert_eq!("a", json_reader.method()?);
+            assert_eq!(large_json_string, json_reader.method()?);
+            assert_eq!("\n", json_reader.method()?);
+            assert_eq!(large_json_string, json_reader.method()?);
+            assert_eq!("a", json_reader.method()?);
+            assert_eq!("\n", json_reader.method()?);
+
+            json_reader.end_array()?;
+            json_reader.consume_trailing_whitespace()?;
+
+            Ok(())
+        }
+    }
+
     #[test]
     fn strings() -> TestResult {
         let json = r#"["", "a b", "a\"b", "a\\\\\"b", "a\\", "\"\\\/\b\f\n\r\t\u0000\u0080\u0800\u12345\uD852\uDF62 \u1234\u5678\u90AB\uCDEF\uabcd\uefEF","#.to_owned() + "\"\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\u{2028}\u{2029}\"]";
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
         json_reader.begin_array()?;
 
         assert_eq!("", json_reader.next_string()?);
@@ -4021,7 +4788,7 @@ mod tests {
 
         let mut json_reader = new_reader("{\"a\":1,}");
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
@@ -4033,7 +4800,7 @@ mod tests {
 
         let mut json_reader = new_reader_with_trailing_comma("{\"a\":1,}");
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_eq!(false, json_reader.has_next()?);
         json_reader.end_object()?;
@@ -4051,7 +4818,7 @@ mod tests {
 
         let mut json_reader = new_reader_with_trailing_comma("{\"a\":1,,}");
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
@@ -4064,21 +4831,103 @@ mod tests {
         Ok(())
     }
 
+    duplicate::duplicate! {
+        [
+            method;
+            [next_name];
+            [next_name_owned];
+        ]
+        #[test]
+        fn method() -> TestResult {
+            fn pair(json_name: &str, expected_name: &str) -> (String, String) {
+                (json_name.to_owned(), expected_name.to_owned())
+            }
+
+            let test_data = [
+                pair("", ""),
+                pair("a", "a"),
+                pair("\\n", "\n"),
+                pair("\\na", "\na"),
+                pair("a\\n", "a\n"),
+                pair("a\\na\\n\\na", "a\na\n\na"),
+                pair("a\u{10FFFF}", "a\u{10FFFF}"),
+                ("a".repeat(READER_BUF_SIZE - 10), "a".repeat(READER_BUF_SIZE - 10)),
+                ("a".repeat(READER_BUF_SIZE) + "\\n", "a".repeat(READER_BUF_SIZE) + "\n"),
+                ("a".repeat(READER_BUF_SIZE) + "\\na", "a".repeat(READER_BUF_SIZE) + "\na"),
+            ];
+            for (json_name, expected_name) in test_data {
+                let json_value = "{\"".to_owned() + &json_name + "\": 1}";
+                let mut json_reader = new_reader(&json_value);
+
+                json_reader.begin_object()?;
+                assert_eq!(expected_name, json_reader.method()?);
+                assert_eq!("1", json_reader.next_number_as_string()?);
+                json_reader.end_object()?;
+
+                json_reader.consume_trailing_whitespace()?;
+            }
+
+
+            // Also test reading objects with multiple names, including ones which cannot
+            // be read directly from reader buf array, to verify that value buffer is correctly
+            // reused / replaced
+
+            let large_name = "abc".repeat(READER_BUF_SIZE);
+            let json = "{\"a\": 1, \"".to_owned() + &large_name + "\": 2, \"\\n\": 3, \"b\": 4, \"" + &large_name + "\": {\"c\": {\"\\n\": 5}}}";
+
+            let mut json_reader = new_reader(&json);
+
+            json_reader.begin_object()?;
+            assert_eq!("a", json_reader.method()?);
+            assert_eq!("1", json_reader.next_number_as_string()?);
+
+            assert_eq!(large_name, json_reader.method()?);
+            assert_eq!("2", json_reader.next_number_as_string()?);
+
+            assert_eq!("\n", json_reader.method()?);
+            assert_eq!("3", json_reader.next_number_as_string()?);
+
+            assert_eq!("b", json_reader.method()?);
+            assert_eq!("4", json_reader.next_number_as_string()?);
+
+            assert_eq!(large_name, json_reader.method()?);
+            json_reader.begin_object()?;
+            assert_eq!("c", json_reader.method()?);
+            json_reader.begin_object()?;
+            assert_eq!("\n", json_reader.method()?);
+            assert_eq!("5", json_reader.next_number_as_string()?);
+            let expected_path = vec![
+                JsonPathPiece::ObjectMember(large_name),
+                JsonPathPiece::ObjectMember("c".to_owned()),
+                JsonPathPiece::ObjectMember("\n".to_owned()),
+            ];
+            assert_eq!(Some(expected_path), json_reader.json_path);
+            json_reader.end_object()?;
+            json_reader.end_object()?;
+
+            json_reader.end_object()?;
+
+            json_reader.consume_trailing_whitespace()?;
+
+            Ok(())
+        }
+    }
+
     #[test]
     fn object_member_names() -> TestResult {
         let mut json_reader = new_reader(r#"{"": 1, "a": 2, "": 3, "a": 4}"#);
         json_reader.begin_object()?;
 
-        assert_eq!("", json_reader.next_name()?);
+        assert_eq!("", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
 
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("2", json_reader.next_number_as_string()?);
 
-        assert_eq!("", json_reader.next_name()?);
+        assert_eq!("", json_reader.next_name_owned()?);
         assert_eq!("3", json_reader.next_number_as_string()?);
 
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("4", json_reader.next_number_as_string()?);
 
         json_reader.end_object()?;
@@ -4100,7 +4949,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
             "$.<?>",
             1,
@@ -4117,7 +4966,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
             "$.<?>",
             1,
@@ -4134,7 +4983,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
             "$.<?>",
             1,
@@ -4143,7 +4992,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a":: 1}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_parse_error_with_path(
             None,
             json_reader.next_number_as_string(),
@@ -4157,7 +5006,7 @@ mod tests {
         assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             4,
@@ -4166,7 +5015,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a":}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_parse_error_with_path(
             None,
             json_reader.peek(),
@@ -4180,7 +5029,7 @@ mod tests {
         assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             5,
@@ -4191,7 +5040,7 @@ mod tests {
         assert!(json_reader.has_next()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             4,
@@ -4200,7 +5049,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1 "b": 2}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
@@ -4211,7 +5060,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::MissingComma,
             "$.a",
             8,
@@ -4220,7 +5069,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1,, "b": 2}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
@@ -4233,7 +5082,7 @@ mod tests {
          *   However it is already documented that continuing after syntax error causes unspecified behavior
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::MalformedJson,
             "$.a",
             8,
@@ -4243,7 +5092,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1: "b": 2}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
@@ -4254,7 +5103,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
             "$.a",
             7,
@@ -4271,7 +5120,7 @@ mod tests {
         );
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
             "$.<?>",
             1,
@@ -4325,7 +5174,7 @@ mod tests {
     fn object_end_expecting_member_value() {
         let mut json_reader = new_reader(r#"{"a":1}"#);
         json_reader.begin_object().unwrap();
-        assert_eq!("a", json_reader.next_name().unwrap());
+        assert_eq!("a", json_reader.next_name_owned().unwrap());
 
         json_reader.end_object().unwrap();
     }
@@ -4360,19 +5209,19 @@ mod tests {
     fn skip_array_deeply_nested() -> TestResult {
         let nesting_depth = 20_000;
         let json = "[".repeat(nesting_depth) + "true" + "]".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
 
         json_reader.skip_value()?;
         json_reader.consume_trailing_whitespace()?;
 
         // Also test with malformed JSON to verify that deeply nested value is actually reached
         let json = "[".repeat(nesting_depth) + "@" + "]".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
         assert_parse_error_with_path(
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            ("$".to_owned() + "[0]".repeat(nesting_depth).as_str()).as_str(),
+            &("$".to_owned() + "[0]".repeat(nesting_depth).as_str()),
             nesting_depth as u32,
         );
 
@@ -4384,10 +5233,10 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": {"a1": [1, []]}, "b": 2, "c": 3}"#);
         json_reader.begin_object()?;
 
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         json_reader.skip_value()?;
 
-        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("b", json_reader.next_name_owned()?);
         assert_eq!("2", json_reader.next_number_as_string()?);
 
         json_reader.skip_name()?;
@@ -4405,19 +5254,19 @@ mod tests {
         let nesting_depth = 20_000;
         let json_start = r#"{"a":"#;
         let json = json_start.repeat(nesting_depth) + "true" + "}".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
 
         json_reader.skip_value()?;
         json_reader.consume_trailing_whitespace()?;
 
         // Also test with malformed JSON to verify that deeply nested value is actually reached
         let json = json_start.repeat(nesting_depth) + "@" + "}".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
         assert_parse_error_with_path(
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            ("$".to_owned() + ".a".repeat(nesting_depth).as_str()).as_str(),
+            &("$".to_owned() + ".a".repeat(nesting_depth).as_str()),
             (json_start.len() * nesting_depth) as u32,
         );
 
@@ -4517,7 +5366,7 @@ mod tests {
 
         let mut json_reader = new_reader(r#"{"a": 1}"#);
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         // Should also work when currently expecting member value
         json_reader.skip_to_top_level()?;
         json_reader.consume_trailing_whitespace()?;
@@ -4576,7 +5425,7 @@ mod tests {
             r#"[true, null, 123, 123.0e+0, "a\"b\\c\u0064", [1], {"a": 1, "a\"b\\c\u0064": 2, "c":[{"d":[3]}]},"#
                 .to_owned()
                 + "\"\u{10FFFF}\"]";
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
         json_reader.begin_array()?;
 
         let mut writer = Vec::<u8>::new();
@@ -4937,7 +5786,7 @@ mod tests {
         let mut json_reader = new_reader("{}");
         json_reader.begin_object()?;
         assert_unexpected_structure(
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             UnexpectedStructureKind::FewerElementsThanExpected,
             "$.<?>",
             1,
@@ -5123,7 +5972,7 @@ mod tests {
     fn has_next_member_value() {
         let mut json_reader = new_reader(r#"{"a": 1}"#);
         json_reader.begin_object().unwrap();
-        assert_eq!("a", json_reader.next_name().unwrap());
+        assert_eq!("a", json_reader.next_name_owned().unwrap());
 
         json_reader.has_next().unwrap();
     }
@@ -5209,9 +6058,9 @@ mod tests {
         assert_eq!("2", json_reader.next_number_as_string()?);
 
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
-        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("b", json_reader.next_name_owned()?);
         assert_eq!("2", json_reader.next_number_as_string()?);
         json_reader.end_object()?;
 
@@ -5433,11 +6282,11 @@ mod tests {
     fn location_malformed_name() -> TestResult {
         let mut json_reader = new_reader("{\"a\": 1, \"b\\X\": 2}");
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             SyntaxErrorKind::UnknownEscapeSequence,
             "$.a",
             11,
@@ -5502,7 +6351,7 @@ mod tests {
         json_reader.skip_value()?;
 
         assert_unexpected_structure(
-            json_reader.next_name(),
+            json_reader.next_name_owned(),
             UnexpectedStructureKind::FewerElementsThanExpected,
             "$.b",
             15,
@@ -5553,7 +6402,7 @@ mod tests {
     fn large_document() -> TestResult {
         let count = READER_BUF_SIZE;
         let json = "[".to_owned() + "true,".repeat(count - 1).as_str() + "true]";
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
 
         json_reader.begin_array()?;
         for _ in 0..count {
@@ -5569,7 +6418,7 @@ mod tests {
     fn no_path_tracking() -> TestResult {
         let mut json_reader = JsonStreamReader::new_custom(
             // Test with JSON data containing various values and a malformed `@` at the end
-            "[{\"a\": [[], [1], {}, {\"b\": 1}, {\"c\": 2}, @]}]".as_bytes(),
+            "[{\"a\": [[], [1], {}, {\"b\": 1}, {\"c\": 2}, {\"d\": 3}, @]}]".as_bytes(),
             ReaderSettings {
                 track_path: false,
                 ..Default::default()
@@ -5577,7 +6426,7 @@ mod tests {
         );
         json_reader.begin_array()?;
         json_reader.begin_object()?;
-        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         json_reader.begin_array()?;
 
         json_reader.begin_array()?;
@@ -5591,8 +6440,13 @@ mod tests {
         json_reader.end_object()?;
 
         json_reader.begin_object()?;
-        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("b", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
+        json_reader.end_object()?;
+
+        json_reader.begin_object()?;
+        assert_eq!("c", json_reader.next_name()?);
+        assert_eq!("2", json_reader.next_number_as_string()?);
         json_reader.end_object()?;
 
         json_reader.skip_value()?;
@@ -5602,7 +6456,7 @@ mod tests {
             SyntaxErrorKind::MalformedJson,
             // Is '<?>' because path tracking is disabled
             "<?>",
-            41,
+            51,
         );
 
         Ok(())
@@ -5758,7 +6612,7 @@ mod tests {
         let string_json = "abc\u{10FFFF}d\\u1234e\\n".repeat(count);
         let expected_string_value = "abc\u{10FFFF}d\u{1234}e\n".repeat(count);
         let json = "\"".to_owned() + string_json.as_str() + "\"";
-        let mut json_reader = new_reader(json.as_str());
+        let mut json_reader = new_reader(&json);
 
         assert_eq!(expected_string_value, json_reader.next_string()?);
         // `- (3 * count)` to account for \u{10FFFF} taking up 4 bytes but representing a single char

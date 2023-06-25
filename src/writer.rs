@@ -3,7 +3,7 @@
 //! [`JsonWriter`] is the general trait for JSON writers, [`JsonStreamWriter`] is an implementation
 //! of it which writes a JSON document to a [`Write`] in a streaming way.
 
-use crate::json_number::consume_json_number;
+use crate::json_number::{consume_json_number, NumberBytesProvider};
 
 use std::{
     fmt::Debug,
@@ -1316,31 +1316,38 @@ impl<'j, W: Write> StringValueWriter for StringValueWriterImpl<'j, W> {
     }
 }
 
+struct BytesSliceNumberBytesProvider<'a> {
+    bytes: &'a [u8],
+    index: usize,
+}
+impl NumberBytesProvider<()> for BytesSliceNumberBytesProvider<'_> {
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ()> {
+        self.index += 1;
+        if self.index < self.bytes.len() {
+            Ok(Some(self.bytes[self.index]))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 fn is_valid_json_number(value: &str) -> bool {
     if value.is_empty() {
         return false;
     }
 
     let value_bytes = value.as_bytes();
-    let mut index = 0;
-    let is_valid = consume_json_number(
-        &mut || {
-            index += 1;
-            if index < value_bytes.len() {
-                Ok::<_, ()>(Some(value_bytes[index]))
-            } else {
-                Ok(None)
-            }
-        },
-        &mut |_| {},
-        value_bytes[0],
-    )
-    .unwrap()
-    // Just check that number is valid, ignore exponent digits count
-    .is_some();
+    let mut bytes_provider = BytesSliceNumberBytesProvider {
+        bytes: value_bytes,
+        index: 0,
+    };
+    let is_valid = consume_json_number(&mut bytes_provider, value_bytes[0])
+        .unwrap()
+        // Just check that number is valid, ignore exponent digits count
+        .is_some();
 
     // Is valid and complete string was consumed
-    is_valid && index >= value_bytes.len()
+    is_valid && bytes_provider.index >= value_bytes.len()
 }
 
 #[cfg(test)]
@@ -1354,7 +1361,7 @@ mod tests {
         fn assert_valid_number<T: IntegralNumber + Display>(number: T) {
             assert_eq!(
                 true,
-                is_valid_json_number(number.to_json_number().as_str()),
+                is_valid_json_number(&number.to_json_number()),
                 "Expected to be valid JSON number: {}",
                 number
             );
@@ -1375,7 +1382,7 @@ mod tests {
         fn assert_valid_fp_number<T: FloatingPointNumber + Display>(number: T) {
             assert_eq!(
                 true,
-                is_valid_json_number(number.to_json_number().unwrap().as_str()),
+                is_valid_json_number(&number.to_json_number().unwrap()),
                 "Expected to be valid JSON number: {}",
                 number
             );

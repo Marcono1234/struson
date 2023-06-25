@@ -37,13 +37,13 @@ fn writer_test() -> Result<(), Box<dyn Error>> {
                 json_writer.end_object()?;
             }
             JsonEvent::MemberName(name) => {
-                json_writer.name(name.as_str())?;
+                json_writer.name(&name)?;
             }
             JsonEvent::StringValue(value) => {
-                json_writer.string_value(value.as_str())?;
+                json_writer.string_value(&value)?;
             }
             JsonEvent::NumberValue(value) => {
-                json_writer.number_value_from_string(value.as_str())?;
+                json_writer.number_value_from_string(&value)?;
             }
             JsonEvent::BoolValue(value) => {
                 json_writer.bool_value(value)?;

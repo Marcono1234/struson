@@ -90,10 +90,10 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
                     stack.push(StackValue::Object)
                 }
                 ValueType::String => {
-                    json_reader.next_string()?;
+                    json_reader.next_str()?;
                 }
                 ValueType::Number => {
-                    json_reader.next_number_as_string()?;
+                    json_reader.next_number_as_str()?;
                 }
                 ValueType::Boolean => {
                     json_reader.next_bool()?;
@@ -178,13 +178,13 @@ fn benchmark_large_array(c: &mut Criterion) {
             .repeat(1000)
             .as_str()
         + "true]";
-    bench_compare(c, "read-large-array", json.as_str());
+    bench_compare(c, "read-large-array", &json);
 }
 
 fn benchmark_nested_object(c: &mut Criterion) {
     let count = 1000;
     let json = r#"{"member name":"#.repeat(count) + "true" + "}".repeat(count).as_str();
-    bench_compare(c, "read-nested-object", json.as_str());
+    bench_compare(c, "read-nested-object", &json);
 }
 
 fn benchmark_nested_object_pretty(c: &mut Criterion) {
@@ -202,7 +202,7 @@ fn benchmark_nested_object_pretty(c: &mut Criterion) {
         json.push('}');
     }
 
-    bench_compare(c, "read-nested-object-pretty", json.as_str());
+    bench_compare(c, "read-nested-object-pretty", &json);
 }
 
 fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
@@ -212,7 +212,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new(json.as_bytes());
-                json_reader.next_string()?;
+                json_reader.next_str()?;
                 json_reader.consume_trailing_whitespace()?;
 
                 Ok(())
@@ -289,8 +289,8 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
 
 fn benchmark_large_ascii_string(c: &mut Criterion) {
     let json = "\"".to_owned() + "this is a test string".repeat(10_000).as_str() + "\"";
-    bench_compare(c, "read-large-ascii-string", json.as_str());
-    bench_compare_string_reading(c, "read-large-ascii-string (string reading)", json.as_str());
+    bench_compare(c, "read-large-ascii-string", &json);
+    bench_compare_string_reading(c, "read-large-ascii-string (string reading)", &json);
 }
 
 fn benchmark_large_unicode_string(c: &mut Criterion) {
@@ -299,12 +299,8 @@ fn benchmark_large_unicode_string(c: &mut Criterion) {
             .repeat(10_000)
             .as_str()
         + "\"";
-    bench_compare(c, "read-large-unicode-string", json.as_str());
-    bench_compare_string_reading(
-        c,
-        "read-large-unicode-string (string reading)",
-        json.as_str(),
-    );
+    bench_compare(c, "read-large-unicode-string", &json);
+    bench_compare_string_reading(c, "read-large-unicode-string (string reading)", &json);
 }
 
 fn benchmark_escapes_string(c: &mut Criterion) {
@@ -313,12 +309,8 @@ fn benchmark_escapes_string(c: &mut Criterion) {
             .repeat(10_000)
             .as_str()
         + "\"";
-    bench_compare(c, "read-large-escapes-string", json.as_str());
-    bench_compare_string_reading(
-        c,
-        "read-large-escapes-string (string reading)",
-        json.as_str(),
-    );
+    bench_compare(c, "read-large-escapes-string", &json);
+    bench_compare_string_reading(c, "read-large-escapes-string (string reading)", &json);
 }
 
 criterion_group!(

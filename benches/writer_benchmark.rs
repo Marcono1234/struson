@@ -101,42 +101,43 @@ fn bench_compare_string_writing(c: &mut Criterion, name: &str, string_value: &st
 
 fn benchmark_large_ascii_string(c: &mut Criterion) {
     let string_value = "this is a test string".repeat(10_000);
-    let string_value = string_value.as_str();
     bench_compare(c, "write-large-ascii-string", |json_writer| {
-        json_writer.string_value(string_value)?;
+        json_writer.string_value(&string_value)?;
 
         Ok(())
     });
-    bench_compare_string_writing(c, "write-large-ascii-string (string writing)", string_value);
+    bench_compare_string_writing(
+        c,
+        "write-large-ascii-string (string writing)",
+        &string_value,
+    );
 }
 
 fn benchmark_large_unicode_string(c: &mut Criterion) {
     let string_value = "ab\u{0080}cd\u{0800}ef\u{1234}gh\u{10FFFF}".repeat(10_000);
-    let string_value = string_value.as_str();
     bench_compare(c, "write-large-unicode-string", |json_writer| {
-        json_writer.string_value(string_value)?;
+        json_writer.string_value(&string_value)?;
 
         Ok(())
     });
     bench_compare_string_writing(
         c,
         "write-large-unicode-string (string writing)",
-        string_value,
+        &string_value,
     );
 }
 
 fn benchmark_escapes_string(c: &mut Criterion) {
     let string_value = r#"a\nb\tc\\d\"e\u0000f\u0080g\u0800h\u1234i\uD800\uDC00"#.repeat(10_000);
-    let string_value = string_value.as_str();
     bench_compare(c, "write-large-escapes-string", |json_writer| {
-        json_writer.string_value(string_value)?;
+        json_writer.string_value(&string_value)?;
 
         Ok(())
     });
     bench_compare_string_writing(
         c,
         "write-large-escapes-string (string writing)",
-        string_value,
+        &string_value,
     );
 }
 

@@ -886,7 +886,7 @@ impl<W: JsonWriter> MapKeyStringSerializer<'_, W> {
     #[inline(always)]
     fn serialize_number_key<T: ToString>(&mut self, number: T) -> Result<(), SerializerError> {
         // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
-        self.json_writer.name(number.to_string().as_str())?;
+        self.json_writer.name(&number.to_string())?;
         Ok(())
     }
 }
@@ -1096,7 +1096,11 @@ mod tests {
         let mut serializer = JsonWriterSerializer::new(&mut json_writer);
         serializing_function(&mut serializer).unwrap();
         json_writer.finish_document().unwrap();
-        assert_eq!(expected_json, String::from_utf8(writer).unwrap());
+        assert_eq!(
+            expected_json,
+            String::from_utf8(writer).unwrap(),
+            "expected JSON does not match Struson output"
+        );
     }
 
     fn assert_serialized_serde_json<

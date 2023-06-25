@@ -51,7 +51,7 @@
 //! let mut json_reader = JsonStreamReader::new(json.as_bytes());
 //!
 //! json_reader.begin_object()?;
-//! assert_eq!(json_reader.next_name()?, "a");
+//! assert_eq!("a", json_reader.next_name()?);
 //!
 //! json_reader.begin_array()?;
 //! assert_eq!(1_u32, json_reader.next_number()??);

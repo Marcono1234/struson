@@ -10,7 +10,7 @@ use std::{
 };
 
 use serde::{
-    de::{value::StringDeserializer, DeserializeSeed, Error, Unexpected, Visitor},
+    de::{value::StrDeserializer, DeserializeSeed, Error, Unexpected, Visitor},
     forward_to_deserialize_any, Deserialize, Deserializer,
 };
 use thiserror::Error;
@@ -349,6 +349,7 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
         match self.json_reader.peek()? {
             ValueType::Array => self.deserialize_seq(visitor),
             ValueType::Object => self.deserialize_map(visitor),
+            // Deserialize as `String` instead of `str`, assuming that user might want to consume the value
             ValueType::String => self.deserialize_string(visitor),
             ValueType::Boolean => self.deserialize_bool(visitor),
             ValueType::Null => {
@@ -357,20 +358,20 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
             }
             ValueType::Number => {
                 // Note: This does not completely match serde_json's behavior, but maybe this implementation here is more reasonable?
-                let number_str = self.json_reader.next_number_as_string()?;
+                let number_str = self.json_reader.next_number_as_str()?;
                 if number_str.contains(['.', 'e', 'E']) {
-                    visitor.visit_f64(f64::from_str(&number_str)?)
+                    visitor.visit_f64(f64::from_str(number_str)?)
                 } else if number_str.as_bytes()[0] == b'-' {
-                    match i64::from_str(&number_str) {
+                    match i64::from_str(number_str) {
                         Ok(number) => visitor.visit_i64(number),
                         // Fall back to i128
-                        Err(_) => visitor.visit_i128(i128::from_str(&number_str)?),
+                        Err(_) => visitor.visit_i128(i128::from_str(number_str)?),
                     }
                 } else {
-                    match u64::from_str(&number_str) {
+                    match u64::from_str(number_str) {
                         Ok(number) => visitor.visit_u64(number),
                         // Fall back to u128
-                        Err(_) => visitor.visit_u128(u128::from_str(&number_str)?),
+                        Err(_) => visitor.visit_u128(u128::from_str(number_str)?),
                     }
                 }
             }
@@ -446,21 +447,26 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
     /// Hint that the `Deserialize` type is expecting a string value
     ///
     /// This implementation expects that the next value is a JSON string value
-    /// and calls [`Visitor::visit_string`] with the value. For all other JSON
+    /// and calls [`Visitor::visit_str`] with the value. For all other JSON
     /// values an error is returned. Borrowing a string with the lifetime of
     /// this deserializer (`'de`) is not supported.
     fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_string(self.json_reader.next_string()?)
+        visitor.visit_str(self.json_reader.next_str()?)
     }
 
     fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1539),
+        // which delegates to `deserialize_str`
+        // However, if caller explicitly requests a String, then it might be better to always
+        // provide them a String (because the current `deserialize_str` implementation here would
+        // not do that)
         visitor.visit_string(self.json_reader.next_string()?)
     }
 
     /// Hint that the `Deserialize` type is expecting a byte array
     ///
     /// The behavior depends on the type of the next JSON value:
-    /// - JSON string: [`Visitor::visit_byte_buf`] is called with the UTF-8 bytes of the string value
+    /// - JSON string: [`Visitor::visit_bytes`] is called with the UTF-8 bytes of the string value
     /// - JSON array: delegates to `deserialize_seq`; the type of the array
     ///   items is not checked, for example the array could contain boolean values, numbers,
     ///   strings or even nested arrays
@@ -474,11 +480,7 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
     fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         // Is equivalent serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1612)
         match self.json_reader.peek()? {
-            // Note: This differs from serde_json, but since owned String is available here
-            // can take advantage of that and pass underlying Vec<u8> (= byte buf) to visitor
-            ValueType::String => {
-                visitor.visit_byte_buf(self.json_reader.next_string()?.into_bytes())
-            }
+            ValueType::String => visitor.visit_bytes(self.json_reader.next_str()?.as_bytes()),
             // Note: This matches serde_json's behavior, but does not actually call `visit_bytes`,
             // nor does it enforce that values are all u8
             ValueType::Array => self.deserialize_seq(visitor),
@@ -488,9 +490,32 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
 
     /// Hint that the `Deserialize` type is expecting a byte array
     ///
-    /// This implementation delegates to `deserialize_bytes`.
+    /// The behavior depends on the type of the next JSON value:
+    /// - JSON string: [`Visitor::visit_byte_buf`] is called with the UTF-8 bytes of the string value
+    /// - JSON array: delegates to `deserialize_seq`; the type of the array
+    ///   items is not checked, for example the array could contain boolean values, numbers,
+    ///   strings or even nested arrays
+    ///
+    /// For all other JSON values an error is returned.
+    ///
+    /// Unlike Serde JSON's implementation of this method, this implementation requires that the
+    /// JSON string value consists of valid UTF-8 bytes. It is not possible to read invalid UTF-8
+    /// strings with this method.
     fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_bytes(visitor)
+        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1647),
+        // which delegates to `deserialize_bytes`
+        // However, if caller explicitly requests a byte buf, then it might be better to always
+        // provide them a byte buf (because the current `deserialize_bytes` implementation here would
+        // not do that)
+        match self.json_reader.peek()? {
+            ValueType::String => {
+                visitor.visit_byte_buf(self.json_reader.next_string()?.into_bytes())
+            }
+            // Note: This matches serde_json's behavior, but does not actually call `visit_bytes` / `visit_byte_buf`,
+            // nor does it enforce that values are all u8
+            ValueType::Array => self.deserialize_seq(visitor),
+            peeked => err_unexpected_type(peeked, &visitor),
+        }
     }
 
     /// Hint that the `Deserialize` type is expecting an optional value
@@ -759,6 +784,7 @@ impl<'de, R: JsonReader> serde::de::MapAccess<'de> for &mut MapAccess<'_, '_, R>
         }
         if self.de.json_reader.has_next()? {
             let key = seed.deserialize(MapKeyDeserializer {
+                // Uses borrowed `str` instead of `String` assuming that is the more common use case
                 key: self.de.json_reader.next_name()?,
             })?;
             self.expects_entry_value = true;
@@ -781,8 +807,8 @@ impl<'de, R: JsonReader> serde::de::MapAccess<'de> for &mut MapAccess<'_, '_, R>
 }
 
 #[derive(Debug)]
-struct MapKeyDeserializer {
-    key: String,
+struct MapKeyDeserializer<'a> {
+    key: &'a str,
 }
 
 // Based on https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L2121-L2137
@@ -791,22 +817,18 @@ macro_rules! deserialize_integer_key {
         fn $deserialize<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
             match self.key.parse() {
                 Ok(integer) => visitor.$visit(integer),
-                // Note: This deviates from serde_json which calls `visit_str` because the string
-                // is owned here and therefore `visit_string` can be used
-                Err(_) => visitor.visit_string(self.key),
+                Err(_) => visitor.visit_str(self.key),
             }
         }
     };
 }
 
 // Based on https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L2139
-impl<'de> Deserializer<'de> for MapKeyDeserializer {
+impl<'de> Deserializer<'de> for MapKeyDeserializer<'_> {
     type Error = DeserializerError;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        // Note: This deviates from serde_json which calls `visit_str` because the string
-        // is owned here and therefore `visit_string` can be used
-        visitor.visit_string(self.key)
+        visitor.visit_str(self.key)
     }
 
     deserialize_integer_key!(deserialize_i8 => visit_i8);
@@ -842,7 +864,7 @@ impl<'de> Deserializer<'de> for MapKeyDeserializer {
         // Note: This might deviate from serde_json, but only map key as String is available here
         // so cannot delegate to the original Deserializer; ideally would use UnitVariantAccess here
         // but that is also not possible because it requires Deserializer as well
-        StringDeserializer::new(self.key).deserialize_enum(name, variants, visitor)
+        StrDeserializer::new(self.key).deserialize_enum(name, variants, visitor)
     }
 
     fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -879,11 +901,12 @@ impl<'de, 's, 'a, R: JsonReader> serde::de::EnumAccess<'de> for &mut VariantAcce
         self,
         seed: V,
     ) -> Result<(V::Value, Self::Variant), Self::Error> {
+        // Uses borrowed `str` instead of `String` assuming that is the more common use case
         let name = self.de.json_reader.next_name()?;
         // TODO: This does not completely match serde_json behavior, but cannot pass `self.de` because JsonReader does not
         // allow reading name as regular string value; serde_json's behavior seems to be slightly incorrect though, see
         // https://github.com/serde-rs/json/issues/979
-        let de = StringDeserializer::<Self::Error>::new(name);
+        let de = StrDeserializer::<Self::Error>::new(name);
         Ok((seed.deserialize(de)?, self))
     }
 }
@@ -1260,7 +1283,10 @@ mod tests {
         deserializing_function(&mut deserializer, &mut visitor).unwrap();
         json_reader.consume_trailing_whitespace().unwrap();
 
-        assert_eq!(expected_visited, visitor.visited);
+        assert_eq!(
+            expected_visited, visitor.visited,
+            "expected visitor calls do not match Struson visitor calls"
+        );
     }
 
     // Use a macro because otherwise would always have to use closure for deserializing action
@@ -1305,17 +1331,27 @@ mod tests {
         deserializer.end().unwrap();
 
         // Normalize Visited types since JsonReaderDeserializer does not support borrowed strings and bytes
+        // with lifetime 'de, but serde_json does
         let visited: Vec<Visited> = visitor
             .visited
             .into_iter()
             .map(|v| match v {
-                Visited::BorrowedStr(s) => Visited::String(s),
-                Visited::Str(s) => Visited::String(s),
-                Visited::BorrowedBytes(b) => Visited::ByteBuf(b),
-                Visited::Bytes(b) => Visited::ByteBuf(b),
+                Visited::BorrowedStr(s) => Visited::Str(s),
+                Visited::BorrowedBytes(b) => Visited::Bytes(b),
                 v => v,
             })
             .collect();
+
+        // Normalize expected Visited types because serde_json does not use `visit_byte_buf` or `visit_string`
+        let expected_visited: Vec<Visited> = expected_visited
+            .iter()
+            .map(|v| match v.clone() {
+                Visited::String(s) => Visited::Str(s),
+                Visited::ByteBuf(b) => Visited::Bytes(b),
+                v => v,
+            })
+            .collect();
+
         assert_eq!(
             expected_visited, visited,
             "expected visitor calls do not match serde_json visitor calls"
@@ -1392,7 +1428,7 @@ mod tests {
             deserialize_any,
             [
                 Visited::MapStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::U64(1),
                 Visited::MapEnd
             ]
@@ -1400,6 +1436,7 @@ mod tests {
         assert_deserialized_cmp!(
             "\"test\"",
             deserialize_any,
+            // This differs for serde_json which actually deserializes a borrowed `str`
             [Visited::String("test".to_owned())]
         );
         assert_deserialized_cmp!("true", deserialize_any, [Visited::Bool(true)]);
@@ -1667,25 +1704,25 @@ mod tests {
 
     duplicate::duplicate! {
         [
-            method;
-            [deserialize_char];
-            [deserialize_str];
-            [deserialize_string];
-            [deserialize_identifier];
+            method visited_type;
+            [deserialize_char] [Str];
+            [deserialize_str] [Str];
+            [deserialize_string] [String];
+            [deserialize_identifier] [Str];
         ]
         #[test]
         fn method() {
-            assert_deserialized_cmp!("\"\"", method, [Visited::String("".to_owned())]);
-            assert_deserialized_cmp!("\"a\"", method, [Visited::String("a".to_owned())]);
+            assert_deserialized_cmp!("\"\"", method, [Visited::visited_type("".to_owned())]);
+            assert_deserialized_cmp!("\"a\"", method, [Visited::visited_type("a".to_owned())]);
             assert_deserialized_cmp!(
                 "\"\\u0000\"",
                 method,
-                [Visited::String("\0".to_owned())]
+                [Visited::visited_type("\0".to_owned())]
             );
             assert_deserialized_cmp!(
                 "\"\u{10FFFF}\"",
                 method,
-                [Visited::String("\u{10FFFF}".to_owned())]
+                [Visited::visited_type("\u{10FFFF}".to_owned())]
             );
 
             assert_deserialize_error!(
@@ -1701,16 +1738,16 @@ mod tests {
 
     duplicate::duplicate! {
         [
-            method;
-            [deserialize_bytes];
-            [deserialize_byte_buf];
+            method visited_type;
+            [deserialize_bytes] [Bytes];
+            [deserialize_byte_buf] [ByteBuf];
         ]
         #[test]
         fn method() {
-            assert_deserialized_cmp!("\"\"", method, [Visited::ByteBuf(vec![])]);
-            assert_deserialized_cmp!("\"a\"", method, [Visited::ByteBuf("a".as_bytes().to_owned())]);
-            assert_deserialized_cmp!("\"\\u0000\"", method, [Visited::ByteBuf("\0".as_bytes().to_owned())]);
-            assert_deserialized_cmp!("\"\u{10FFFF}\"", method, [Visited::ByteBuf("\u{10FFFF}".as_bytes().to_owned())]);
+            assert_deserialized_cmp!("\"\"", method, [Visited::visited_type(vec![])]);
+            assert_deserialized_cmp!("\"a\"", method, [Visited::visited_type("a".as_bytes().to_owned())]);
+            assert_deserialized_cmp!("\"\\u0000\"", method, [Visited::visited_type("\0".as_bytes().to_owned())]);
+            assert_deserialized_cmp!("\"\u{10FFFF}\"", method, [Visited::visited_type("\u{10FFFF}".as_bytes().to_owned())]);
 
             assert_deserialized_cmp!("[1, 2]", method, [Visited::SeqStart, Visited::U64(1), Visited::U64(2), Visited::SeqEnd]);
             // This just documents the current behavior; validation that array items are numbers might be added later
@@ -1950,7 +1987,7 @@ mod tests {
                 deserialize_map,
                 [
                     Visited::MapStart,
-                    Visited::String("a".to_owned()),
+                    Visited::Str("a".to_owned()),
                     Visited::U64(1),
                     Visited::MapEnd
                 ]
@@ -1960,9 +1997,9 @@ mod tests {
                 deserialize_map,
                 [
                     Visited::MapStart,
-                    Visited::String("1".to_owned()),
+                    Visited::Str("1".to_owned()),
                     Visited::U64(1),
-                    Visited::String("true".to_owned()),
+                    Visited::Str("true".to_owned()),
                     Visited::U64(2),
                     Visited::MapEnd
                 ]
@@ -1973,9 +2010,9 @@ mod tests {
                 deserialize_map,
                 [
                     Visited::MapStart,
-                    Visited::String("a".to_owned()),
+                    Visited::Str("a".to_owned()),
                     Visited::U64(1),
-                    Visited::String("a".to_owned()),
+                    Visited::Str("a".to_owned()),
                     Visited::U64(2),
                     Visited::MapEnd
                 ]
@@ -1993,7 +2030,7 @@ mod tests {
 
         #[test]
         fn string_key_conversion() {
-            // TODO Add comparison with serde_json Deserializer behavior?
+            // TODO: Add comparison with serde_json Deserializer behavior?
             //   Might not be easily possible? at least not when trying to call either serde_json::Deserializer.end()
             //   or JsonReader.consume_trailing_whitespace() at the end
             macro_rules! assert_deserialized_key {
@@ -2064,7 +2101,7 @@ mod tests {
                 |d, v| { d.deserialize_option(v) },
                 [
                     Visited::SomeStart,
-                    Visited::String("true".to_owned()),
+                    Visited::Str("true".to_owned()),
                     Visited::SomeEnd
                 ]
             );
@@ -2084,7 +2121,7 @@ mod tests {
                 |d, v| { d.deserialize_newtype_struct("name", v) },
                 [
                     Visited::NewtypeStructStart,
-                    Visited::String("abc".to_owned()),
+                    Visited::Str("abc".to_owned()),
                     Visited::NewtypeStructEnd
                 ]
             );
@@ -2094,12 +2131,12 @@ mod tests {
                 |d, v| { d.deserialize_enum("name", &["abc"], v) },
                 [
                     Visited::EnumStart,
-                    Visited::String("abc".to_owned()),
+                    Visited::Str("abc".to_owned()),
                     Visited::EnumEnd
                 ]
             );
 
-            // These all fall back to `visit_string`
+            // These all fall back to `visit_str`
             duplicate::duplicate! {
                 [
                     method;
@@ -2108,15 +2145,15 @@ mod tests {
                     [deserialize_seq];
                     [deserialize_map];
                 ]
-                assert_deserialized_key!("abc", |d, v| {d.method(v)}, [Visited::String("abc".to_owned())]);
+                assert_deserialized_key!("abc", |d, v| {d.method(v)}, [Visited::Str("abc".to_owned())]);
             }
 
-            // Currently `deserialize_ignored_any` calls `visit_string`; this matches serde_json's behavior,
+            // Currently `deserialize_ignored_any` calls `visit_str`; this matches serde_json's behavior,
             // but maybe `visit_none` would make more sense (and be consistent with JsonReaderDeserializer)
             assert_deserialized_key!(
                 "abc",
                 |d, v| { d.deserialize_ignored_any(v) },
-                [Visited::String("abc".to_owned())]
+                [Visited::Str("abc".to_owned())]
             );
         }
 
@@ -2196,7 +2233,7 @@ mod tests {
             |d, v| { d.deserialize_struct("name", &["a"], v) },
             [
                 Visited::MapStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::U64(1),
                 Visited::MapEnd
             ]
@@ -2208,9 +2245,9 @@ mod tests {
             |d, v| { d.deserialize_struct("name", &["a"], v) },
             [
                 Visited::MapStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::U64(1),
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::U64(2),
                 Visited::MapEnd
             ]
@@ -2222,7 +2259,7 @@ mod tests {
             |d, v| { d.deserialize_struct("name", &["a"], v) },
             [
                 Visited::MapStart,
-                Visited::String("unknown".to_owned()),
+                Visited::Str("unknown".to_owned()),
                 Visited::U64(1),
                 Visited::MapEnd
             ]
@@ -2246,7 +2283,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::EnumEnd,
             ]
         );
@@ -2258,7 +2295,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("unknown".to_owned()),
+                Visited::Str("unknown".to_owned()),
                 Visited::EnumEnd,
             ]
         );
@@ -2297,7 +2334,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::U64(1),
                 Visited::EnumEnd,
             ]
@@ -2309,7 +2346,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::SeqStart,
                 Visited::U64(1),
                 Visited::SeqEnd,
@@ -2342,7 +2379,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::SeqStart,
                 Visited::U64(1),
                 Visited::SeqEnd,
@@ -2356,9 +2393,9 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::MapStart,
-                Visited::String("f".to_owned()),
+                Visited::Str("f".to_owned()),
                 Visited::U64(1),
                 Visited::MapEnd,
                 Visited::EnumEnd,
@@ -2372,9 +2409,9 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
-                Visited::String("a".to_owned()),
+                Visited::Str("a".to_owned()),
                 Visited::MapStart,
-                Visited::String("unknown".to_owned()),
+                Visited::Str("unknown".to_owned()),
                 Visited::U64(1),
                 Visited::MapEnd,
                 Visited::EnumEnd,
@@ -2455,6 +2492,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
+                // This differs for serde_json which actually deserializes a borrowed `str`
                 Visited::String("a".to_owned()),
                 Visited::EnumEnd
             ]
@@ -2466,6 +2504,7 @@ mod tests {
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
+                // This differs for serde_json which actually deserializes a borrowed `str`
                 Visited::String("unknown".to_owned()),
                 Visited::EnumEnd
             ]

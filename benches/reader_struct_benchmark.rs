@@ -22,9 +22,8 @@ fn benchmark_struct(c: &mut Criterion) {
 
     static COUNT: usize = 5000;
     let json = r#"{"bool_value": true, "integer": 123456, "float": 1234.56, "string": "this is a string value"}"#.repeat(COUNT);
-    let json = json.as_str();
 
-    group.bench_with_input("struson", json, |b, json| {
+    group.bench_with_input("struson", &json, |b, json| {
         b.iter(|| {
             let mut json_reader = JsonStreamReader::new_custom(
                 json.as_bytes(),
@@ -46,7 +45,7 @@ fn benchmark_struct(c: &mut Criterion) {
 
                     json_reader.begin_object()?;
                     while json_reader.has_next()? {
-                        match json_reader.next_name()?.as_str() {
+                        match json_reader.next_name()? {
                             "bool_value" => {
                                 bool_value = Some(json_reader.next_bool()?);
                             }

@@ -1,11 +1,17 @@
 //! Internal module for parsing / validating JSON numbers
 
+pub(crate) trait NumberBytesProvider<E> {
+    /// Consumes the byte which is currently processed, and peeks at the next.
+    ///
+    /// Returns `None` if the end of the input has been reached.
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, E>;
+}
+
 /// Returns `None` if the number is invalid and `Some(exponent_digits_count)` if
 /// the number is valid. The `exponent_digits_count` is the number of exponent
 /// digits, without sign and without leading 0s.
-pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>(
-    consume_current_peek_next: &mut F,
-    consumer: &mut C,
+pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
+    reader: &mut R,
     first_byte: u8,
 ) -> Result<Option<u32>, E> {
     #[derive(PartialEq)]
@@ -91,10 +97,8 @@ pub fn consume_json_number<E, F: FnMut() -> Result<Option<u8>, E>, C: FnMut(u8)>
             break;
         }
 
-        consumer(byte);
-
         // In the first iteration this consumes the `first_byte` argument
-        if let Some(peeked_byte) = consume_current_peek_next()? {
+        if let Some(peeked_byte) = reader.consume_current_peek_next()? {
             byte = peeked_byte;
         } else {
             has_trailing_number_chars = false;
