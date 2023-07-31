@@ -111,6 +111,8 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 - <https://github.com/isagalaev/ijson-rust>  
   <!-- Note: Project itself has no README or description -->
   > Rust re-implementation of the Python streaming JSON parser [ijson](https://github.com/isagalaev/ijson)
+- <https://github.com/byron/json-tools>
+  > A zero-copy json-lexer, filters and serializer.
 - [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)  
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
