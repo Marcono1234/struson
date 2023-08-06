@@ -1990,7 +1990,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// The settings can be used to customize which JSON data the reader accepts and to allow
     /// JSON data which is considered invalid by the JSON specification.
     pub fn new_custom(reader: R, reader_settings: ReaderSettings) -> Self {
-        let initial_nesting_capacity = 32;
+        let initial_nesting_capacity = 16;
         Self {
             reader,
             buf: [0; READER_BUF_SIZE],

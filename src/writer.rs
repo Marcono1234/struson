@@ -753,7 +753,7 @@ impl<W: Write> JsonStreamWriter<W> {
             buf_write_pos: 0,
             is_empty: true,
             expects_member_name: false,
-            stack: Vec::new(),
+            stack: Vec::with_capacity(16),
             is_string_value_writer_active: false,
             indentation_level: 0,
             writer_settings,
@@ -897,6 +897,26 @@ impl<W: Write> JsonStreamWriter<W> {
     }
 
     fn write_escaped_char(&mut self, c: char) -> Result<(), IoError> {
+        fn get_unicode_escape(value: u32) -> [u8; 4] {
+            // For convenience `value` is u32, but it is actually u16
+            debug_assert!(value <= u16::MAX as u32);
+
+            fn to_hex(i: u32) -> u8 {
+                match i {
+                    0..=9 => b'0' + i as u8,
+                    10..=15 => b'A' + (i - 10) as u8,
+                    _ => unreachable!("Unexpected value {i}"),
+                }
+            }
+
+            [
+                to_hex(value >> 12 & 15),
+                to_hex(value >> 8 & 15),
+                to_hex(value >> 4 & 15),
+                to_hex(value & 15),
+            ]
+        }
+
         let escape = match c {
             '"' => "\\\"",
             '\\' => "\\\\",
@@ -907,7 +927,8 @@ impl<W: Write> JsonStreamWriter<W> {
             '\r' => "\\r",
             '\t' => "\\t",
             '\0'..='\u{FFFF}' => {
-                self.write_bytes(format!("\\u{:04X}", c as u32).as_bytes())?;
+                self.write_bytes(b"\\u")?;
+                self.write_bytes(&get_unicode_escape(c as u32))?;
                 return Ok(());
             }
             _ => {
@@ -915,7 +936,12 @@ impl<W: Write> JsonStreamWriter<W> {
                 let temp = (c as u32) - 0x10000;
                 let high = (temp >> 10) + 0xD800;
                 let low = (temp & ((1 << 10) - 1)) + 0xDC00;
-                self.write_bytes(format!("\\u{:04X}\\u{:04X}", high, low).as_bytes())?;
+
+                self.write_bytes(b"\\u")?;
+                self.write_bytes(&get_unicode_escape(high))?;
+
+                self.write_bytes(b"\\u")?;
+                self.write_bytes(&get_unicode_escape(low))?;
                 return Ok(());
             }
         };
