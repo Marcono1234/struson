@@ -801,6 +801,9 @@ pub trait JsonReader {
     /// not known in advance, or when a value could be of more than one type. The value can then be
     /// consumed with one of the other methods.
     ///
+    /// This method does not guarantee that the peeked value is complete or valid; consuming it
+    /// (with a separate method call) can return an error when malformed JSON data is detected.
+    ///
     /// # Examples
     /// ```
     /// # use struson::reader::*;
@@ -812,9 +815,6 @@ pub trait JsonReader {
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    ///
-    /// This method does not guarantee that the peeked value is complete or valid; consuming it
-    /// (with a separate method call) can return an error when malformed JSON is detected.
     ///
     /// # Errors
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
