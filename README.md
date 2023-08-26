@@ -6,7 +6,8 @@ Its main purpose is to allow writing JSON documents in a memory efficient way wi
 
 The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
-ℹ This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/). Feedback and suggestions for improvements are welcome!
+ℹ This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/).  
+Feedback and suggestions for improvements are welcome!
 
 ## Why?
 
@@ -114,8 +115,10 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 - <https://github.com/byron/json-tools>
   > A zero-copy json-lexer, filters and serializer.
 - <https://github.com/01mf02/hifijson>
-  > High-fidelity JSON lexer and parser 
-- [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)  
+  > High-fidelity JSON lexer and parser
+- <https://github.com/khonsulabs/justjson>'s `justjson::parser::Tokenizer`
+  > A JSON tokenizer, which converts JSON source to a series of Tokens
+- [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
 ## License
