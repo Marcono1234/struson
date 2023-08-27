@@ -35,7 +35,9 @@
 //!   - *member*: Entry in an object. For example the JSON object `{"a": 1}` has the member
 //!     `"a": 1` where `"a"` is the member *name* and `1` is the member *value*.
 //! - *array*: `[ ... ]`
-//! - *literal*: `true`, `false` or `null`
+//! - *literal*:
+//!   - *boolean*: `true` or `false`
+//!   - `null`
 //! - *number*: number value, for example `123.4e+10`
 //! - *string*: string value, for example `"text in \"quotes\""`
 //!

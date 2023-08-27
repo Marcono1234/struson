@@ -1926,6 +1926,11 @@ pub struct ReaderSettings {
     ///
     /// Normally a JSON document is expected to contain only a single top-level value, but there
     /// might be use cases where supporting multiple top-level values can be useful.
+    ///
+    /// It is recommended to separate the values using whitespace (space, tab or line breaks).
+    /// If there is no whitespace between the values it is unspecified whether parsing will succeed.
+    /// For example the string `truefalse` will likely be rejected and not parsed as JSON values
+    /// `true` and `false`.
     pub allow_multiple_top_level: bool,
 
     /// Whether to track the JSON path while parsing
