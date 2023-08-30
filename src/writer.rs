@@ -363,7 +363,7 @@ pub trait JsonWriter {
     /// usage by the user.
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError>;
 
-    /// Writes an integral JSON number value
+    /// Writes a finite JSON number value
     ///
     /// This method supports all standard primitive integral number types, such as `u32`.
     /// To write a floating point number use [`fp_number_value`](Self::fp_number_value), to write a number in a
@@ -388,7 +388,7 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    fn number_value<N: IntegralNumber>(&mut self, value: N) -> Result<(), IoError>;
+    fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError>;
 
     /// Writes a floating point JSON number value
     ///
@@ -535,31 +535,39 @@ pub trait StringValueWriter: Write {
     fn finish_value(self: Box<Self>) -> Result<(), IoError>;
 }
 
-/// Sealed trait for primitive integral number types such as `u32`
+/// Sealed trait for finite number types such as `u32`
+///
+/// Values of this number type are finite and will therefore always be
+/// valid JSON numbers. They will neither be NaN nor Infinity.
 ///
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
-pub trait IntegralNumber: private::Sealed + ToString + Copy {
-    /// Converts this to number to a JSON number string
-    #[doc(hidden)]
-    fn to_json_number(self) -> String {
-        // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
-        self.to_string()
-    }
+pub trait FiniteNumber: private::Sealed {
+    /// Converts this number to a JSON number string
+    ///
+    /// The JSON number string is passed to the given `consumer`.
+    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+        &self,
+        consumer: C,
+    ) -> Result<(), IoError>;
 }
 
-/// Sealed trait for primitive floating point number types such as `f64`
+/// Sealed trait for floating point number types such as `f64`
 ///
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
-pub trait FloatingPointNumber: private::Sealed + ToString + Copy {
-    /// Converts this to number to a JSON number string
+pub trait FloatingPointNumber: private::Sealed {
+    /// Converts this number to a JSON number string
     ///
-    /// Returns an error if this number is not finite
-    #[doc(hidden)]
-    fn to_json_number(self) -> Result<String, JsonNumberError>;
+    /// The JSON number string is passed to the given `consumer`.
+    /// Returns an error if this number is not a valid JSON number, for example
+    /// because it is NaN or Infinity.
+    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+        &self,
+        consumer: C,
+    ) -> Result<(), JsonNumberError>;
 }
 
 mod private {
@@ -588,20 +596,47 @@ pub enum JsonNumberError {
 
 // Use `duplicate` create to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
 #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
-impl IntegralNumber for type_template {}
+impl FiniteNumber for type_template {
+    #[inline(always)]
+    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+        &self,
+        mut consumer: C,
+    ) -> Result<(), IoError> {
+        // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
+        consumer(&self.to_string())
+    }
+}
 
 #[duplicate_item(type_template; [f32]; [f64])]
 impl FloatingPointNumber for type_template {
-    fn to_json_number(self) -> Result<String, JsonNumberError> {
+    #[inline(always)]
+    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+        &self,
+        mut consumer: C,
+    ) -> Result<(), JsonNumberError> {
         if self.is_finite() {
             // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
             //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
-            Ok(self.to_string())
+            consumer(&self.to_string())?;
+            Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber(
                 "Non-finite number".to_owned(),
             ))
         }
+    }
+}
+
+/// Number struct which is used by [`JsonReader::transfer_to`] to avoid redundant JSON number string
+/// validation by `JsonWriter`
+pub(crate) struct TransferredNumber<'a>(pub &'a str);
+impl private::Sealed for TransferredNumber<'_> {}
+impl FiniteNumber for TransferredNumber<'_> {
+    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+        &self,
+        mut consumer: C,
+    ) -> Result<(), IoError> {
+        consumer(self.0)
     }
 }
 
@@ -784,8 +819,7 @@ impl<W: Write> JsonStreamWriter<W> {
     fn flush(&mut self) -> Result<(), IoError> {
         self.writer.write_all(&self.buf[0..self.buf_write_pos])?;
         self.buf_write_pos = 0;
-        self.writer.flush()?;
-        Ok(())
+        self.writer.flush()
     }
 }
 
@@ -945,8 +979,7 @@ impl<W: Write> JsonStreamWriter<W> {
                 return Ok(());
             }
         };
-        self.write_bytes(escape.as_bytes())?;
-        Ok(())
+        self.write_bytes(escape.as_bytes())
     }
 
     fn write_string_value_piece(&mut self, value: &str) -> Result<(), IoError> {
@@ -973,8 +1006,7 @@ impl<W: Write> JsonStreamWriter<W> {
     fn write_string_value(&mut self, value: &str) -> Result<(), IoError> {
         self.write_bytes(b"\"")?;
         self.write_string_value_piece(value)?;
-        self.write_bytes(b"\"")?;
-        Ok(())
+        self.write_bytes(b"\"")
     }
 }
 
@@ -984,9 +1016,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         self.stack.push(StackValue::Object);
         self.is_empty = true;
         self.expects_member_name = true;
-        self.write_bytes(b"{")?;
-
-        Ok(())
+        self.write_bytes(b"{")
     }
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
@@ -1019,8 +1049,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             panic!("Incorrect writer usage: Cannot end object when member value is expected");
         }
         self.on_container_end()?;
-        self.write_bytes(b"}")?;
-        Ok(())
+        self.write_bytes(b"}")
     }
 
     fn begin_array(&mut self) -> Result<(), IoError> {
@@ -1031,9 +1060,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
         self.expects_member_name = false;
 
-        self.write_bytes(b"[")?;
-
-        Ok(())
+        self.write_bytes(b"[")
     }
 
     fn end_array(&mut self) -> Result<(), IoError> {
@@ -1046,40 +1073,36 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             );
         }
         self.on_container_end()?;
-        self.write_bytes(b"]")?;
-        Ok(())
+        self.write_bytes(b"]")
     }
 
     fn string_value(&mut self, value: &str) -> Result<(), IoError> {
         self.before_value()?;
-        self.write_string_value(value)?;
-        Ok(())
+        self.write_string_value(value)
     }
 
     fn bool_value(&mut self, value: bool) -> Result<(), IoError> {
         self.before_value()?;
-        self.write_bytes(if value { b"true" } else { b"false" })?;
-        Ok(())
+        self.write_bytes(if value { b"true" } else { b"false" })
     }
 
     fn null_value(&mut self) -> Result<(), IoError> {
         self.before_value()?;
-        self.write_bytes(b"null")?;
-        Ok(())
+        self.write_bytes(b"null")
     }
 
-    fn number_value<N: IntegralNumber>(&mut self, value: N) -> Result<(), IoError> {
-        self.before_value()?;
-        self.write_bytes(value.to_json_number().as_bytes())?;
-        Ok(())
+    fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
+        value.use_json_number(|number_str| {
+            self.before_value()?;
+            self.write_bytes(number_str.as_bytes())
+        })
     }
 
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError> {
-        let number_str = value.to_json_number()?;
-
-        self.before_value()?;
-        self.write_bytes(number_str.as_bytes())?;
-        Ok(())
+        value.use_json_number(|number_str| {
+            self.before_value()?;
+            self.write_bytes(number_str.as_bytes())
+        })
     }
 
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
@@ -1100,10 +1123,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {
         let mut serializer = crate::serde::JsonWriterSerializer::new(self);
-        value.serialize(&mut serializer)?;
+        value.serialize(&mut serializer)
         // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
         // might not be necessary because Serde's Serialize API enforces this
-        Ok(())
     }
 
     fn finish_document(mut self) -> Result<(), IoError> {
@@ -1120,9 +1142,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         } else {
             panic!("Incorrect writer usage: Cannot finish document when top-level value is not finished");
         }
-        self.flush()?;
-
-        Ok(())
+        self.flush()
     }
 
     fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError> {
@@ -1323,8 +1343,7 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.json_writer.flush()?;
-        Ok(())
+        self.json_writer.flush()
     }
 }
 
@@ -1378,16 +1397,23 @@ fn is_valid_json_number(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Display;
-
     use super::*;
+    use std::fmt::Display;
 
     #[test]
     fn numbers_strings() {
-        fn assert_valid_number<T: IntegralNumber + Display>(number: T) {
+        fn assert_valid_number<T: FiniteNumber + Display>(number: T) {
+            let mut number_string = String::new();
+            number
+                .use_json_number(|json_number| {
+                    number_string.push_str(json_number);
+                    Ok(())
+                })
+                .unwrap();
+
             assert_eq!(
                 true,
-                is_valid_json_number(&number.to_json_number()),
+                is_valid_json_number(&number_string),
                 "Expected to be valid JSON number: {}",
                 number
             );
@@ -1406,9 +1432,17 @@ mod tests {
         assert_valid_number(usize::MAX);
 
         fn assert_valid_fp_number<T: FloatingPointNumber + Display>(number: T) {
+            let mut number_string = String::new();
+            number
+                .use_json_number(|json_number| {
+                    number_string.push_str(json_number);
+                    Ok(())
+                })
+                .unwrap();
+
             assert_eq!(
                 true,
-                is_valid_json_number(&number.to_json_number().unwrap()),
+                is_valid_json_number(&number_string),
                 "Expected to be valid JSON number: {}",
                 number
             );
@@ -1425,7 +1459,7 @@ mod tests {
         assert_valid_fp_number(f64::MAX);
 
         fn assert_non_finite<T: FloatingPointNumber + Display>(number: T) {
-            match number.to_json_number() {
+            match number.use_json_number(|_| panic!("Should have failed for: {number}")) {
                 Ok(_) => panic!("Should have failed for: {number}"),
                 Err(e) => match e {
                     JsonNumberError::InvalidNumber(message) => {
@@ -2207,13 +2241,10 @@ mod tests {
 
     #[cfg(feature = "serde")]
     mod serde {
-        use std::collections::HashMap;
-
-        use ::serde::{ser::SerializeStruct, Serialize, Serializer};
-
-        use crate::serde::SerializerError;
-
         use super::*;
+        use crate::serde::SerializerError;
+        use ::serde::{ser::SerializeStruct, Serialize, Serializer};
+        use std::collections::HashMap;
 
         #[test]
         fn serialize_value() -> TestResult {

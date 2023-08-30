@@ -14,106 +14,129 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
     reader: &mut R,
     first_byte: u8,
 ) -> Result<Option<u32>, E> {
-    #[derive(PartialEq)]
-    enum State {
-        Start,
-        Minus,
-        IntZero,
-        IntNonZero,
-        DecimalPoint,
-        DecimalDigit,
-        ExpE,
-        ExpSign,
-        ExpDigit,
+    let mut byte = first_byte;
+
+    if byte == b'-' {
+        if let Some(b) = reader.consume_current_peek_next()? {
+            byte = b;
+        } else {
+            // Invalid number (missing integer part)
+            return Ok(None);
+        }
     }
 
-    let mut byte = first_byte;
-    let mut state = State::Start;
-    // Used to track unexpected trailing number chars, to detect the whole number
-    // as invalid, e.g. "01"
-    let mut has_trailing_number_chars = true;
-    let mut exponent_digits_count = 0;
-
-    loop {
-        // TODO: Rewrite this to first check state, then byte, to make it easier to read?
-
-        if byte == b'-' {
-            if state == State::Start {
-                state = State::Minus;
-            } else if state == State::ExpE {
-                state = State::ExpSign;
+    // Consume integer part, but treat 0 specially, because leading 0 before integer part is disallowed
+    if (b'1'..=b'9').contains(&byte) {
+        loop {
+            if let Some(b) = reader.consume_current_peek_next()? {
+                byte = b;
             } else {
+                // Valid number with 0 exponent digits
+                return Ok(Some(0));
+            }
+
+            if !byte.is_ascii_digit() {
                 break;
             }
-        } else if byte == b'0' {
-            if state == State::Start || state == State::Minus {
-                state = State::IntZero;
-            } else if state == State::IntNonZero {
-                state = State::IntNonZero;
-            } else if state == State::DecimalPoint || state == State::DecimalDigit {
-                state = State::DecimalDigit;
-            } else if state == State::ExpE || state == State::ExpSign || state == State::ExpDigit {
-                state = State::ExpDigit;
+        }
+    } else if byte == b'0' {
+        if let Some(b) = reader.consume_current_peek_next()? {
+            byte = b;
+        } else {
+            // Valid number with 0 exponent digits
+            return Ok(Some(0));
+        }
+    } else {
+        // Invalid number (invalid integer part)
+        return Ok(None);
+    }
 
-                // Don't increment for leading 0s
-                if exponent_digits_count > 0 {
+    // Fraction part
+    if byte == b'.' {
+        if let Some(b) = reader.consume_current_peek_next()? {
+            byte = b;
+        } else {
+            // Invalid number (missing decimal part)
+            return Ok(None);
+        }
+
+        if !byte.is_ascii_digit() {
+            // Invalid number (invalid decimal part)
+            return Ok(None);
+        }
+
+        loop {
+            if let Some(b) = reader.consume_current_peek_next()? {
+                byte = b;
+            } else {
+                // Valid number with 0 exponent digits
+                return Ok(Some(0));
+            }
+
+            if !byte.is_ascii_digit() {
+                break;
+            }
+        }
+    }
+
+    // Exponent part
+    let mut exponent_digits_count = 0;
+    if byte == b'e' || byte == b'E' {
+        if let Some(b) = reader.consume_current_peek_next()? {
+            byte = b;
+        } else {
+            // Invalid number (missing exponent number)
+            return Ok(None);
+        }
+
+        if byte == b'-' || byte == b'+' {
+            if let Some(b) = reader.consume_current_peek_next()? {
+                byte = b;
+            } else {
+                // Invalid number (missing exponent number)
+                return Ok(None);
+            }
+        }
+
+        // Check for '1'..='9' to ignore leading 0s for exponent digits count
+        if (b'1'..=b'9').contains(&byte) {
+            exponent_digits_count += 1;
+        } else if byte != b'0' {
+            // Invalid number (invalid exponent number)
+            return Ok(None);
+        }
+
+        loop {
+            if let Some(b) = reader.consume_current_peek_next()? {
+                byte = b;
+            } else {
+                // Valid number
+                return Ok(Some(exponent_digits_count));
+            }
+
+            if byte.is_ascii_digit() {
+                // Ignore leading 0s for exponent digits count
+                if byte != b'0' || exponent_digits_count > 0 {
                     exponent_digits_count += 1;
                 }
             } else {
                 break;
             }
-        } else if (b'1'..=b'9').contains(&byte) {
-            if state == State::Start || state == State::Minus || state == State::IntNonZero {
-                state = State::IntNonZero;
-            } else if state == State::DecimalPoint || state == State::DecimalDigit {
-                state = State::DecimalDigit;
-            } else if state == State::ExpE || state == State::ExpSign || state == State::ExpDigit {
-                state = State::ExpDigit;
-                exponent_digits_count += 1;
-            } else {
-                break;
-            }
-        } else if byte == b'.' {
-            if state == State::IntZero || state == State::IntNonZero {
-                state = State::DecimalPoint;
-            } else {
-                break;
-            }
-        } else if byte == b'e' || byte == b'E' {
-            if state == State::IntZero || state == State::IntNonZero || state == State::DecimalDigit
-            {
-                state = State::ExpE;
-            } else {
-                break;
-            }
-        } else if byte == b'+' {
-            if state == State::ExpE {
-                state = State::ExpSign;
-            } else {
-                break;
-            }
-        } else {
-            has_trailing_number_chars = false;
-            break;
-        }
-
-        // In the first iteration this consumes the `first_byte` argument
-        if let Some(peeked_byte) = reader.consume_current_peek_next()? {
-            byte = peeked_byte;
-        } else {
-            has_trailing_number_chars = false;
-            break;
         }
     }
 
-    if has_trailing_number_chars
-        || !(state == State::IntZero
-            || state == State::IntNonZero
-            || state == State::DecimalDigit
-            || state == State::ExpDigit)
+    if byte.is_ascii_digit()
+        || byte == b'-'
+        || byte == b'+'
+        || byte == b'.'
+        || byte == b'e'
+        || byte == b'E'
     {
+        // If character after number (which is not part of number) is a number char, treat it as invalid
+        // For example `01`, `1.2.3` or `1-`
         Ok(None)
     } else {
+        // Valid number
         Ok(Some(exponent_digits_count))
     }
 }

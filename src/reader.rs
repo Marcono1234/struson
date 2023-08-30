@@ -4,7 +4,7 @@
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 use crate::{
     json_number::{consume_json_number, NumberBytesProvider},
-    writer::{JsonNumberError, JsonWriter},
+    writer::{JsonWriter, TransferredNumber},
 };
 use bytes_value_reader::*;
 
@@ -37,7 +37,6 @@ use bytes_value_reader::*;
 #[allow(deprecated)] // TODO: Only for JsonPathParseError, remove this allow(deprecated) attribute once JsonPathParseError was removed
 pub mod json_path {
     use std::str::FromStr;
-
     use thiserror::Error;
 
     /// A piece of a JSONPath
@@ -3864,13 +3863,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     }
                     ValueType::Number => {
                         let number = self.next_number_as_str()?;
-                        // Should not fail since next_number_as_string would have returned Err for invalid JSON number
-                        if let Err(e) = json_writer.number_value_from_string(number) {
-                            match e {
-                                JsonNumberError::InvalidNumber(e) => panic!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}"),
-                                JsonNumberError::IoError(e) => return Err(TransferError::WriterError(e)),
-                            }
-                        }
+                        // Don't use `JsonWriter::number_value_from_string` to avoid redundant number string validation
+                        // because `next_number_as_str` already made sure that number is valid
+                        json_writer.number_value(TransferredNumber(number))?;
                     }
                     ValueType::Boolean => {
                         json_writer.bool_value(self.next_bool()?)?;
@@ -3975,9 +3970,10 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::writer::{FloatingPointNumber, IntegralNumber, JsonStreamWriter, StringValueWriter};
-
     use super::*;
+    use crate::writer::{
+        FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, StringValueWriter,
+    };
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -5563,7 +5559,7 @@ mod tests {
                 Err(JsonNumberError::IoError(err()))
             }
 
-            fn number_value<N: IntegralNumber>(&mut self, _: N) -> Result<(), IoError> {
+            fn number_value<N: FiniteNumber>(&mut self, _: N) -> Result<(), IoError> {
                 Err(err())
             }
 
@@ -6628,13 +6624,10 @@ mod tests {
 
     #[cfg(feature = "serde")]
     mod serde {
-        use std::{collections::HashMap, vec};
-
-        use ::serde::Deserialize;
-
-        use crate::serde::DeserializerError;
-
         use super::*;
+        use crate::serde::DeserializerError;
+        use ::serde::Deserialize;
+        use std::{collections::HashMap, vec};
 
         #[test]
         fn deserialize_next() -> TestResult {
