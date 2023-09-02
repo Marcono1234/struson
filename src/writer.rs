@@ -14,6 +14,8 @@ use std::{
 use duplicate::duplicate_item;
 use thiserror::Error;
 
+// TODO (custom JSON writer support): Remove this type alias? rust-analyzer otherwise uses that in generated
+// code, even though this type alias is inaccessible, see https://github.com/rust-lang/rust-analyzer/issues/15550
 type IoError = std::io::Error;
 
 /// A trait for JSON writers
@@ -361,6 +363,12 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
+    /*
+     * TODO (custom JSON writer support): Maybe either publicly expose function for validating
+     * that string is valid JSON number, or use wrapping struct whose constructors ensures that
+     * string is valid JSON number.
+     * Though that might make usage of the writer more cumbersome.
+     */
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError>;
 
     /// Writes a finite JSON number value
@@ -388,6 +396,15 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
+    /*
+     * TODO (custom JSON writer support): The current `FiniteNumber` and `FloatingPointNumber` approach
+     * prevents custom JSON writer implementations from directly using wrapped primitive numbers
+     * (e.g. u8, i64, ...) but requires them to use the string representation.
+     * Maybe an enum for `FiniteNumber` and `FloatingPointNumber` could be used instead? Though enums
+     * can't have private constructors so this would be an issue for `TransferredNumber` which should not
+     * be constructable by users. Additionally, having a wrapping enum type would make writer usage
+     * more cumbersome.
+     */
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError>;
 
     /// Writes a floating point JSON number value
@@ -510,6 +527,11 @@ pub trait JsonWriter {
      * Note: Dropping writer will not automatically finish document since that would silently discard errors which might occur
      * TODO: Does consuming 'self' here really guarantee that writer cannot be used afterwards anymore; can this be bypassed with reference somehow?
      */
+    /*
+     * TODO (custom JSON writer support): Instead of returning `()` maybe use an associated type
+     * on JsonWriter as result type; then custom JsonWriter implementations which produce a
+     * value can return it here.
+     */
     fn finish_document(self) -> Result<(), IoError>;
 }
 
@@ -620,9 +642,9 @@ impl FloatingPointNumber for type_template {
             consumer(&self.to_string())?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(
-                "Non-finite number".to_owned(),
-            ))
+            Err(JsonNumberError::InvalidNumber(format!(
+                "Non-finite number: {self}"
+            )))
         }
     }
 }
@@ -1122,6 +1144,10 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         &mut self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {
+        // TODO: Provide this as default implementation? Remove implementation in custom_json_writer test then;
+        // does not seem to be possible though because Self would have to be guaranteed to be `Sized`?
+        // not sure if that should be enforced for the JsonWriter trait
+
         let mut serializer = crate::serde::JsonWriterSerializer::new(self);
         value.serialize(&mut serializer)
         // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
@@ -1463,7 +1489,7 @@ mod tests {
                 Ok(_) => panic!("Should have failed for: {number}"),
                 Err(e) => match e {
                     JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!("Non-finite number", message)
+                        assert_eq!(format!("Non-finite number: {number}"), message)
                     }
                     JsonNumberError::IoError(e) => panic!("Unexpected error for '{number}': {e}"),
                 },
@@ -1558,10 +1584,13 @@ mod tests {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
 
-        assert_invalid_number(json_writer.fp_number_value(f32::NAN), "Non-finite number");
+        assert_invalid_number(
+            json_writer.fp_number_value(f32::NAN),
+            &format!("Non-finite number: {}", f32::NAN),
+        );
         assert_invalid_number(
             json_writer.fp_number_value(f64::INFINITY),
-            "Non-finite number",
+            &format!("Non-finite number: {}", f64::INFINITY),
         );
         assert_invalid_number(
             json_writer.number_value_from_string("NaN"),
@@ -2279,9 +2308,10 @@ mod tests {
         #[test]
         fn serialize_value_invalid() {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
-            match json_writer.serialize_value(&f32::NAN) {
+            let number = f32::NAN;
+            match json_writer.serialize_value(&number) {
                 Err(SerializerError::InvalidNumber(message)) => {
-                    assert_eq!("Non-finite number", message);
+                    assert_eq!(format!("Non-finite number: {number}"), message);
                 }
                 r => panic!("Unexpected result: {r:?}"),
             }

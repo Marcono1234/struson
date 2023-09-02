@@ -1196,7 +1196,10 @@ pub trait JsonReader {
      * TODO: Maybe restrict FromStr somehow to numbers?
      * TODO: Solve this in a cleaner way than Result<Result<...>, ...>?
      */
-    fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError>;
+    fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
+        // Default implementation which should be suitable for most JsonReader implementations
+        Ok(T::from_str(self.next_number_as_str()?))
+    }
 
     /// Consumes and returns the string representation of a JSON number value as `str`
     ///
@@ -2510,10 +2513,6 @@ impl<R: Read> JsonStreamReader<R> {
             json_path.pop();
         }
 
-        // Clear expects_member_name in case current container is now an array; on_value_end() call
-        // below will set expects_member_name again if current container is an object
-        self.expects_member_name = false;
-
         self.on_value_end();
     }
 
@@ -3542,6 +3541,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             });
         }
         self.consume_peeked();
+        // Clear expects_member_name in case current container is now an array; on_container_end() call
+        // below (respectively on_value_end() called by it) will set expects_member_name again if
+        // enclosing container is an object
+        self.expects_member_name = false;
         self.on_container_end();
         Ok(())
     }
@@ -3563,15 +3566,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(())
     }
 
-    fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
-        Ok(T::from_str(self.next_number_as_str()?))
-    }
-
     fn has_next(&mut self) -> Result<bool, ReaderError> {
         if self.expects_member_value() {
-            panic!(
-                    "Incorrect reader usage: Cannot check for next element when member value is expected"
-                );
+            panic!("Incorrect reader usage: Cannot check for next element when member value is expected");
         }
 
         let peeked: PeekedValue;
@@ -3623,53 +3620,53 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn skip_value(&mut self) -> Result<(), ReaderError> {
         if self.expects_member_name {
             panic!("Incorrect reader usage: Cannot skip value when expecting member name");
-        } else {
-            let mut depth: u32 = 0;
-            loop {
-                if depth > 0 && !self.has_next()? {
-                    if self.is_in_array() {
-                        self.end_array()?;
-                    } else {
-                        self.end_object()?;
-                    }
-                    depth -= 1;
+        }
+
+        let mut depth: u32 = 0;
+        loop {
+            if depth > 0 && !self.has_next()? {
+                if self.is_in_array() {
+                    self.end_array()?;
                 } else {
-                    if self.expects_member_name {
-                        self.skip_name()?;
-                    }
-
-                    match self.peek()? {
-                        ValueType::Array => {
-                            self.begin_array()?;
-                            depth += 1;
-                        }
-                        ValueType::Object => {
-                            self.begin_object()?;
-                            depth += 1;
-                        }
-                        ValueType::String => {
-                            self.start_expected_value_type(ValueType::String)?;
-                            self.skip_all_string_bytes()?;
-                            self.on_value_end();
-                        }
-                        ValueType::Number => {
-                            collect_next_number_bytes!(|self| SkippingNumberBytesReader {
-                                json_reader: self,
-                                consumed_bytes: 0,
-                            });
-                        }
-                        ValueType::Boolean => {
-                            self.next_bool()?;
-                        }
-                        ValueType::Null => {
-                            self.next_null()?;
-                        }
-                    }
+                    self.end_object()?;
+                }
+                depth -= 1;
+            } else {
+                if self.expects_member_name {
+                    self.skip_name()?;
                 }
 
-                if depth == 0 {
-                    break;
+                match self.peek()? {
+                    ValueType::Array => {
+                        self.begin_array()?;
+                        depth += 1;
+                    }
+                    ValueType::Object => {
+                        self.begin_object()?;
+                        depth += 1;
+                    }
+                    ValueType::String => {
+                        self.start_expected_value_type(ValueType::String)?;
+                        self.skip_all_string_bytes()?;
+                        self.on_value_end();
+                    }
+                    ValueType::Number => {
+                        collect_next_number_bytes!(|self| SkippingNumberBytesReader {
+                            json_reader: self,
+                            consumed_bytes: 0,
+                        });
+                    }
+                    ValueType::Boolean => {
+                        self.next_bool()?;
+                    }
+                    ValueType::Null => {
+                        self.next_null()?;
+                    }
                 }
+            }
+
+            if depth == 0 {
+                break;
             }
         }
 
@@ -3714,6 +3711,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
         &mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
+        // TODO: Provide this as default implementation? Remove implementation in custom_json_reader test then;
+        // does not seem to be possible though because Self would have to be guaranteed to be `Sized`?
+        // not sure if that should be enforced for the JsonReader trait
+
         // peek here to fail fast if reader is currently not expecting a value
         self.peek()?;
         let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
@@ -3724,6 +3725,13 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+        // TODO: Provide this as default implementation? Remove implementation in custom_json_reader test then;
+        // currently not possible because this uses private method `create_error_location`
+
+        // peek here to fail if reader is currently not expecting a value, even if `rel_json_path` is empty
+        // and it would otherwise not be detected
+        self.peek()?;
+
         for path_piece in rel_json_path {
             match path_piece {
                 JsonPathPiece::ArrayItem(index) => {

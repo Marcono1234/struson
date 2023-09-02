@@ -1248,8 +1248,14 @@ mod tests {
 
         assert_serialized_cmp!(|s| s.serialize_f32(123.45), "123.45");
 
-        assert_number_error(|s| s.serialize_f32(f32::NAN), "Non-finite number");
-        assert_number_error(|s| s.serialize_f32(f32::INFINITY), "Non-finite number");
+        assert_number_error(
+            |s| s.serialize_f32(f32::NAN),
+            &format!("Non-finite number: {}", f32::NAN),
+        );
+        assert_number_error(
+            |s| s.serialize_f32(f32::INFINITY),
+            &format!("Non-finite number: {}", f32::INFINITY),
+        );
     }
 
     #[test]
@@ -1260,8 +1266,14 @@ mod tests {
 
         assert_serialized_cmp!(|s| s.serialize_f64(123.45), "123.45");
 
-        assert_number_error(|s| s.serialize_f64(f64::NAN), "Non-finite number");
-        assert_number_error(|s| s.serialize_f64(f64::INFINITY), "Non-finite number");
+        assert_number_error(
+            |s| s.serialize_f64(f64::NAN),
+            &format!("Non-finite number: {}", f64::NAN),
+        );
+        assert_number_error(
+            |s| s.serialize_f64(f64::INFINITY),
+            &format!("Non-finite number: {}", f64::INFINITY),
+        );
     }
 
     #[test]
