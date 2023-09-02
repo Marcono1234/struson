@@ -1757,6 +1757,8 @@ pub struct JsonStreamReader<R: Read> {
     buf_pos: usize,
     /// Index (exclusive) up to which [`buf`](Self::buf) is filled
     buf_end_pos: usize,
+    /// Whether [`buf`](Self::buf) is currently used by a [`BytesRefProvider::ReaderBuf`]
+    buf_used_for_bytes_value: bool,
     reached_eof: bool,
     /// Used as scratch buffer to temporarily store string and number values in case they cannot
     /// be served directly from [`buf`](Self::buf)
@@ -2003,6 +2005,7 @@ impl<R: Read> JsonStreamReader<R> {
             buf: [0; READER_BUF_SIZE],
             buf_pos: 0,
             buf_end_pos: 0,
+            buf_used_for_bytes_value: false,
             reached_eof: false,
             value_bytes_buf: Vec::with_capacity(INITIAL_VALUE_BYTES_BUF_CAPACITY),
             peeked: None,
@@ -2077,6 +2080,10 @@ impl<R: Read> JsonStreamReader<R> {
         }
         debug_assert!(self.buf_pos >= self.buf_end_pos);
         debug_assert!(start_pos < self.buf.len());
+
+        if self.buf_used_for_bytes_value {
+            panic!("Unexpected: Cannot refill buf because it holds a bytes value; report this to the Struson maintainers");
+        }
 
         self.buf_pos = start_pos;
         self.buf_end_pos = start_pos + self.reader.read(&mut self.buf[start_pos..])?;
@@ -2324,6 +2331,10 @@ impl<R: Read> JsonStreamReader<R> {
 
         if self.is_behind_top_level() && !self.reader_settings.allow_multiple_top_level {
             panic!("Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings");
+        }
+        if self.expects_member_value() {
+            // Finish member name which has just been consumed before
+            self.after_name()?;
         }
 
         let byte = self.skip_whitespace(None)?;
@@ -2823,19 +2834,23 @@ mod bytes_value_reader {
 
     impl BytesValue {
         /// Gets the read bytes as `String`
-        pub(super) fn get_string<R: Read>(self, json_reader: &JsonStreamReader<R>) -> String {
+        pub(super) fn get_string<R: Read>(self, json_reader: &mut JsonStreamReader<R>) -> String {
             match self {
-                BytesValue::BytesRef(b) => b.get_str(json_reader).to_owned(),
+                BytesValue::BytesRef(b) => {
+                    // `get_string` consumes `self` so afterwards value cannot be obtained from `buf` anymore
+                    json_reader.buf_used_for_bytes_value = false;
+                    b.get_str(json_reader).to_owned()
+                }
                 // unwrap() should be safe; creator of BytesRefProvider should have verified that bytes are valid, if necessary
                 BytesValue::Vec(v) => String::from_utf8(v).unwrap(),
             }
         }
 
-        /// Gets the read bytes as `str`
-        ///
-        /// Must only be called if the `BytesValue` was obtained from [`BytesValueReader::get_bytes`] being
-        /// called with `requires_borrow=true`.
-        pub(super) fn get_str<'j, R: Read>(&self, json_reader: &'j JsonStreamReader<R>) -> &'j str {
+        /// Same as [`get_str`](Self::get_str), except that this method does not consume `self`
+        pub(super) fn get_str_peek<'j, R: Read>(
+            &self,
+            json_reader: &'j JsonStreamReader<R>,
+        ) -> &'j str {
             match self {
                 BytesValue::BytesRef(b) => b.get_str(json_reader),
                 // Should be unreachable because when `str` is expected, `true` should have been provided
@@ -2844,6 +2859,16 @@ mod bytes_value_reader {
                     panic!("get_str should only be called when `requires_borrowed=true`")
                 }
             }
+        }
+
+        /// Gets the read bytes as `str`
+        ///
+        /// Must only be called if the `BytesValue` was obtained from [`BytesValueReader::get_bytes`] being
+        /// called with `requires_borrow=true`.
+        pub(super) fn get_str<R: Read>(self, json_reader: &'_ mut JsonStreamReader<R>) -> &'_ str {
+            // `get_str` consumes `self` so afterwards value cannot be obtained from `buf` anymore
+            json_reader.buf_used_for_bytes_value = false;
+            self.get_str_peek(json_reader)
         }
     }
 
@@ -3030,6 +3055,10 @@ mod bytes_value_reader {
                     BytesValue::Vec(bytes)
                 }
             } else {
+                // Indicate that `buf` contains bytes value, to prevent accidental modification
+                debug_assert!(!self.json_reader.buf_used_for_bytes_value);
+                self.json_reader.buf_used_for_bytes_value = true;
+
                 BytesValue::BytesRef(BytesRefProvider::ReaderBuf {
                     start: self.buf_value_start,
                     end: end_pos,
@@ -3285,6 +3314,7 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         self.expects_member_name = false;
+        // `has_next` call above peeked at start of member name; consume opening double quote here now
         self.consume_peeked();
         Ok(())
     }
@@ -3500,9 +3530,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                 _ => unreachable!("Path should be object member"),
             }
         }
-
-        self.after_name()?;
         Ok(name)
+        // Consuming `:` after name is delayed until member value is consumed
     }
 
     fn next_name(&mut self) -> Result<&'_ str, ReaderError> {
@@ -3513,7 +3542,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         if self.json_path.is_some() {
             // TODO: Not ideal that this causes `std::str::from_utf8` to be called twice, once here and once
             // for return value; not sure though if this can be solved
-            let name = name_bytes.get_str(self).to_owned();
+            let name = name_bytes.get_str_peek(self).to_owned();
             // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
             // would be two mutable borrows of `self` then at the same time)
             match self.json_path.as_mut().unwrap().last_mut().unwrap() {
@@ -3521,9 +3550,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                 _ => unreachable!("Path should be object member"),
             }
         }
-
-        self.after_name()?;
         Ok(name_bytes.get_str(self))
+        // Consuming `:` after name is delayed until member value is consumed; otherwise if it was done
+        // here it might refill the reader buffer and accidentally overwrite the value of `name_bytes`
     }
 
     fn end_object(&mut self) -> Result<(), ReaderError> {
@@ -3612,9 +3641,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         } else {
             self.skip_all_string_bytes()?;
         }
-
-        self.after_name()?;
         Ok(())
+        // Consuming `:` after name is delayed until member value is consumed
     }
 
     fn skip_value(&mut self) -> Result<(), ReaderError> {
@@ -4636,6 +4664,49 @@ mod tests {
         json_reader.next_bool().unwrap();
     }
 
+    /// Test string reading behavior for a reader which provides one byte at a time
+    #[test]
+    fn strings_single_byte_reader() -> TestResult {
+        struct SingleByteReader {
+            index: usize,
+            bytes: &'static [u8],
+        }
+        impl Read for SingleByteReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if buf.is_empty() || self.index >= self.bytes.len() {
+                    return Ok(0);
+                }
+                buf[0] = self.bytes[self.index];
+                self.index += 1;
+                Ok(1)
+            }
+        }
+
+        let reader = SingleByteReader {
+            index: 0,
+            bytes: "{\"name1 \u{10FFFF}\": \"value1 \u{10FFFF}\", \"name2 \u{10FFFF}\": \"value2 \u{10FFFF}\", \"name3 \u{10FFFF}\": \"value3 \u{10FFFF}\"}".as_bytes(),
+        };
+        let mut json_reader = JsonStreamReader::new(reader);
+        json_reader.begin_object()?;
+
+        assert_eq!("name1 \u{10FFFF}", json_reader.next_name()?);
+        assert_eq!("value1 \u{10FFFF}", json_reader.next_str()?);
+
+        assert_eq!("name2 \u{10FFFF}", json_reader.next_name_owned()?);
+        assert_eq!("value2 \u{10FFFF}", json_reader.next_string()?);
+
+        assert_eq!("name3 \u{10FFFF}", json_reader.next_name()?);
+        let mut string_value_reader = json_reader.next_string_reader()?;
+        let mut string = String::new();
+        string_value_reader.read_to_string(&mut string)?;
+        drop(string_value_reader);
+        assert_eq!("value3 \u{10FFFF}", string);
+
+        json_reader.end_object()?;
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
     fn new_reader_with_trailing_comma(json: &str) -> JsonStreamReader<&[u8]> {
         JsonStreamReader::new_custom(
             json.as_bytes(),
@@ -5013,9 +5084,10 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a"}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name_owned(),
+            json_reader.peek(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             4,
@@ -5036,9 +5108,10 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a" 1}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name_owned(),
+            json_reader.peek(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             5,
@@ -5047,9 +5120,10 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a", "b": 2}"#);
         json_reader.begin_object()?;
         assert!(json_reader.has_next()?);
+        assert_eq!("a", json_reader.next_name_owned()?);
         assert_parse_error_with_path(
             None,
-            json_reader.next_name_owned(),
+            json_reader.peek(),
             SyntaxErrorKind::MissingColon,
             "$.a",
             4,
