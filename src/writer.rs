@@ -573,6 +573,24 @@ pub trait FiniteNumber: private::Sealed {
         &self,
         consumer: C,
     ) -> Result<(), IoError>;
+
+    /// Gets this number as `u64`
+    ///
+    /// If this number can be losslessly and relatively efficiently converted
+    /// to an `u64`, returns it. Otherwise, or if the number only exists as
+    /// string representation, `None` is returned. In that case [`as_i64`](Self::as_i64)
+    /// and [`use_json_number`](Self::use_json_number) can be used as fallback.
+    /* TODO: Should this use u128 instead? */
+    fn as_u64(&self) -> Option<u64>;
+
+    /// Gets this number as `i64`
+    ///
+    /// If this number can be losslessly and relatively efficiently converted
+    /// to an `i64`, returns it. Otherwise, or if the number only exists as
+    /// string representation, `None` is returned. In that case [`as_u64`](Self::as_u64)
+    /// and [`use_json_number`](Self::use_json_number) can be used as fallback.
+    /* TODO: Should this use i128 instead? */
+    fn as_i64(&self) -> Option<i64>;
 }
 
 /// Sealed trait for floating point number types such as `f64`
@@ -590,6 +608,18 @@ pub trait FloatingPointNumber: private::Sealed {
         &self,
         consumer: C,
     ) -> Result<(), JsonNumberError>;
+
+    /// Gets this number as `f64`
+    ///
+    /// If this number can be losslessly and relatively efficiently converted
+    /// to a `f64`, returns it. Otherwise, or if the number only exists as
+    /// string representation, `None` is returned. In that case
+    /// [`use_json_number`](Self::use_json_number) can be used as fallback.
+    ///
+    /// The `f64` number can be NaN or Infinity, which is not allowed by the
+    /// JSON specification. Callers of this method may want to reject these
+    /// values when writing them as JSON data.
+    fn as_f64(&self) -> Option<f64>;
 }
 
 mod private {
@@ -625,7 +655,24 @@ impl FiniteNumber for type_template {
         mut consumer: C,
     ) -> Result<(), IoError> {
         // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
-        consumer(&self.to_string())
+        let string = self.to_string();
+        debug_assert!(
+            is_valid_json_number(&string),
+            "Unexpected: Not a valid JSON number: {string}"
+        );
+        consumer(&string)
+    }
+
+    fn as_u64(&self) -> Option<u64> {
+        // TODO: Should this only use `into()` and for all unsupported types (e.g. signed or u128, ...) always return None?
+        #[allow(clippy::useless_conversion)] // for u64 -> u64
+        (*self).try_into().ok()
+    }
+
+    fn as_i64(&self) -> Option<i64> {
+        // TODO: Should this only use `into()` and for all unsupported types (u64, u128, i128, usize and isize) always return None?
+        #[allow(clippy::useless_conversion)] // for i64 -> i64
+        (*self).try_into().ok()
     }
 }
 
@@ -639,13 +686,23 @@ impl FloatingPointNumber for type_template {
         if self.is_finite() {
             // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
             //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
-            consumer(&self.to_string())?;
+            let string = self.to_string();
+            debug_assert!(
+                is_valid_json_number(&string),
+                "Unexpected: Not a valid JSON number: {string}"
+            );
+            consumer(&string)?;
             Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber(format!(
                 "Non-finite number: {self}"
             )))
         }
+    }
+
+    fn as_f64(&self) -> Option<f64> {
+        #[allow(clippy::useless_conversion)] // for f64 -> f64
+        Some((*self).into())
     }
 }
 
@@ -659,6 +716,14 @@ impl FiniteNumber for TransferredNumber<'_> {
         mut consumer: C,
     ) -> Result<(), IoError> {
         consumer(self.0)
+    }
+
+    fn as_u64(&self) -> Option<u64> {
+        None
+    }
+
+    fn as_i64(&self) -> Option<i64> {
+        None
     }
 }
 

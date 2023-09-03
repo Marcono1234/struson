@@ -99,6 +99,11 @@ mod custom_writer {
         }
     }
 
+    fn serde_number_from_f64(f: f64) -> Result<Number, JsonNumberError> {
+        Number::from_f64(f)
+            .ok_or_else(|| JsonNumberError::InvalidNumber(format!("Non-finite number: {f}")))
+    }
+
     impl JsonWriter for JsonValueWriter<'_> {
         fn begin_object(&mut self) -> Result<(), IoError> {
             self.check_before_value();
@@ -178,45 +183,65 @@ mod custom_writer {
             let f = value
                 .parse::<f64>()
                 .map_err(|e| JsonNumberError::InvalidNumber(e.to_string()))?;
-            if let Some(n) = Number::from_f64(f) {
-                self.add_value(Value::Number(n));
-                Ok(())
-            } else {
-                Err(JsonNumberError::InvalidNumber(
-                    "Non-finite number: ".to_owned() + value,
-                ))
-            }
+            self.add_value(Value::Number(serde_number_from_f64(f)?));
+            Ok(())
         }
 
         fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
-            // TODO: Cannot match over possible implementations? Therefore have to use string representation
-            value.use_json_number(|number_str| {
-                self.number_value_from_string(number_str)
-                    .map_err(|e| match e {
-                        JsonNumberError::InvalidNumber(e) => {
-                            panic!("Unexpected: Writer rejected finite number '{number_str}': {e}")
-                        }
-                        JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
-                    })
-            })
+            let number = value
+                .as_u64()
+                .map(Number::from)
+                .or_else(|| value.as_i64().map(Number::from));
+
+            if let Some(n) = number {
+                self.check_before_value();
+                self.add_value(Value::Number(n));
+                Ok(())
+            } else {
+                value.use_json_number(|number_str| {
+                    self.number_value_from_string(number_str)
+                        .map_err(|e| match e {
+                            JsonNumberError::InvalidNumber(e) => {
+                                panic!(
+                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                )
+                            }
+                            JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
+                        })
+                })
+            }
         }
 
         fn fp_number_value<N: FloatingPointNumber>(
             &mut self,
             value: N,
         ) -> Result<(), JsonNumberError> {
-            // TODO: Cannot match over possible implementations? Therefore have to use string representation
-            value.use_json_number(|number_str| {
-                self.number_value_from_string(number_str).map_err(|e| {
-                    match e {
-                        // `use_json_number` should have verified that value is valid finite JSON number
-                        JsonNumberError::InvalidNumber(e) => {
-                            panic!("Unexpected: Writer rejected finite number '{number_str}': {e}")
+            let number = if let Some(n) = value.as_f64() {
+                Some(serde_number_from_f64(n)?)
+            } else {
+                None
+            };
+
+            if let Some(n) = number {
+                self.check_before_value();
+                self.add_value(Value::Number(n));
+                Ok(())
+            } else {
+                // TODO: Cannot match over possible implementations? Therefore have to use string representation
+                value.use_json_number(|number_str| {
+                    self.number_value_from_string(number_str).map_err(|e| {
+                        match e {
+                            // `use_json_number` should have verified that value is valid finite JSON number
+                            JsonNumberError::InvalidNumber(e) => {
+                                panic!(
+                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                )
+                            }
+                            JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
                         }
-                        JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
-                    }
+                    })
                 })
-            })
+            }
         }
 
         #[cfg(feature = "serde")]
@@ -307,13 +332,14 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
 
     json_writer.number_value_from_string("123")?;
     assert_invalid_number(
-        Some("Non-finite number: Infinity"),
+        Some(&format!("Non-finite number: {}", f64::INFINITY)),
         json_writer.number_value_from_string("Infinity"),
     );
     // Don't check for exact error message because it is created by Rust and might change in the future
     assert_invalid_number(None, json_writer.number_value_from_string("test"));
-    json_writer.number_value(456)?;
-    json_writer.fp_number_value(78.9)?;
+    json_writer.number_value(45)?;
+    json_writer.number_value(-67)?;
+    json_writer.fp_number_value(8.9)?;
     assert_invalid_number(
         Some(&format!("Non-finite number: {}", f64::INFINITY)),
         json_writer.fp_number_value(f64::INFINITY),
@@ -332,10 +358,11 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
         false,
         "string",
         "first second",
-        // Current implementation always writes f64
+        // Current number from string implementation always writes f64
         123.0,
-        456.0,
-        78.9,
+        45,
+        -67,
+        8.9,
     ]);
     assert_eq!(expected_json, final_value_holder.unwrap());
 
@@ -357,7 +384,7 @@ fn transfer() -> Result<(), Box<dyn std::error::Error>> {
 
     let expected_json = json!([
         true,
-        // Current implementation always writes f64
+        // Current number from string implementation always writes f64
         123.0,
         {
             "name1": "value1",
@@ -387,8 +414,7 @@ fn serialize() -> Result<(), Box<dyn std::error::Error>> {
     json_writer.finish_document()?;
 
     let expected_json = json!({
-        // Current implementation always writes f64
-        "a": 123.0,
+        "a": 123,
         "b": "test",
     });
     assert_eq!(expected_json, final_value_holder.unwrap());
