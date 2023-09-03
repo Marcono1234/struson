@@ -37,6 +37,11 @@ all-features = true
 # See https://stackoverflow.com/q/61417452
 rustdoc-args = ["--cfg", "docsrs"]
 
+# Cargo Profile for manual performance profiling
+[profile.release-debug]
+inherits = "release"
+debug = true
+
 
 # For all these benchmarks disable default harness (`harness = false`) because Criterion creates its own
 

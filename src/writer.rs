@@ -1400,7 +1400,7 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
                 } else if (byte & 0b1111_1000) == 0b1111_0000 {
                     expected_bytes_count = 4;
                 } else if (byte & 0b1100_0000) == 0b1000_0000 {
-                    // Matched UTF-8 multi-byte continuation byte (10xxx_xxxx); continue to find start of next byte
+                    // Matched UTF-8 multi-byte continuation byte (10xx_xxxx); continue to find start of next byte
                     i += 1;
                     continue;
                 } else {
@@ -1423,7 +1423,7 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
                     i += expected_bytes_count - 1;
                 }
             }
-            // Otherwise it is an ASCII char, so continue with next char
+            // Check next byte (if any)
             i += 1;
         }
 
@@ -1911,6 +1911,7 @@ mod tests {
                     assert_eq!(ErrorKind::InvalidData, e.kind());
 
                     match expected_custom_message {
+                        // None if error message should not be compared, e.g. because it is created by Rust and might change
                         None => assert!(
                             e.get_ref().unwrap().is::<Utf8Error>(),
                             "Inner error is not Utf8Error"
@@ -1967,6 +1968,26 @@ mod tests {
                 w.finish_value()
             },
             Some("incomplete multi-byte UTF-8 data"),
+        );
+
+        assert_invalid_utf8(
+            |mut w| {
+                // Leading continuation byte
+                w.write_all(b"\x80")?;
+                w.finish_value()
+            },
+            None,
+        );
+
+        assert_invalid_utf8(
+            |mut w| {
+                // Too many continuation bytes
+                w.write_all(b"\xC2")?;
+                w.write_all(b"\x80")?;
+                w.write_all(b"\x80")?;
+                w.finish_value()
+            },
+            None,
         );
     }
 

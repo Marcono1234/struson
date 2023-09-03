@@ -1580,7 +1580,7 @@ pub trait JsonReader {
     /// json_writer.end_object()?;
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"embedded":[1,2]}"#, std::str::from_utf8(&writer)?);
+    /// assert_eq!(r#"{"embedded":[1,2]}"#, String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -2884,7 +2884,7 @@ mod bytes_value_reader {
             }
             json_reader.value_bytes_buf.clear();
             // Shrink buffer in case it got excessively large during the previous usage
-            // TODO: Maybe perform this in `on_value_end` and `consume_name` instead
+            // TODO: Maybe perform this in `on_value_end` and `after_name` instead
             json_reader
                 .value_bytes_buf
                 .shrink_to(INITIAL_VALUE_BYTES_BUF_CAPACITY * 2);
@@ -3877,21 +3877,27 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         // Write value in a streaming way using value writer
                         let mut string_writer = json_writer.string_value_writer()?;
 
-                        let mut buf = [0_u8; 4];
-                        let mut buf_len;
+                        let mut buf = [0_u8; 64];
                         loop {
-                            buf_len = 0;
-                            let reached_end = self
-                                .read_string_bytes(&mut |byte| {
-                                    buf[buf_len] = byte;
-                                    buf_len += 1;
-                                })
-                                .map_err(ReaderError::from)?;
+                            let mut reached_end = false;
+                            let mut read_count = 0;
+                            // Buffer must have at least 4 bytes free to read next char UTF-8 bytes
+                            while buf.len() - read_count >= 4 {
+                                reached_end = self
+                                    .read_string_bytes(&mut |byte| {
+                                        buf[read_count] = byte;
+                                        read_count += 1;
+                                    })
+                                    .map_err(ReaderError::from)?;
 
+                                if reached_end {
+                                    break;
+                                }
+                            }
+
+                            string_writer.write_all(&buf[..read_count])?;
                             if reached_end {
                                 break;
-                            } else {
-                                string_writer.write_all(&buf[..buf_len])?;
                             }
                         }
                         string_writer.finish_value()?;
@@ -5537,9 +5543,34 @@ mod tests {
             r#"[true,null,123,123.0e+0,"a\"b\\cd",[1],{"a":1,"a\"b\\cd":2,"c":[{"d":[3]}]},"#
                 .to_owned()
                 + "\"\u{10FFFF}\"]",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn transfer_to_large_string() -> TestResult {
+        let repeat_count = 1000;
+        let json = "\"".to_owned()
+            // includes redundant escape `\u0062` for 'b'; this verifies that regular string writing
+            // of JsonWriter is used and bytes are not just copied
+            + &"a\\u0062 \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
+                .repeat(repeat_count)
+            + "\"";
+        let expected_json = "\"".to_owned()
+            + &"ab \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
+                .repeat(repeat_count)
+            + "\"";
+        let mut json_reader = new_reader(&json);
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_reader.transfer_to(&mut json_writer)?;
+        json_reader.consume_trailing_whitespace()?;
+        json_writer.finish_document()?;
+
+        assert_eq!(expected_json, String::from_utf8(writer)?);
         Ok(())
     }
 
@@ -5585,7 +5616,7 @@ mod tests {
 
         json_writer.finish_document()?;
         // Whitespace and comments are not preserved
-        assert_eq!("[1,2]", std::str::from_utf8(&writer)?);
+        assert_eq!("[1,2]", String::from_utf8(writer)?);
 
         Ok(())
     }
@@ -5683,6 +5714,52 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn excessive_whitespace() -> TestResult {
+        let json = r#"
+
+
+            {
+                "a"
+                :
+                [
+                    
+                    true,
+
+                    false
+
+                    ,      {          }
+
+                ],
+
+                "b"   :     true
+                ,         "c"
+                :   false
+            }
+
+
+        "#;
+
+        // Test `transfer_to`
+        let mut json_reader = new_reader(json);
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_reader.transfer_to(&mut json_writer)?;
+        json_reader.consume_trailing_whitespace()?;
+        json_writer.finish_document()?;
+        assert_eq!(
+            "{\"a\":[true,false,{}],\"b\":true,\"c\":false}",
+            String::from_utf8(writer)?
+        );
+
+        // Test `skip_value`
+        let mut json_reader = new_reader(json);
+        json_reader.skip_value()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
     }
 
     #[test]
