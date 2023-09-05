@@ -3,7 +3,10 @@
 //! [`JsonWriter`] is the general trait for JSON writers, [`JsonStreamWriter`] is an implementation
 //! of it which writes a JSON document to a [`Write`] in a streaming way.
 
-use crate::json_number::{consume_json_number, NumberBytesProvider};
+use crate::{
+    json_number::{consume_json_number, NumberBytesProvider},
+    utf8,
+};
 
 use std::{
     fmt::Debug,
@@ -1242,7 +1245,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         self.is_string_value_writer_active = true;
         Ok(Box::new(StringValueWriterImpl {
             json_writer: self,
-            utf8_buf: [0; MAX_UTF8_BYTES_COUNT],
+            utf8_buf: [0; utf8::MAX_BYTES_PER_CHAR],
             utf8_pos: 0,
             utf8_expected_len: 0,
         }))
@@ -1324,8 +1327,6 @@ impl<W: Write + Debug> Debug for JsonStreamWriter<W> {
     }
 }
 
-const MAX_UTF8_BYTES_COUNT: usize = 4;
-
 struct StringValueWriterImpl<'j, W: Write> {
     json_writer: &'j mut JsonStreamWriter<W>,
     /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
@@ -1333,7 +1334,7 @@ struct StringValueWriterImpl<'j, W: Write> {
     ///
     /// Buffering it is necessary to make sure it is valid UTF-8 data before writing it to the
     /// underlying `Write`.
-    utf8_buf: [u8; MAX_UTF8_BYTES_COUNT],
+    utf8_buf: [u8; utf8::MAX_BYTES_PER_CHAR],
     /// Index (0-based) within [utf8_buf] where the next byte should be written, respectively
     /// number of already written bytes
     utf8_pos: usize,
@@ -1387,20 +1388,20 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
         }
 
         // Checks for incomplete UTF-8 data and converts the bytes with str::from_utf8
-        let mut i = max_or_offset_negative(start_pos, buf.len(), MAX_UTF8_BYTES_COUNT);
+        let mut i = max_or_offset_negative(start_pos, buf.len(), utf8::MAX_BYTES_PER_CHAR);
         while i < buf.len() {
             let byte = buf[i];
 
-            if byte > 0x7F {
+            if !utf8::is_1byte(byte) {
                 let expected_bytes_count;
-                if (byte & 0b1110_0000) == 0b1100_0000 {
+                if utf8::is_2byte_start(byte) {
                     expected_bytes_count = 2;
-                } else if (byte & 0b1111_0000) == 0b1110_0000 {
+                } else if utf8::is_3byte_start(byte) {
                     expected_bytes_count = 3;
-                } else if (byte & 0b1111_1000) == 0b1111_0000 {
+                } else if utf8::is_4byte_start(byte) {
                     expected_bytes_count = 4;
-                } else if (byte & 0b1100_0000) == 0b1000_0000 {
-                    // Matched UTF-8 multi-byte continuation byte (10xx_xxxx); continue to find start of next byte
+                } else if utf8::is_continuation(byte) {
+                    // Matched UTF-8 multi-byte continuation byte; continue to find start of next char
                     i += 1;
                     continue;
                 } else {

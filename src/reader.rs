@@ -4,6 +4,7 @@
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 use crate::{
     json_number::{consume_json_number, NumberBytesProvider},
+    utf8,
     writer::{JsonWriter, TransferredNumber},
 };
 use bytes_value_reader::*;
@@ -2168,12 +2169,12 @@ impl<R: Read> JsonStreamReader<R> {
                     self.line += 1;
                 }
                 // Skip ASCII character
-                0x00..=0x7F => {
+                _ if utf8::is_1byte(byte) => {
                     self.column += 1;
                 }
                 _ => {
                     // Validate the UTF-8 data, but ignore it
-                    let mut buf = [0_u8; 4];
+                    let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                     let _ = self.read_utf8_multibyte(byte, &mut buf)?;
                     self.column += 1;
                 }
@@ -2560,7 +2561,7 @@ trait Utf8MultibyteReader {
     fn read_utf8_multibyte<'a>(
         &mut self,
         byte0: u8,
-        destination_buf: &'a mut [u8; 4],
+        destination_buf: &'a mut [u8; utf8::MAX_BYTES_PER_CHAR],
     ) -> Result<&'a [u8], StringReadingError> {
         fn invalid_utf8_err<'a>() -> Result<&'a [u8], StringReadingError> {
             Err(StringReadingError::IoError(IoError::new(
@@ -2572,15 +2573,12 @@ trait Utf8MultibyteReader {
         let result_slice: &'a mut [u8];
         let byte1 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
-        if (byte1 & 0b1100_0000) != 0b1000_0000 {
+        if !utf8::is_continuation(byte1) {
             return invalid_utf8_err();
         }
 
-        if (byte0 & 0b1110_0000) == 0b1100_0000 {
-            let code_point =
-                (u32::from(byte0) & !0b1110_0000) << 6 | (u32::from(byte1) & !0b1100_0000);
-            // Check for 'overlong encoding'
-            if code_point < 0x80 {
+        if utf8::is_2byte_start(byte0) {
+            if !utf8::is_valid_2bytes(byte0, byte1) {
                 return invalid_utf8_err();
             }
 
@@ -2590,16 +2588,12 @@ trait Utf8MultibyteReader {
         } else {
             let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
-            if (byte2 & 0b1100_0000) != 0b1000_0000 {
+            if !utf8::is_continuation(byte2) {
                 return invalid_utf8_err();
             }
 
-            if (byte0 & 0b1111_0000) == 0b1110_0000 {
-                let code_point = (u32::from(byte0) & !0b1111_0000) << 12
-                    | (u32::from(byte1) & !0b1100_0000) << 6
-                    | (u32::from(byte2) & !0b1100_0000);
-                // Check for 'overlong encoding', or for UTF-16 surrogate chars encoded in UTF-8
-                if code_point < 0x800 || (0xD800..=0xDFFF).contains(&code_point) {
+            if utf8::is_3byte_start(byte0) {
+                if !utf8::is_valid_3bytes(byte0, byte1, byte2) {
                     return invalid_utf8_err();
                 }
 
@@ -2607,27 +2601,21 @@ trait Utf8MultibyteReader {
                 result_slice[0] = byte0;
                 result_slice[1] = byte1;
                 result_slice[2] = byte2;
-            } else if (byte0 & 0b1111_1000) == 0b1111_0000 {
+            } else if utf8::is_4byte_start(byte0) {
                 let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
-                if (byte3 & 0b1100_0000) == 0b1000_0000 {
-                    let code_point = (u32::from(byte0) & !0b1111_1000) << 18
-                        | (u32::from(byte1) & !0b1100_0000) << 12
-                        | (u32::from(byte2) & !0b1100_0000) << 6
-                        | (u32::from(byte3) & !0b1100_0000);
 
-                    // Check for 'overlong encoding', or encoding of invalid code point
-                    if !(0x10000..=0x10FFFF).contains(&code_point) {
-                        return invalid_utf8_err();
-                    }
-
-                    result_slice = &mut destination_buf[..4];
-                    result_slice[0] = byte0;
-                    result_slice[1] = byte1;
-                    result_slice[2] = byte2;
-                    result_slice[3] = byte3;
-                } else {
+                if !utf8::is_continuation(byte3) {
                     return invalid_utf8_err();
                 }
+                if !utf8::is_valid_4bytes(byte0, byte1, byte2, byte3) {
+                    return invalid_utf8_err();
+                }
+
+                result_slice = &mut destination_buf[..4];
+                result_slice[0] = byte0;
+                result_slice[1] = byte1;
+                result_slice[2] = byte2;
+                result_slice[3] = byte3;
             } else {
                 return invalid_utf8_err();
             }
@@ -2827,8 +2815,8 @@ mod bytes_value_reader {
 
         fn get_str<'j, R: Read>(&self, json_reader: &'j JsonStreamReader<R>) -> &'j str {
             let bytes = self.get_bytes_ref(json_reader);
-            // unwrap() should be safe; creator of BytesRefProvider should have verified that bytes are valid
-            std::str::from_utf8(bytes).unwrap()
+            // Should be safe; creator of BytesRefProvider should have verified that bytes are valid
+            utf8::to_str_unchecked(bytes)
         }
     }
 
@@ -2841,8 +2829,8 @@ mod bytes_value_reader {
                     json_reader.buf_used_for_bytes_value = false;
                     b.get_str(json_reader).to_owned()
                 }
-                // unwrap() should be safe; creator of BytesRefProvider should have verified that bytes are valid, if necessary
-                BytesValue::Vec(v) => String::from_utf8(v).unwrap(),
+                // Should be safe; creator of BytesRefProvider should have verified that bytes are valid
+                BytesValue::Vec(v) => utf8::to_string_unchecked(v),
             }
         }
 
@@ -3128,7 +3116,7 @@ impl<R: Read> JsonStreamReader<R> {
                             consumed_chars_count,
                         } = self.read_unicode_escape_char()?;
                         self.column += consumed_chars_count;
-                        let mut char_encode_buf = [0; 4];
+                        let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
                         let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
                         for b in &char_encode_buf[..bytes_count] {
                             consumer(*b);
@@ -3159,7 +3147,7 @@ impl<R: Read> JsonStreamReader<R> {
             }
             // Read and validate multibyte UTF-8 data
             _ => {
-                let mut buf = [0_u8; 4];
+                let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                 let bytes = self.read_utf8_multibyte(byte, &mut buf)?;
                 for b in bytes {
                     consumer(*b);
@@ -3243,7 +3231,7 @@ impl<R: Read> JsonStreamReader<R> {
                             } = AsUnicodeEscapeReader(&mut bytes_reader)
                                 .read_unicode_escape_char()?;
                             bytes_reader.json_reader.column += consumed_chars_count;
-                            let mut char_encode_buf = [0; 4];
+                            let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
                             let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
                             bytes_reader.push_bytes(&char_encode_buf[..bytes_count]);
                         }
@@ -3283,7 +3271,7 @@ impl<R: Read> JsonStreamReader<R> {
                 // possible anymore to track the character location for error messages because it would not be clear
                 // how many bytes are part of a character
                 _ => {
-                    let mut buf = [0_u8; 4];
+                    let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                     // Ignore bytes here, bytes_reader will keep the bytes in the final value because they are not skipped here
                     let _ = AsUtf8MultibyteReader(&mut bytes_reader)
                         .read_utf8_multibyte(byte, &mut buf)?;
@@ -3881,8 +3869,8 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         loop {
                             let mut reached_end = false;
                             let mut read_count = 0;
-                            // Buffer must have at least 4 bytes free to read next char UTF-8 bytes
-                            while buf.len() - read_count >= 4 {
+                            // Buffer must have enough bytes free to read next char UTF-8 bytes
+                            while buf.len() - read_count >= utf8::MAX_BYTES_PER_CHAR {
                                 reached_end = self
                                     .read_string_bytes(&mut |byte| {
                                         buf[read_count] = byte;

@@ -102,3 +102,4 @@ pub mod writer;
 pub mod serde;
 
 mod json_number;
+mod utf8;
