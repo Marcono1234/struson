@@ -63,7 +63,7 @@ fn write_values() {
     let expected_json = "{\"a\":[\"\\u0000\\n\\t \\uDBFF\\uDFFF\",\"".to_owned()
         + &large_string
         + "\",1234.56e-7,true,false,null],\"\\u0000\\n\\t \\uDBFF\\uDFFF\":true}";
-    assert_eq!(expected_json, std::str::from_utf8(&writer).unwrap());
+    assert_eq!(expected_json, String::from_utf8(writer).unwrap());
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn pretty_print() {
     });
 
     let expected_json = "{\n  \"a\": [\n    [],\n    {},\n    true\n  ]\n}";
-    assert_eq!(expected_json, std::str::from_utf8(&writer).unwrap());
+    assert_eq!(expected_json, String::from_utf8(writer).unwrap());
 }
 
 #[test]
@@ -124,6 +124,6 @@ fn string_value_writer() -> Result<(), Box<dyn Error>> {
     json_writer.finish_document()?;
 
     let expected_json = format!("\"a\\u0000\\n\\t{large_string}test\"");
-    assert_eq!(expected_json, std::str::from_utf8(&writer).unwrap());
+    assert_eq!(expected_json, String::from_utf8(writer).unwrap());
     Ok(())
 }

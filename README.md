@@ -80,7 +80,7 @@ json_writer.end_object()?;
 // Ensures that the JSON document is complete and flushes the buffer
 json_writer.finish_document()?;
 
-assert_eq!(r#"{"a":[1,true]}"#, std::str::from_utf8(&writer)?);
+assert_eq!(r#"{"a":[1,true]}"#, String::from_utf8(writer)?);
 ```
 
 ## Serde integration

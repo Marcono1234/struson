@@ -69,7 +69,7 @@ type IoError = std::io::Error;
 /// // Ensures that the JSON document is complete and flushes the buffer
 /// json_writer.finish_document()?;
 ///
-/// assert_eq!(r#"{"a":[1,true]}"#, std::str::from_utf8(&writer)?);
+/// assert_eq!(r#"{"a":[1,true]}"#, String::from_utf8(writer)?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -110,7 +110,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"a":1}"#, std::str::from_utf8(&writer)?);
+    /// assert_eq!(r#"{"a":1}"#, String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -151,7 +151,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("[1]", std::str::from_utf8(&writer)?);
+    /// assert_eq!("[1]", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -197,7 +197,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"a":1}"#, std::str::from_utf8(&writer)?);
+    /// assert_eq!(r#"{"a":1}"#, String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -221,7 +221,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("null", std::str::from_utf8(&writer)?);
+    /// assert_eq!("null", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -244,7 +244,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("true", std::str::from_utf8(&writer)?);
+    /// assert_eq!("true", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -277,7 +277,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#""text with \"quotes\"""#, std::str::from_utf8(&writer)?);
+    /// assert_eq!(r#""text with \"quotes\"""#, String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -319,7 +319,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#""text with \"quotes\"""#, std::str::from_utf8(&writer)?);
+    /// assert_eq!(r#""text with \"quotes\"""#, String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -352,7 +352,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("123.0e10", std::str::from_utf8(&writer)?);
+    /// assert_eq!("123.0e10", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -390,7 +390,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("123", std::str::from_utf8(&writer)?);
+    /// assert_eq!("123", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -428,7 +428,7 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("4.5", std::str::from_utf8(&writer)?);
+    /// assert_eq!("4.5", String::from_utf8(writer)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -492,7 +492,7 @@ pub trait JsonWriter {
     ///
     /// assert_eq!(
     ///     r#"{"outer":{"text":"some text","number":5}}"#,
-    ///     std::str::from_utf8(&writer)?
+    ///     String::from_utf8(writer)?
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -1678,7 +1678,7 @@ mod tests {
 
         assert_eq!(
             "[8,-8,16,-16,32,-32,64,-64,128,-128,1.5,-1.5,2.5,-2.5,123.45e-12]",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -1743,7 +1743,7 @@ mod tests {
         json_writer.end_array()?;
         json_writer.finish_document()?;
 
-        assert_eq!("[true,false,null]", std::str::from_utf8(&writer)?);
+        assert_eq!("[true,false,null]", String::from_utf8(writer)?);
         Ok(())
     }
 
@@ -1763,7 +1763,7 @@ mod tests {
         json_writer.end_array()?;
         json_writer.finish_document()?;
 
-        assert_eq!("[[1],[]]", std::str::from_utf8(&writer)?);
+        assert_eq!("[[1],[]]", String::from_utf8(writer)?);
         Ok(())
     }
 
@@ -1800,10 +1800,7 @@ mod tests {
         json_writer.end_object()?;
         json_writer.finish_document()?;
 
-        assert_eq!(
-            r#"{"a":1,"":2,"a":{"c":{}}}"#,
-            std::str::from_utf8(&writer)?
-        );
+        assert_eq!(r#"{"a":1,"":2,"a":{"c":{}}}"#, String::from_utf8(writer)?);
         Ok(())
     }
 
@@ -1865,7 +1862,7 @@ mod tests {
 
         assert_eq!(
             r#"{"a":{"b":[{},{"c":[[]]}],"d":[]}}"#,
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -1889,7 +1886,7 @@ mod tests {
 
         assert_eq!(
             r#"["","ab","\u0000\u001F","a b","\"\\/\b\f\n\r\t","#.to_owned() + "\"\u{10FFFF}\"]",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -1932,7 +1929,7 @@ mod tests {
         assert_eq!(
             r#"["a b\u0000\u001F\"\\/\b\f\n\r\t"#.to_owned()
                 + "\u{007F}\u{10FFFF}\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\u{10FFFF}a \u{10FFFF}bc\",\"\"]",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -1949,7 +1946,7 @@ mod tests {
         string_writer.flush()?;
         drop(string_writer);
 
-        assert_eq!("\"abcdefgh", std::str::from_utf8(&writer)?);
+        assert_eq!("\"abcdefgh", String::from_utf8(writer)?);
         Ok(())
     }
 
@@ -2149,7 +2146,7 @@ mod tests {
 
         assert_eq!(
             "\"".to_owned() + "abc\\\"def".repeat(WRITER_BUF_SIZE).as_str() + "\"",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -2171,7 +2168,7 @@ mod tests {
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.finish_document()?;
-        assert_eq!("[]", std::str::from_utf8(&writer)?);
+        assert_eq!("[]", String::from_utf8(writer)?);
 
         let mut writer = Vec::<u8>::new();
         let mut json_writer = create_writer(&mut writer, "");
@@ -2180,7 +2177,7 @@ mod tests {
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.finish_document()?;
-        assert_eq!("[][]", std::str::from_utf8(&writer)?);
+        assert_eq!("[][]", String::from_utf8(writer)?);
 
         let mut writer = Vec::<u8>::new();
         let mut json_writer = create_writer(&mut writer, "#\n#");
@@ -2189,7 +2186,7 @@ mod tests {
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.finish_document()?;
-        assert_eq!("[]#\n#[]", std::str::from_utf8(&writer)?);
+        assert_eq!("[]#\n#[]", String::from_utf8(writer)?);
 
         Ok(())
     }
@@ -2252,7 +2249,10 @@ mod tests {
 
         json_writer.finish_document()?;
 
-        assert_eq!("[\n  [],\n  [\n    1\n  ],\n  {\n    \"a\": [\n      {\n        \"b\": 2\n      },\n      {}\n    ],\n    \"c\": 3\n  }\n]#[\n  4\n]", std::str::from_utf8(&writer)?);
+        assert_eq!(
+            "[\n  [],\n  [\n    1\n  ],\n  {\n    \"a\": [\n      {\n        \"b\": 2\n      },\n      {}\n    ],\n    \"c\": 3\n  }\n]#[\n  4\n]",
+            String::from_utf8(writer)?
+        );
         Ok(())
     }
 
@@ -2273,7 +2273,7 @@ mod tests {
         json_writer.finish_document()?;
         assert_eq!(
             "\"\\u0000\\u001F test \\\" \u{007E}\\u007F\\u0080\\u009F\u{00A0}\"",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
         Ok(())
     }
@@ -2292,7 +2292,7 @@ mod tests {
         json_writer.finish_document()?;
         assert_eq!(
             "\"\\u0000\\u001F test \\\" \u{007F}\\u0080\\uD800\\uDC00\\uDBFF\\uDFFF\"",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
 
         let mut writer = Vec::<u8>::new();
@@ -2308,7 +2308,7 @@ mod tests {
         json_writer.finish_document()?;
         assert_eq!(
             "\"\\u0000 test \\\" \\u007F\\u0080\\uDBFF\\uDFFF\"",
-            std::str::from_utf8(&writer)?
+            String::from_utf8(writer)?
         );
 
         Ok(())
@@ -2455,7 +2455,7 @@ mod tests {
             json_writer.finish_document()?;
             assert_eq!(
                 r#"{"outer":{"a":1,"b":{"key":"value"},"c":[1,2]}}"#,
-                std::str::from_utf8(&writer)?
+                String::from_utf8(writer)?
             );
 
             Ok(())

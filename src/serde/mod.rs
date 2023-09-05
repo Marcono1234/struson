@@ -60,7 +60,7 @@
 //!
 //! assert_eq!(
 //!     r#"{"outer":{"text":"some text","number":5}}"#,
-//!     std::str::from_utf8(&writer)?
+//!     String::from_utf8(writer)?
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

@@ -148,6 +148,6 @@ fn transfer_to() -> Result<(), Box<dyn Error>> {
         Ok(())
     });
 
-    assert_eq!(inner_json, std::str::from_utf8(&writer)?);
+    assert_eq!(inner_json, String::from_utf8(writer)?);
     Ok(())
 }

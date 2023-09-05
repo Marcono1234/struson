@@ -100,7 +100,7 @@ impl serde::ser::Error for SerializerError {
 ///
 /// assert_eq!(
 ///     r#"{"text":"some text","number":5}"#,
-///     std::str::from_utf8(&writer)?
+///     String::from_utf8(writer)?
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -185,7 +185,7 @@ fn map_number_err(e: JsonNumberError) -> SerializerError {
 /// # json_writer.finish_document()?;
 /// # assert_eq!(
 /// #     r#"{"text":"some text","number":5}"#,
-/// #     std::str::from_utf8(&writer)?
+/// #     String::from_utf8(writer)?
 /// # );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
