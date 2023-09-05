@@ -552,6 +552,42 @@ pub trait JsonWriter {
 /// automatically finish the value.
 /* Note: Dropping writer will not automatically finish value since that would silently discard errors which might occur */
 pub trait StringValueWriter: Write {
+    /// Writes a string value piece
+    ///
+    /// This method behaves the same way as if the string bytes were written using
+    /// the `write` method, however `JsonWriter` implementations might implement
+    /// `write_str` more efficiently. For example, they can omit UTF-8 validation
+    /// because the data of a `str` already represents valid UTF-8 data.  
+    /// Therefore if a value already exists as string, using `write_str` is likely
+    /// at least as efficient as using the `write` method.
+    ///
+    /// Calls to `write_str` can be mixed with regular `write` calls, however preceding
+    /// `write` calls must have written complete UTF-8 data, otherwise an error is returned.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::writer::*;
+    /// let mut writer = Vec::<u8>::new();
+    /// let mut json_writer = JsonStreamWriter::new(&mut writer);
+    ///
+    /// let mut string_writer = json_writer.string_value_writer()?;
+    ///
+    /// // Mixes `write_all` and `write_str` calls
+    /// string_writer.write_all("one, ".as_bytes())?;
+    /// string_writer.write_str("two, ")?;
+    /// string_writer.write_all("three ".as_bytes())?;
+    /// string_writer.write_str("and four")?;
+    /// string_writer.finish_value()?;
+    ///
+    /// json_writer.finish_document()?;
+    ///
+    /// assert_eq!("\"one, two, three and four\"", String::from_utf8(writer)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+        self.write_all(s.as_bytes())
+    }
+
     /// Finishes the JSON string value
     ///
     /// This method must be called when writing the string value is done to allow
@@ -1440,6 +1476,20 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
 }
 
 impl<'j, W: Write> StringValueWriter for StringValueWriterImpl<'j, W> {
+    // Provides more efficient implementation which benefits from avoided UTF-8 validation
+    fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+        if self.utf8_pos > 0 {
+            // If there is pending incomplete UTF-8 data, then this is an error because str contains
+            // self-contained complete UTF-8 data, and therefore does not complete the incomplete data
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "incomplete multi-byte UTF-8 data",
+            ));
+        }
+        self.json_writer.write_string_value_piece(s)?;
+        Ok(())
+    }
+
     fn finish_value(self: Box<Self>) -> Result<(), IoError> {
         if self.utf8_pos > 0 {
             return Err(IoError::new(
@@ -1857,11 +1907,20 @@ mod tests {
         string_writer.write_all(b"\"\\/\x08\x0C\n\r\t")?;
         string_writer.write_all("\u{007F}\u{10FFFF}".as_bytes())?;
 
-        // Split bytes of multi-byte UTF-8
+        // Split bytes of multi-byte UTF-8, writing each byte separately
         let bytes = "\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}".as_bytes();
         for b in bytes {
             string_writer.write_all(&[*b])?;
         }
+        string_writer.finish_value()?;
+
+        // Mix `write_all` and `write_str`
+        let mut string_writer = json_writer.string_value_writer()?;
+        string_writer.write_all("\u{10FFFF}".as_bytes())?;
+        string_writer.write_str("a \u{10FFFF}")?;
+        string_writer.write_all("b".as_bytes())?;
+        string_writer.write_str("")?; // empty string
+        string_writer.write_all("c".as_bytes())?;
         string_writer.finish_value()?;
 
         // Write an empty string
@@ -1872,7 +1931,7 @@ mod tests {
         json_writer.finish_document()?;
         assert_eq!(
             r#"["a b\u0000\u001F\"\\/\b\f\n\r\t"#.to_owned()
-                + "\u{007F}\u{10FFFF}\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\"]",
+                + "\u{007F}\u{10FFFF}\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\u{10FFFF}a \u{10FFFF}bc\",\"\"]",
             std::str::from_utf8(&writer)?
         );
         Ok(())
@@ -1989,6 +2048,16 @@ mod tests {
                 w.finish_value()
             },
             None,
+        );
+
+        assert_invalid_utf8(
+            |mut w| {
+                // Incomplete multi-byte followed by `write_str`
+                w.write_all(b"\xF0")?;
+                w.write_str("")?; // even empty string should trigger this error
+                w.finish_value()
+            },
+            Some("incomplete multi-byte UTF-8 data"),
         );
     }
 

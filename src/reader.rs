@@ -3883,7 +3883,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                                 }
                             }
 
-                            string_writer.write_all(&buf[..read_count])?;
+                            // `read_string_bytes` call above performed validation and only placed complete UTF-8
+                            // data into buffer, so unchecked conversion should be safe
+                            let string = utf8::to_str_unchecked(&buf[..read_count]);
+                            string_writer.write_str(string)?;
                             if reached_end {
                                 break;
                             }
