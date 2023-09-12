@@ -734,7 +734,7 @@ impl FloatingPointNumber for type_template {
             Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber(format!(
-                "Non-finite number: {self}"
+                "non-finite number: {self}"
             )))
         }
     }
@@ -747,6 +747,7 @@ impl FloatingPointNumber for type_template {
 
 /// Number struct which is used by [`JsonReader::transfer_to`] to avoid redundant JSON number string
 /// validation by `JsonWriter`
+#[derive(Debug)]
 pub(crate) struct TransferredNumber<'a>(pub &'a str);
 impl private::Sealed for TransferredNumber<'_> {}
 impl FiniteNumber for TransferredNumber<'_> {
@@ -1237,9 +1238,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             self.write_bytes(value.as_bytes())?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(
-                "Invalid JSON number: ".to_owned() + value,
-            ))
+            Err(JsonNumberError::InvalidNumber(format!(
+                "invalid JSON number: {value}"
+            )))
         }
     }
 
@@ -1605,9 +1606,9 @@ mod tests {
                 Ok(_) => panic!("Should have failed for: {number}"),
                 Err(e) => match e {
                     JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!(format!("Non-finite number: {number}"), message)
+                        assert_eq!(format!("non-finite number: {number}"), message)
                     }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error for '{number}': {e}"),
+                    JsonNumberError::IoError(e) => panic!("Unexpected error for '{number}': {e:?}"),
                 },
             }
         }
@@ -1692,7 +1693,7 @@ mod tests {
                     JsonNumberError::InvalidNumber(message) => {
                         assert_eq!(expected_message, message)
                     }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error: {e}"),
+                    JsonNumberError::IoError(e) => panic!("Unexpected error: {e:?}"),
                 },
             }
         }
@@ -1702,31 +1703,31 @@ mod tests {
 
         assert_invalid_number(
             json_writer.fp_number_value(f32::NAN),
-            &format!("Non-finite number: {}", f32::NAN),
+            &format!("non-finite number: {}", f32::NAN),
         );
         assert_invalid_number(
             json_writer.fp_number_value(f64::INFINITY),
-            &format!("Non-finite number: {}", f64::INFINITY),
+            &format!("non-finite number: {}", f64::INFINITY),
         );
         assert_invalid_number(
             json_writer.number_value_from_string("NaN"),
-            "Invalid JSON number: NaN",
+            "invalid JSON number: NaN",
         );
         assert_invalid_number(
             json_writer.number_value_from_string("+1"),
-            "Invalid JSON number: +1",
+            "invalid JSON number: +1",
         );
         assert_invalid_number(
             json_writer.number_value_from_string("00"),
-            "Invalid JSON number: 00",
+            "invalid JSON number: 00",
         );
         assert_invalid_number(
             json_writer.number_value_from_string("1e"),
-            "Invalid JSON number: 1e",
+            "invalid JSON number: 1e",
         );
         assert_invalid_number(
             json_writer.number_value_from_string("12a"),
-            "Invalid JSON number: 12a",
+            "invalid JSON number: 12a",
         );
     }
 
@@ -2467,7 +2468,7 @@ mod tests {
             let number = f32::NAN;
             match json_writer.serialize_value(&number) {
                 Err(SerializerError::InvalidNumber(message)) => {
-                    assert_eq!(format!("Non-finite number: {number}"), message);
+                    assert_eq!(format!("non-finite number: {number}"), message);
                 }
                 r => panic!("Unexpected result: {r:?}"),
             }

@@ -1170,7 +1170,7 @@ mod tests {
                 SerializerError::InvalidNumber(message) => {
                     assert_eq!(expected_error_message, message)
                 }
-                _ => panic!("Unexpected error: {e}"),
+                _ => panic!("Unexpected error: {e:?}"),
             },
         }
     }
@@ -1209,7 +1209,7 @@ mod tests {
                         assert_eq!(expected_expected, expected);
                         assert_eq!(expected_actual, actual);
                     }
-                    _ => panic!("Unexpected error: {e}"),
+                    _ => panic!("Unexpected error: {e:?}"),
                 },
             }
         }
@@ -1251,11 +1251,11 @@ mod tests {
 
         assert_number_error(
             |s| s.serialize_f32(f32::NAN),
-            &format!("Non-finite number: {}", f32::NAN),
+            &format!("non-finite number: {}", f32::NAN),
         );
         assert_number_error(
             |s| s.serialize_f32(f32::INFINITY),
-            &format!("Non-finite number: {}", f32::INFINITY),
+            &format!("non-finite number: {}", f32::INFINITY),
         );
     }
 
@@ -1269,11 +1269,11 @@ mod tests {
 
         assert_number_error(
             |s| s.serialize_f64(f64::NAN),
-            &format!("Non-finite number: {}", f64::NAN),
+            &format!("non-finite number: {}", f64::NAN),
         );
         assert_number_error(
             |s| s.serialize_f64(f64::INFINITY),
-            &format!("Non-finite number: {}", f64::INFINITY),
+            &format!("non-finite number: {}", f64::INFINITY),
         );
     }
 

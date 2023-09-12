@@ -5698,7 +5698,7 @@ mod tests {
                 Ok(_) => panic!("Should have failed"),
                 Err(e) => match e {
                     TransferError::ReaderError(e) => {
-                        panic!("Unexpected error for input '{json}': {e}")
+                        panic!("Unexpected error for input '{json}': {e:?}")
                     }
                     TransferError::WriterError(e) => {
                         assert_eq!(ErrorKind::Other, e.kind());

@@ -101,7 +101,7 @@ mod custom_writer {
 
     fn serde_number_from_f64(f: f64) -> Result<Number, JsonNumberError> {
         Number::from_f64(f)
-            .ok_or_else(|| JsonNumberError::InvalidNumber(format!("Non-finite number: {f}")))
+            .ok_or_else(|| JsonNumberError::InvalidNumber(format!("non-finite number: {f}")))
     }
 
     impl JsonWriter for JsonValueWriter<'_> {
@@ -332,7 +332,7 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
 
     json_writer.number_value_from_string("123")?;
     assert_invalid_number(
-        Some(&format!("Non-finite number: {}", f64::INFINITY)),
+        Some(&format!("non-finite number: {}", f64::INFINITY)),
         json_writer.number_value_from_string("Infinity"),
     );
     // Don't check for exact error message because it is created by Rust and might change in the future
@@ -341,7 +341,7 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
     json_writer.number_value(-67)?;
     json_writer.fp_number_value(8.9)?;
     assert_invalid_number(
-        Some(&format!("Non-finite number: {}", f64::INFINITY)),
+        Some(&format!("non-finite number: {}", f64::INFINITY)),
         json_writer.fp_number_value(f64::INFINITY),
     );
 
