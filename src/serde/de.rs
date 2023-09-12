@@ -25,6 +25,7 @@ use crate::reader::{JsonReader, ReaderError, ValueType};
  *   but then parsing number fails
  *   Should mention here then how to interpret location information, or refer to `JsonErrorLocation`
  */
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum DeserializerError {
     /// A custom error, normally created by the `DeserializerError::custom` function

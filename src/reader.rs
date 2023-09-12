@@ -544,6 +544,7 @@ pub struct JsonSyntaxError {
 }
 
 /// Describes why a syntax error occurred
+#[non_exhaustive]
 #[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not enabled in the [`ReaderSettings`]
@@ -631,6 +632,7 @@ pub enum UnexpectedStructureKind {
 }
 
 /// Error which occurred while reading from a JSON reader
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum ReaderError {
     /// A syntax error was encountered

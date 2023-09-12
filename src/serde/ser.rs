@@ -13,6 +13,7 @@ use thiserror::Error;
 type IoError = std::io::Error;
 
 /// Error which occurred while serializing a value
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum SerializerError {
     /// A custom error, normally created by the `SerializerError::custom` function
