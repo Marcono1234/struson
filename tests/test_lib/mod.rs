@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub fn get_test_data_file_path() -> PathBuf {
     // Get path of test file, see https://stackoverflow.com/a/30004252
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("tests/test_data.json");
+    path.push("tests/test_lib/test_data.json");
     path
 }
 
