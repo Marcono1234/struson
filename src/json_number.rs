@@ -140,3 +140,71 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
         Ok(Some(exponent_digits_count))
     }
 }
+
+struct BytesSliceNumberBytesProvider<'a> {
+    bytes: &'a [u8],
+    index: usize,
+}
+impl NumberBytesProvider<()> for BytesSliceNumberBytesProvider<'_> {
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ()> {
+        self.index += 1;
+        if self.index < self.bytes.len() {
+            Ok(Some(self.bytes[self.index]))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+pub(crate) fn is_valid_json_number(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+
+    let value_bytes = value.as_bytes();
+    let mut bytes_provider = BytesSliceNumberBytesProvider {
+        bytes: value_bytes,
+        index: 0,
+    };
+    let is_valid = consume_json_number(&mut bytes_provider, value_bytes[0])
+        .unwrap()
+        // Just check that number is valid, ignore exponent digits count
+        .is_some();
+
+    // Is valid and complete string was consumed
+    is_valid && bytes_provider.index >= value_bytes.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn number_validation() {
+        assert!(is_valid_json_number("0"));
+        assert!(is_valid_json_number("-0"));
+        assert!(is_valid_json_number("1230.1"));
+        assert!(is_valid_json_number("1.01e1"));
+        assert!(is_valid_json_number("12.120e+01"));
+        assert!(is_valid_json_number("12.120e-10"));
+
+        assert_eq!(false, is_valid_json_number("00"));
+        assert_eq!(false, is_valid_json_number("-00"));
+        assert_eq!(false, is_valid_json_number("+1"));
+        assert_eq!(false, is_valid_json_number(".1"));
+        assert_eq!(false, is_valid_json_number("1.-1"));
+        assert_eq!(false, is_valid_json_number("1e"));
+        assert_eq!(false, is_valid_json_number("1e+-1"));
+        assert_eq!(false, is_valid_json_number("1e.1"));
+
+        assert_eq!(false, is_valid_json_number(""));
+        assert_eq!(false, is_valid_json_number("1a"));
+        assert_eq!(false, is_valid_json_number("NaN"));
+        assert_eq!(false, is_valid_json_number("nan"));
+        assert_eq!(false, is_valid_json_number("NAN"));
+        assert_eq!(false, is_valid_json_number(&f32::NAN.to_string()));
+        assert_eq!(false, is_valid_json_number("Infinity"));
+        assert_eq!(false, is_valid_json_number("-Infinity"));
+        assert_eq!(false, is_valid_json_number(&f32::INFINITY.to_string()));
+    }
+}

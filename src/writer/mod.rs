@@ -8,7 +8,7 @@ use std::{fmt::Debug, io::Write};
 use duplicate::duplicate_item;
 use thiserror::Error;
 
-use crate::json_number::{consume_json_number, NumberBytesProvider};
+use crate::json_number::is_valid_json_number;
 
 mod stream_writer;
 // Re-export streaming implementation under `writer` module
@@ -682,40 +682,6 @@ pub enum JsonNumberError {
     IoError(#[from] IoError),
 }
 
-struct BytesSliceNumberBytesProvider<'a> {
-    bytes: &'a [u8],
-    index: usize,
-}
-impl NumberBytesProvider<()> for BytesSliceNumberBytesProvider<'_> {
-    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ()> {
-        self.index += 1;
-        if self.index < self.bytes.len() {
-            Ok(Some(self.bytes[self.index]))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-fn is_valid_json_number(value: &str) -> bool {
-    if value.is_empty() {
-        return false;
-    }
-
-    let value_bytes = value.as_bytes();
-    let mut bytes_provider = BytesSliceNumberBytesProvider {
-        bytes: value_bytes,
-        index: 0,
-    };
-    let is_valid = consume_json_number(&mut bytes_provider, value_bytes[0])
-        .unwrap()
-        // Just check that number is valid, ignore exponent digits count
-        .is_some();
-
-    // Is valid and complete string was consumed
-    is_valid && bytes_provider.index >= value_bytes.len()
-}
-
 // Use `duplicate` create to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
 #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
 impl FiniteNumber for type_template {
@@ -880,31 +846,5 @@ mod tests {
         assert_non_finite(f64::NAN);
         assert_non_finite(f64::NEG_INFINITY);
         assert_non_finite(f64::INFINITY);
-    }
-
-    #[test]
-    fn number_validation() {
-        assert!(is_valid_json_number("0"));
-        assert!(is_valid_json_number("-0"));
-        assert!(is_valid_json_number("1230.1"));
-        assert!(is_valid_json_number("1.01e1"));
-        assert!(is_valid_json_number("12.120e+01"));
-        assert!(is_valid_json_number("12.120e-10"));
-
-        assert_eq!(false, is_valid_json_number("00"));
-        assert_eq!(false, is_valid_json_number("-00"));
-        assert_eq!(false, is_valid_json_number("+1"));
-        assert_eq!(false, is_valid_json_number(".1"));
-        assert_eq!(false, is_valid_json_number("1.-1"));
-        assert_eq!(false, is_valid_json_number("1e"));
-        assert_eq!(false, is_valid_json_number("1e+-1"));
-        assert_eq!(false, is_valid_json_number("1e.1"));
-
-        assert_eq!(false, is_valid_json_number("1a"));
-        assert_eq!(false, is_valid_json_number("NaN"));
-        assert_eq!(false, is_valid_json_number("nan"));
-        assert_eq!(false, is_valid_json_number("NAN"));
-        assert_eq!(false, is_valid_json_number("Infinity"));
-        assert_eq!(false, is_valid_json_number("-Infinity"));
     }
 }
