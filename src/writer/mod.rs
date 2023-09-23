@@ -365,7 +365,7 @@ pub trait JsonWriter {
     /// usage by the user.
     /*
      * TODO (custom JSON writer support): Maybe either publicly expose function for validating
-     * that string is valid JSON number, or use wrapping struct whose constructors ensures that
+     * that string is valid JSON number, or use wrapping struct whose constructor ensures that
      * string is valid JSON number.
      * Though that might make usage of the writer more cumbersome.
      */
@@ -396,15 +396,6 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    /*
-     * TODO (custom JSON writer support): The current `FiniteNumber` and `FloatingPointNumber` approach
-     * prevents custom JSON writer implementations from directly using wrapped primitive numbers
-     * (e.g. u8, i64, ...) but requires them to use the string representation.
-     * Maybe an enum for `FiniteNumber` and `FloatingPointNumber` could be used instead? Though enums
-     * can't have private constructors so this would be an issue for `TransferredNumber` which should not
-     * be constructable by users. Additionally, having a wrapping enum type would make writer usage
-     * more cumbersome.
-     */
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError>;
 
     /// Writes a floating point JSON number value
