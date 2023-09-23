@@ -1,6 +1,6 @@
 // Implementation based on:
 // - https://serde.rs/impl-deserializer.html
-// - https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs
+// - https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs
 //   (trying to match it as close as possible)
 
 use std::{
@@ -15,7 +15,10 @@ use serde::{
 };
 use thiserror::Error;
 
-use crate::reader::{JsonReader, ReaderError, ValueType};
+use crate::{
+    json_number::is_valid_json_number,
+    reader::{JsonReader, ReaderError, ValueType},
+};
 
 /// Error which occurred while deserializing a value
 /*
@@ -40,18 +43,29 @@ pub enum DeserializerError {
     MaxNestingDepthExceeded(u32),
     /// The underlying [`JsonReader`] encountered an error
     #[error("{0}")]
+    // TODO: Rename to `JsonReaderError`?
     ReaderError(#[from] ReaderError),
-    /// Parsing a number as integer failed
+    /// Parsing a number failed
+    ///
+    /// The data of this enum variant is a message describing the error.
     #[error("{0}")]
-    ParseIntError(#[from] ParseIntError),
-    /// Parsing a number as floating point number failed
-    #[error("{0}")]
-    ParseFloatError(#[from] ParseFloatError),
+    InvalidNumber(String),
 }
 
 impl serde::de::Error for DeserializerError {
     fn custom<T: Display>(msg: T) -> Self {
         DeserializerError::Custom(msg.to_string())
+    }
+}
+
+impl From<ParseIntError> for DeserializerError {
+    fn from(value: ParseIntError) -> Self {
+        DeserializerError::InvalidNumber(value.to_string())
+    }
+}
+impl From<ParseFloatError> for DeserializerError {
+    fn from(value: ParseFloatError) -> Self {
+        DeserializerError::InvalidNumber(value.to_string())
     }
 }
 
@@ -456,7 +470,7 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
     }
 
     fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1539),
+        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs#L1548),
         // which delegates to `deserialize_str`
         // However, if caller explicitly requests a String, then it might be better to always
         // provide them a String (because the current `deserialize_str` implementation here would
@@ -479,7 +493,7 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
     /// JSON string value consists of valid UTF-8 bytes. It is not possible to read invalid UTF-8
     /// strings with this method.
     fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        // Is equivalent serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1612)
+        // Is equivalent to serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs#L1621)
         match self.json_reader.peek()? {
             ValueType::String => visitor.visit_bytes(self.json_reader.next_str()?.as_bytes()),
             // Note: This matches serde_json's behavior, but does not actually call `visit_bytes`,
@@ -503,7 +517,7 @@ impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeseria
     /// JSON string value consists of valid UTF-8 bytes. It is not possible to read invalid UTF-8
     /// strings with this method.
     fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L1647),
+        // This differs from serde_json's behavior (https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs#L1656),
         // which delegates to `deserialize_bytes`
         // However, if caller explicitly requests a byte buf, then it might be better to always
         // provide them a byte buf (because the current `deserialize_bytes` implementation here would
@@ -812,19 +826,32 @@ struct MapKeyDeserializer<'a> {
     key: &'a str,
 }
 
-// Based on https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L2121-L2137
-macro_rules! deserialize_integer_key {
+// Roughly based on https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs#L2130
+macro_rules! deserialize_number_key {
     ($deserialize:ident => $visit:ident) => {
         fn $deserialize<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-            match self.key.parse() {
-                Ok(integer) => visitor.$visit(integer),
-                Err(_) => visitor.visit_str(self.key),
+            if is_valid_json_number(self.key) {
+                // serde_json calls method on underlying Deserializer; not possible here because only the
+                // key as str is available here
+                if let Ok(number) = self.key.parse() {
+                    visitor.$visit(number)
+                } else {
+                    Err(DeserializerError::InvalidNumber(format!(
+                        "number {} cannot be parsed as desired type",
+                        self.key
+                    )))
+                }
+            } else {
+                Err(DeserializerError::InvalidNumber(format!(
+                    "invalid number: {}",
+                    self.key
+                )))
             }
         }
     };
 }
 
-// Based on https://github.com/serde-rs/json/blob/v1.0.91/src/de.rs#L2139
+// Based on https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs#L2171
 impl<'de> Deserializer<'de> for MapKeyDeserializer<'_> {
     type Error = DeserializerError;
 
@@ -832,17 +859,22 @@ impl<'de> Deserializer<'de> for MapKeyDeserializer<'_> {
         visitor.visit_str(self.key)
     }
 
-    deserialize_integer_key!(deserialize_i8 => visit_i8);
-    deserialize_integer_key!(deserialize_i16 => visit_i16);
-    deserialize_integer_key!(deserialize_i32 => visit_i32);
-    deserialize_integer_key!(deserialize_i64 => visit_i64);
-    deserialize_integer_key!(deserialize_i128 => visit_i128);
+    // This does not match serde_json's behavior, expect for i128 and u128 (and f32 with `float_roundtrip` feature)
+    // serde_json deserializes based on the JSON number format and ignores which `deserialize_...` method was called
+    deserialize_number_key!(deserialize_i8 => visit_i8);
+    deserialize_number_key!(deserialize_i16 => visit_i16);
+    deserialize_number_key!(deserialize_i32 => visit_i32);
+    deserialize_number_key!(deserialize_i64 => visit_i64);
+    deserialize_number_key!(deserialize_i128 => visit_i128);
 
-    deserialize_integer_key!(deserialize_u8 => visit_u8);
-    deserialize_integer_key!(deserialize_u16 => visit_u16);
-    deserialize_integer_key!(deserialize_u32 => visit_u32);
-    deserialize_integer_key!(deserialize_u64 => visit_u64);
-    deserialize_integer_key!(deserialize_u128 => visit_u128);
+    deserialize_number_key!(deserialize_u8 => visit_u8);
+    deserialize_number_key!(deserialize_u16 => visit_u16);
+    deserialize_number_key!(deserialize_u32 => visit_u32);
+    deserialize_number_key!(deserialize_u64 => visit_u64);
+    deserialize_number_key!(deserialize_u128 => visit_u128);
+
+    deserialize_number_key!(deserialize_f32 => visit_f32);
+    deserialize_number_key!(deserialize_f64 => visit_f64);
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         visitor.visit_some(self)
@@ -877,10 +909,21 @@ impl<'de> Deserializer<'de> for MapKeyDeserializer<'_> {
         self.deserialize_bytes(visitor)
     }
 
+    fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.key {
+            "true" => visitor.visit_bool(true),
+            "false" => visitor.visit_bool(false),
+            _ => Err(DeserializerError::invalid_type(
+                Unexpected::Str(self.key),
+                &visitor,
+            )),
+        }
+    }
+
     // TODO: Should this really contain `ignored_any` as well? serde_json behaves the same
     // way but it is not consistent with JsonReaderDeserializer which calls `visit_unit`
     forward_to_deserialize_any! {
-        bool f32 f64 char str string unit unit_struct seq tuple tuple_struct map
+        char str string unit unit_struct seq tuple tuple_struct map
         struct identifier ignored_any
     }
 }
@@ -1021,11 +1064,10 @@ mod tests {
     use serde::de::VariantAccess;
     use serde_json::de::StrRead;
 
+    use super::*;
     use crate::reader::{
         JsonStreamReader, ReaderSettings, SyntaxErrorKind, UnexpectedStructureKind,
     };
-
-    use super::*;
 
     #[derive(PartialEq, Clone, Debug)]
     enum Visited {
@@ -1409,10 +1451,10 @@ mod tests {
         };
     }
 
-    macro_rules! assert_parse_int_error {
+    macro_rules! assert_parse_number_error {
         ($method:ident, [$($json:expr),+]) => {
             for json in [$($json),+] {
-                assert_deserialize_error!(json, $method, DeserializerError::ParseIntError(_) => {});
+                assert_deserialize_error!(json, $method, DeserializerError::InvalidNumber(_) => {});
             }
         };
     }
@@ -1461,7 +1503,7 @@ mod tests {
         assert_deserialized_cmp!("1e1", deserialize_any, [Visited::F64(1e1)]);
         assert_deserialized_cmp!("1E1", deserialize_any, [Visited::F64(1e1)]);
 
-        assert_parse_int_error!(
+        assert_parse_number_error!(
             deserialize_any,
             [
                 // u128::MIN - 1
@@ -1503,7 +1545,7 @@ mod tests {
             let min_off = ((min as i128) - 1).to_string();
             // MAX + 1
             let max_off = ((max as i128) + 1).to_string();
-            assert_parse_int_error!($method, [&min_off, &max_off]);
+            assert_parse_number_error!($method, [&min_off, &max_off]);
 
             assert_deserialize_error!(
                 "true",
@@ -1552,7 +1594,7 @@ mod tests {
             [Visited::I128(i128::MAX)]
         );
 
-        assert_parse_int_error!(
+        assert_parse_number_error!(
             deserialize_i128,
             [
                 // MIN - 1
@@ -1608,7 +1650,7 @@ mod tests {
             [Visited::U128(u128::MAX)]
         );
 
-        assert_parse_int_error!(
+        assert_parse_number_error!(
             deserialize_u128,
             [
                 // MIN - 1
@@ -2031,14 +2073,28 @@ mod tests {
 
         #[test]
         fn string_key_conversion() {
-            // TODO: Add comparison with serde_json Deserializer behavior?
-            //   Might not be easily possible? at least not when trying to call either serde_json::Deserializer.end()
-            //   or JsonReader.consume_trailing_whitespace() at the end
+            // Maybe these macros are too verbose and complex for the functionality they provide
             macro_rules! assert_deserialized_key {
-                ($key_content:expr, |$deserializer:ident, $visitor:ident| $deserializing_block:block, $expected_visited:expr) => {{
-                    let json = "{\"".to_owned() + $key_content + "\": true}";
-                    let mut json_reader = JsonStreamReader::new(json.as_bytes());
-                    let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
+                (
+                    // The content of the object key (without enclosing `"`)
+                    $key_content:expr,
+                    // Creates the reader, which is backing the deserializer (can also be the deserializer itself for serde_json)
+                    |$json:ident| $reader_factory:expr,
+                    // Creates the deserializer from the reader
+                    |$json_reader:ident| $deserializer_factory:expr,
+                    // Performs deserialization of the key
+                    |$deserializer:ident, $visitor:ident| $deserializing_block:block,
+                    // Handles the result of `next_key_seed`
+                    |$key_result:ident, $map:ident| $key_result_handler:block,
+                    // Performs finalization after the deserialization, e.g. consuming trailing whitespace of the JSON
+                    $finalizing_action:block,
+                    // Handles the result of `deserialize_map`
+                    |$map_result:ident, $visited:ident| $map_result_handler:block
+                ) => {{
+                    let $json = "{\"".to_owned() + $key_content + "\": true}";
+                    #[allow(unused_mut)] // for serde_json where `$json_reader == deserializer`
+                    let mut $json_reader = $reader_factory;
+                    let mut deserializer = $deserializer_factory;
 
                     struct MapVisitor<'a> {
                         key_visitor: &'a mut TrackingVisitor,
@@ -2055,12 +2111,12 @@ mod tests {
 
                         fn visit_map<A: serde::de::MapAccess<'de>>(
                             self,
-                            mut map: A,
+                            mut $map: A,
                         ) -> Result<Self::Value, A::Error> {
-                            struct D<'a> {
+                            struct KeyDeserialize<'a> {
                                 key_visitor: &'a mut TrackingVisitor,
                             }
-                            impl<'de> DeserializeSeed<'de> for &mut D<'_> {
+                            impl<'de> DeserializeSeed<'de> for &mut KeyDeserialize<'_> {
                                 type Value = ();
 
                                 fn deserialize<D: Deserializer<'de>>(
@@ -2071,33 +2127,192 @@ mod tests {
                                     $deserializing_block
                                 }
                             }
-                            map.next_key_seed(&mut D {
+                            let $key_result = $map.next_key_seed(&mut KeyDeserialize {
                                 key_visitor: &mut *self.key_visitor,
-                            })?
-                            .unwrap();
+                            });
+                            $key_result_handler
+                        }
+                    }
+
+                    let mut key_visitor = TrackingVisitor::new(EnumVariantHandling::Unit);
+                    let $map_result = deserializer.deserialize_map(&mut MapVisitor {
+                        key_visitor: &mut key_visitor,
+                    });
+                    let $visited = key_visitor.visited;
+                    $map_result_handler;
+                }};
+            }
+
+            macro_rules! assert_deserialized_key_cmp {
+                (
+                    // The content of the object key (without enclosing `"`)
+                    $key_content:expr,
+                    // Performs deserialization of the key
+                    |$deserializer:ident, $visitor:ident| $deserializing_block:block,
+                    // Tested library display name (Struson or serde_json); used for assertion messages
+                    $library_name:ident,
+                    // Handles the result of `next_key_seed`
+                    |$key_result:ident, $map:ident| $key_result_handler:block,
+                    // Whether to perform finalization after the deserialization (should only be `true` for successful deserialization)
+                    $perform_finalization:expr,
+                    // Handles the result of `deserialize_map`
+                    |$map_result:ident, $visited:ident| $map_result_handler_struson:block, $map_result_handler_serde_json:block
+                ) => {{
+                    {
+                        const $library_name: &str = "Struson";
+                        assert_deserialized_key!(
+                            $key_content,
+                            |json| JsonStreamReader::new(json.as_bytes()),
+                            |json_reader| JsonReaderDeserializer::new(&mut json_reader),
+                            |$deserializer, $visitor| $deserializing_block,
+                            |$key_result, $map| $key_result_handler,
+                            {
+                                if $perform_finalization {
+                                    json_reader.consume_trailing_whitespace()?;
+                                }
+                            },
+                            |$map_result, $visited| $map_result_handler_struson
+                        );
+                    }
+
+                    {
+                        const $library_name: &str = "serde_json";
+                        assert_deserialized_key!(
+                            $key_content,
+                            |json| serde_json::Deserializer::from_str(&json),
+                            // Reader is already the Deserializer
+                            |json_reader| json_reader,
+                            |$deserializer, $visitor| $deserializing_block,
+                            |$key_result, $map| $key_result_handler,
+                            {
+                                if $perform_finalization {
+                                    json_reader.end()?;
+                                }
+                            },
+                            |$map_result, $visited| $map_result_handler_serde_json
+                        );
+                    }
+                }};
+            }
+
+            macro_rules! assert_deserialized_key_success {
+                ($key_content:expr, |$deserializer:ident, $visitor:ident| $deserializing_block:block, $expected_visited:expr) => {{
+                    assert_deserialized_key_cmp!(
+                        $key_content,
+                        |$deserializer, $visitor| $deserializing_block,
+                        LIBRARY_NAME,
+                        |key_result, map| {
+                            key_result.expect(&format!("key deserialization should have been successful for {LIBRARY_NAME}"));
                             // Read hardcoded map entry value `true`
                             assert_eq!(true, map.next_value::<bool>()?);
 
                             assert!(map.next_key::<String>()?.is_none());
                             Ok(())
+                        },
+                        true, // perform finalization
+                        |map_result, visited|
+                        // Struson assertions
+                        {
+                            map_result.expect(&format!("map deserialization should have been successful for {LIBRARY_NAME}"));
+                            assert_eq!(
+                                &$expected_visited as &[Visited], visited,
+                                "expected visitor calls do not match {LIBRARY_NAME} visitor calls"
+                            );
+                        },
+                        // serde_json assertions
+                        {
+                            // Normalize expected Visited types since serde_json only supports u64, i64 and f64
+                            // serde_json parses only depending on format of JSON number, regardless of called `deserialize_...` method;
+                            // for simplicity only cover the cases used by the tests
+                            let expected_visited: Vec<Visited> = $expected_visited
+                                .into_iter()
+                                .map(|v| match v {
+                                    Visited::U8(n) => Visited::U64(n.into()),
+                                    Visited::I8(n) => Visited::U64(n.try_into().unwrap()),
+                                    // Convert to string first to avoid for example f32 `1.2` becoming f64 `1.2000000476837158`
+                                    Visited::F32(n) => Visited::F64(f64::from_str(&n.to_string()).unwrap()),
+                                    v => v,
+                                })
+                                .collect();
+
+                            // Normalize Visited types since JsonReaderDeserializer does not support borrowed strings and bytes
+                            // with lifetime 'de, but serde_json does
+                            let visited: Vec<Visited> = visited
+                                .into_iter()
+                                .map(|v| match v {
+                                    Visited::BorrowedStr(s) => Visited::Str(s),
+                                    Visited::BorrowedBytes(b) => Visited::Bytes(b),
+                                    v => v,
+                                })
+                                .collect();
+
+                            map_result.expect(&format!("map deserialization should have been successful for {LIBRARY_NAME}"));
+                            assert_eq!(
+                                expected_visited, visited,
+                                "expected visitor calls do not match {LIBRARY_NAME} visitor calls"
+                            );
                         }
-                    }
-
-                    let mut key_visitor = TrackingVisitor::new(EnumVariantHandling::Unit);
-                    deserializer
-                        .deserialize_map(&mut MapVisitor {
-                            key_visitor: &mut key_visitor,
-                        })
-                        .unwrap();
-                    json_reader.consume_trailing_whitespace().unwrap();
-
-                    assert_eq!(&$expected_visited as &[Visited], key_visitor.visited);
+                    );
                 }};
             }
 
-            assert_deserialized_key!("1", |d, v| { d.deserialize_i8(v) }, [Visited::I8(1)]);
-            assert_deserialized_key!("5", |d, v| { d.deserialize_u128(v) }, [Visited::U128(5)]);
-            assert_deserialized_key!(
+            macro_rules! assert_deserialized_key_error {
+                ($key_content:expr, |$deserializer:ident, $visitor:ident| $deserializing_block:block, $err_pattern:pat_param => $err_assertion:expr) => {{
+                    assert_deserialized_key_cmp!(
+                        $key_content,
+                        |$deserializer, $visitor| $deserializing_block,
+                        LIBRARY_NAME,
+                        |key_result, map| {
+                            match key_result {
+                                Err(e) => Err(e), // pass error to caller (and implicitly change T of Result<T, _>)
+                                _ => panic!("Should have returned error for {LIBRARY_NAME}, but was: {key_result:?}"),
+                            }
+                        },
+                        false, // don't perform finalization because JSON was not fully consumed
+                        |map_result, _visited|
+                        // Struson assertions
+                        {
+                            match map_result {
+                                Err($err_pattern) => $err_assertion,
+                                _ => panic!("Should have returned error for Struson, but was: {map_result:?}"),
+                            }
+                        },
+                        // serde_json assertions
+                        {
+                            // Only assert that error occurred, but don't check implementation specific error message
+                            assert!(map_result.is_err(), "Should have returned error for serde_json, but was: {map_result:?}")
+                        }
+                    );
+                }};
+            }
+
+            assert_deserialized_key_success!(
+                "true",
+                |d, v| { d.deserialize_bool(v) },
+                [Visited::Bool(true)]
+            );
+            assert_deserialized_key_success!(
+                "false",
+                |d, v| { d.deserialize_bool(v) },
+                [Visited::Bool(false)]
+            );
+            assert_deserialized_key_success!("1", |d, v| { d.deserialize_i8(v) }, [Visited::I8(1)]);
+            assert_deserialized_key_success!(
+                "5",
+                |d, v| { d.deserialize_u128(v) },
+                [Visited::U128(5)]
+            );
+            assert_deserialized_key_success!(
+                "1.2",
+                |d, v| { d.deserialize_f32(v) },
+                [Visited::F32(1.2)]
+            );
+            assert_deserialized_key_success!(
+                "4.5e-6",
+                |d, v| { d.deserialize_f64(v) },
+                [Visited::F64(4.5e-6)]
+            );
+            assert_deserialized_key_success!(
                 "true",
                 |d, v| { d.deserialize_option(v) },
                 [
@@ -2106,18 +2321,18 @@ mod tests {
                     Visited::SomeEnd
                 ]
             );
-            assert_deserialized_key!(
+            assert_deserialized_key_success!(
                 "abc",
                 |d, v| { d.deserialize_bytes(v) },
                 [Visited::Bytes("abc".as_bytes().to_owned())]
             );
-            assert_deserialized_key!(
+            assert_deserialized_key_success!(
                 "abc",
                 |d, v| { d.deserialize_byte_buf(v) },
                 [Visited::Bytes("abc".as_bytes().to_owned())]
             );
 
-            assert_deserialized_key!(
+            assert_deserialized_key_success!(
                 "abc",
                 |d, v| { d.deserialize_newtype_struct("name", v) },
                 [
@@ -2127,7 +2342,7 @@ mod tests {
                 ]
             );
 
-            assert_deserialized_key!(
+            assert_deserialized_key_success!(
                 "abc",
                 |d, v| { d.deserialize_enum("name", &["abc"], v) },
                 [
@@ -2141,20 +2356,60 @@ mod tests {
             duplicate::duplicate! {
                 [
                     method;
-                    [deserialize_bool];
-                    [deserialize_f32];
                     [deserialize_seq];
                     [deserialize_map];
                 ]
-                assert_deserialized_key!("abc", |d, v| {d.method(v)}, [Visited::Str("abc".to_owned())]);
+                assert_deserialized_key_success!("abc", |d, v| {d.method(v)}, [Visited::Str("abc".to_owned())]);
             }
 
             // Currently `deserialize_ignored_any` calls `visit_str`; this matches serde_json's behavior,
             // but maybe `visit_none` would make more sense (and be consistent with JsonReaderDeserializer)
-            assert_deserialized_key!(
+            assert_deserialized_key_success!(
                 "abc",
                 |d, v| { d.deserialize_ignored_any(v) },
                 [Visited::Str("abc".to_owned())]
+            );
+
+            assert_deserialized_key_error!(
+                "text",
+                |d, v| { d.deserialize_bool(v) },
+                DeserializerError::Custom(message) => assert_eq!("invalid type: string \"text\", expected custom-test-value", message)
+            );
+
+            assert_deserialized_key_error!(
+                "text",
+                |d, v| { d.deserialize_i32(v) },
+                DeserializerError::InvalidNumber(message) => assert_eq!("invalid number: text", message)
+            );
+            assert_deserialized_key_error!(
+                "NaN",
+                |d, v| { d.deserialize_f32(v) },
+                DeserializerError::InvalidNumber(message) => assert_eq!("invalid number: NaN", message)
+            );
+            // Deserializes as u128 here because for other number types this only fails for Struson but not serde_json
+            // because serde_json ignores which exact `deserialize_...` was called and deserializes based on the JSON number format
+            assert_deserialized_key_error!(
+                "-5",
+                |d, v| { d.deserialize_u128(v) },
+                DeserializerError::InvalidNumber(message) => assert_eq!("number -5 cannot be parsed as desired type", message)
+            );
+
+            // Should validate that number is valid JSON number, even if normal parsing functions can parse it
+            let number_str = "001";
+            let _ = u32::from_str(number_str).unwrap(); // verify that test is implemented correctly
+            assert_deserialized_key_error!(
+                number_str,
+                |d, v| { d.deserialize_u32(v) },
+                DeserializerError::InvalidNumber(message) => assert_eq!(format!("invalid number: {number_str}"), message)
+            );
+
+            // Should validate that number is valid JSON number, even if normal parsing functions can parse it
+            let number_str = ".1";
+            let _ = f32::from_str(number_str).unwrap(); // verify that test is implemented correctly
+            assert_deserialized_key_error!(
+                number_str,
+                |d, v| { d.deserialize_f32(v) },
+                DeserializerError::InvalidNumber(message) => assert_eq!(format!("invalid number: {number_str}"), message)
             );
         }
 

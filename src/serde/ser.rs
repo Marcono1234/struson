@@ -1,13 +1,13 @@
 use std::fmt::Display;
 
-use crate::writer::{JsonNumberError, JsonWriter};
+use crate::writer::{FiniteNumber, FloatingPointNumber, JsonNumberError, JsonWriter};
 
 use serde::ser::{Impossible, Serialize, Serializer};
 use thiserror::Error;
 
 // Implementation based on:
 // - https://serde.rs/impl-serializer.html
-// - https://github.com/serde-rs/json/blob/v1.0.91/src/ser.rs
+// - https://github.com/serde-rs/json/blob/v1.0.107/src/ser.rs
 //   (trying to match it as close as possible)
 
 type IoError = std::io::Error;
@@ -312,6 +312,8 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// This implementation serializes the data as JSON array containing the byte values
     /// as JSON numbers.
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        // serde_json allows to customize this, see https://github.com/serde-rs/json/pull/1039
+        // not sure if this can easily be supported here, and if this is worth it
         self.json_writer.begin_array()?;
         for b in v {
             self.json_writer.number_value(*b)?;
@@ -876,7 +878,7 @@ impl<W: JsonWriter> serde::ser::SerializeStructVariant for SerializeStructVarian
 
 /// Serializer for serializing a map key as string
 ///
-/// Tries to match serde_json's internal [`MapKeySerializer`](https://github.com/serde-rs/json/blob/v1.0.91/src/ser.rs#L792)
+/// Tries to match serde_json's internal [`MapKeySerializer`](https://github.com/serde-rs/json/blob/v1.0.107/src/ser.rs#L791)
 /// behavior.
 #[derive(Debug)]
 struct MapKeyStringSerializer<'a, W: JsonWriter> {
@@ -884,11 +886,24 @@ struct MapKeyStringSerializer<'a, W: JsonWriter> {
 }
 
 impl<W: JsonWriter> MapKeyStringSerializer<'_, W> {
-    #[inline(always)]
-    fn serialize_number_key<T: ToString>(&mut self, number: T) -> Result<(), SerializerError> {
-        // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
-        self.json_writer.name(&number.to_string())?;
-        Ok(())
+    fn serialize_finite_number_key<N: FiniteNumber>(
+        &mut self,
+        number: N,
+    ) -> Result<(), SerializerError> {
+        // For consistency use same number serialization logic as JsonWriter
+        number
+            .use_json_number(|s| self.json_writer.name(s))
+            .map_err(SerializerError::IoError)
+    }
+
+    fn serialize_fp_number_key<N: FloatingPointNumber>(
+        &mut self,
+        number: N,
+    ) -> Result<(), SerializerError> {
+        // For consistency use same number serialization logic as JsonWriter
+        number
+            .use_json_number(|s| self.json_writer.name(s))
+            .map_err(map_number_err)
     }
 }
 
@@ -907,54 +922,69 @@ impl<W: JsonWriter> Serializer for &mut MapKeyStringSerializer<'_, W> {
     type SerializeStruct = Impossible<(), Self::Error>;
     type SerializeStructVariant = Impossible<(), Self::Error>;
 
+    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
+        self.serialize_str(if v { "true" } else { "false" })
+    }
+
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
     }
 
     fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
-        self.serialize_number_key(v)
+        self.serialize_finite_number_key(v)
+    }
+
+    fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
+        self.serialize_fp_number_key(v)
+    }
+
+    fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
+        self.serialize_fp_number_key(v)
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        self.json_writer.name(&v.to_string())?;
-        Ok(())
+        self.serialize_str(&v.to_string())
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
         self.json_writer.name(v)?;
         Ok(())
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error> {
+        value.serialize(self)
     }
 
     fn serialize_unit_variant(
@@ -963,8 +993,7 @@ impl<W: JsonWriter> Serializer for &mut MapKeyStringSerializer<'_, W> {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        self.json_writer.name(variant)?;
-        Ok(())
+        self.serialize_str(variant)
     }
 
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
@@ -977,27 +1006,11 @@ impl<W: JsonWriter> Serializer for &mut MapKeyStringSerializer<'_, W> {
 
     /* The following types are not supported as key */
 
-    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        err_key_not_string()
-    }
-
-    fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
-        err_key_not_string()
-    }
-
-    fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
-        err_key_not_string()
-    }
-
     fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
         err_key_not_string()
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        err_key_not_string()
-    }
-
-    fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error> {
         err_key_not_string()
     }
 
@@ -1080,9 +1093,8 @@ mod tests {
         Serialize, Serializer,
     };
 
-    use crate::writer::{JsonStreamWriter, JsonWriter};
-
     use super::{JsonWriterSerializer, SerializerError};
+    use crate::writer::{JsonStreamWriter, JsonWriter};
 
     fn assert_serialized<
         F: Fn(
@@ -1452,13 +1464,25 @@ mod tests {
                 |s| {
                     let mut map = s.serialize_map(None)?;
 
+                    map.serialize_key(&true)?;
+                    map.serialize_value(&0)?;
+
+                    map.serialize_key(&false)?;
+                    map.serialize_value(&0)?;
+
                     map.serialize_key(&2_u8)?;
                     map.serialize_value(&0)?;
 
                     map.serialize_key(&3_i128)?;
                     map.serialize_value(&0)?;
 
+                    map.serialize_key(&1.23_f32)?;
+                    map.serialize_value(&0)?;
+
                     map.serialize_key(&'a')?;
+                    map.serialize_value(&0)?;
+
+                    map.serialize_key(&Some("value"))?;
                     map.serialize_value(&0)?;
 
                     struct UnitVariant;
@@ -1489,33 +1513,53 @@ mod tests {
 
                     map.end()
                 },
-                r#"{"2":0,"3":0,"a":0,"UnitVariant":0,"NewtypeStruct":0}"#
+                r#"{"true":0,"false":0,"2":0,"3":0,"1.23":0,"a":0,"value":0,"UnitVariant":0,"NewtypeStruct":0}"#
             );
         }
 
         #[test]
         fn string_key_error() {
-            fn assert_map_key_error<K: Serialize>(key: K) {
-                let mut json_writer = JsonStreamWriter::new(std::io::sink());
-                let mut serializer = JsonWriterSerializer::new(&mut json_writer);
-                let mut map = serializer.serialize_map(None).unwrap();
-                match map.serialize_key(&key) {
-                    Ok(_) => panic!("Should have failed"),
-                    Err(e) => match e {
-                        SerializerError::MapKeyNotString => {}
-                        _ => panic!("Unexpected error: {e}"),
-                    },
-                }
+            macro_rules! assert_map_key_error {
+                ($key:expr, $err_pattern:pat_param => $err_assertion:expr) => {
+                    {
+                        let mut json_writer = JsonStreamWriter::new(std::io::sink());
+                        let mut serializer = JsonWriterSerializer::new(&mut json_writer);
+                        let mut map = serializer.serialize_map(None).unwrap();
+                        match map.serialize_key(&$key) {
+                            Ok(_) => panic!("Should have failed for Struson"),
+                            Err(e) => match e {
+                                $err_pattern => $err_assertion,
+                                _ => panic!("Unexpected error for Struson: {e:?}"),
+                            },
+                        }
+                    }
+                    {
+                        let mut serializer = serde_json::Serializer::new(std::io::sink());
+                        let mut map = serializer.serialize_map(None).unwrap();
+                        match map.serialize_key(&$key) {
+                            Ok(_) => panic!("Should have failed for serde_json"),
+                            // Don't check exact serde_json error message
+                            Err(_) => {},
+                        }
+                    }
+                };
+                ($key:expr, $err_pattern:pat_param) => {
+                    assert_map_key_error!($key, $err_pattern => {});
+                };
             }
 
-            assert_map_key_error(2.1_f32);
-            assert_map_key_error(2.1_f64);
+            assert_map_key_error!(
+                f32::NAN,
+                SerializerError::InvalidNumber(message) => assert_eq!(format!("non-finite number: {}", f32::NAN), message)
+            );
+            assert_map_key_error!(
+                f64::INFINITY,
+                SerializerError::InvalidNumber(message) => assert_eq!(format!("non-finite number: {}", f64::INFINITY), message)
+            );
 
-            assert_map_key_error([1_u8]);
+            assert_map_key_error!([1_u8], SerializerError::MapKeyNotString);
 
-            assert_map_key_error(Some("a"));
-
-            assert_map_key_error(vec!["a"]);
+            assert_map_key_error!(vec!["a"], SerializerError::MapKeyNotString);
 
             struct NewtypeStruct<N: Serialize>(N);
             impl<N: Serialize> Serialize for NewtypeStruct<N> {
@@ -1524,7 +1568,7 @@ mod tests {
                 }
             }
 
-            assert_map_key_error(NewtypeStruct(2.1_f32));
+            assert_map_key_error!(NewtypeStruct(vec!["a"]), SerializerError::MapKeyNotString);
         }
 
         fn use_map_serializer<

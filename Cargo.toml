@@ -16,13 +16,14 @@ thiserror = "1.0.40"
 strum = { version = "0.25.0", features = ["derive"] }
 duplicate = "1.0.0"
 
-serde = { version = "1.0.159", optional = true }
+serde = { version = "1.0.188", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
-serde = "1.0.159"
-serde_json = "1.0.95"
+serde = "1.0.188"
+# When updating serde_json, adjust Struson Serde integration behavior to match serde_json
+serde_json = "1.0.107"
 # Used for verifying in allocation tests that no allocations occur in certain situations
 # Specify Git revision because version with "backtrace" feature has not been released yet
 assert_no_alloc = { git = "https://github.com/Windfisch/rust-assert-no-alloc.git", rev = "d31f2d5f550ce339d1c2f0c1ab7da951224b20df", features = [
