@@ -529,6 +529,11 @@ impl Display for JsonErrorLocation {
 }
 
 /// JSON syntax error
+/*
+ * This is a separate public struct because StringValueReader uses it when wrapping syntax error
+ * inside std::io::Error. Otherwise, this should be private, and `ReaderError::SyntaxError` should
+ * be a struct with these fields for consistency with the other error variants and for easier usage.
+ */
 #[derive(Error, PartialEq, Eq, Clone, Debug)]
 #[error("JSON syntax error {kind} at {location}")]
 pub struct JsonSyntaxError {
@@ -629,6 +634,7 @@ pub enum UnexpectedStructureKind {
 /// Error which occurred while reading from a JSON reader
 #[non_exhaustive]
 #[derive(Error, Debug)]
+// TODO: Rename to `JsonReaderError? current name might sound like this is only for errors from underlying `Read`
 pub enum ReaderError {
     /// A syntax error was encountered
     #[error("syntax error: {0}")]
@@ -681,8 +687,19 @@ pub enum ReaderError {
     },
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
-    #[error("IO error: {0}")]
-    IoError(#[from] IoError),
+    #[error("IO error '{error}' at (roughly) {location}")]
+    IoError {
+        /// The IO error which occurred
+        error: IoError,
+        /// Rough location where the error occurred within the JSON document
+        ///
+        /// The location might not be completely accuracte. Since the IO error might have
+        /// been returned by the underlying reader, it might not be related to the content
+        /// of the JSON document. For example the location might still point to the beginning
+        /// of the current JSON value while the IO error actually occurred multiple bytes
+        /// ahead while fetching more data from the underlying reader.
+        location: JsonErrorLocation,
+    },
 }
 
 /// Error which occurred while calling [`JsonReader::transfer_to`]

@@ -43,7 +43,7 @@ pub enum DeserializerError {
     MaxNestingDepthExceeded(u32),
     /// The underlying [`JsonReader`] encountered an error
     #[error("{0}")]
-    // TODO: Rename to `JsonReaderError`?
+    // TODO: Rename to `JsonReaderError`? see `reader::ReaderError` TODO
     ReaderError(#[from] ReaderError),
     /// Parsing a number failed
     ///
@@ -1066,7 +1066,8 @@ mod tests {
 
     use super::*;
     use crate::reader::{
-        JsonStreamReader, ReaderSettings, SyntaxErrorKind, UnexpectedStructureKind,
+        JsonErrorLocation, JsonStreamReader, ReaderSettings, SyntaxErrorKind,
+        UnexpectedStructureKind,
     };
 
     #[derive(PartialEq, Clone, Debug)]
@@ -1809,10 +1810,15 @@ mod tests {
             let visitor = &mut TrackingVisitor::new(EnumVariantHandling::Unit);
             let result = deserializer.method(visitor);
             match result {
-                Err(DeserializerError::ReaderError(ReaderError::IoError(e))) => {
-                    assert_eq!(ErrorKind::InvalidData, e.kind());
-                    assert_eq!("invalid UTF-8 data", e.to_string());
-                },
+                Err(DeserializerError::ReaderError(ReaderError::IoError { error, location })) => {
+                    assert_eq!(ErrorKind::InvalidData, error.kind());
+                    assert_eq!("invalid UTF-8 data", error.to_string());
+                    assert_eq!(JsonErrorLocation {
+                        path: "$".to_owned(),
+                        line: 0,
+                        column: 1,
+                    }, location);
+                }
                 r => panic!("Unexpected result: {r:?}"),
             }
 

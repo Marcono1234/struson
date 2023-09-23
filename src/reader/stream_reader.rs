@@ -37,18 +37,31 @@ enum PeekedValue {
 }
 
 #[derive(Error, Debug)]
+#[error("IO error '{0}' at (roughly) {1}")]
+struct ReaderIoError(IoError, JsonErrorLocation);
+
+impl From<ReaderIoError> for ReaderError {
+    fn from(value: ReaderIoError) -> Self {
+        ReaderError::IoError {
+            error: value.0,
+            location: value.1,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
 enum StringReadingError {
     #[error("syntax error: {0}")]
     SyntaxError(#[from] JsonSyntaxError),
-    #[error("IO error: {0}")]
-    IoError(#[from] IoError),
+    #[error("{0}")]
+    IoError(#[from] ReaderIoError),
 }
 
 impl From<StringReadingError> for ReaderError {
     fn from(e: StringReadingError) -> Self {
         match e {
             StringReadingError::SyntaxError(e) => ReaderError::SyntaxError(e),
-            StringReadingError::IoError(e) => ReaderError::IoError(e),
+            StringReadingError::IoError(e) => e.into(),
         }
     }
 }
@@ -438,7 +451,7 @@ impl<R: Read> JsonStreamReader<R> {
     ///
     /// The [`buf_pos`] is set to `start_pos`. If the end of the input has been
     /// reached `false` is returned.
-    fn fill_buffer(&mut self, start_pos: usize) -> Result<bool, IoError> {
+    fn fill_buffer(&mut self, start_pos: usize) -> Result<bool, ReaderIoError> {
         if self.reached_eof {
             return Ok(false);
         }
@@ -450,7 +463,11 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         self.buf_pos = start_pos;
-        self.buf_end_pos = start_pos + self.reader.read(&mut self.buf[start_pos..])?;
+        let read_bytes_count = match self.reader.read(&mut self.buf[start_pos..]) {
+            Ok(read_bytes_count) => read_bytes_count,
+            Err(e) => return Err(ReaderIoError(e, self.create_error_location())),
+        };
+        self.buf_end_pos = start_pos + read_bytes_count;
         if self.buf_end_pos == start_pos {
             self.reached_eof = true;
             Ok(false)
@@ -465,7 +482,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// If the end of the input has been reached, `false` is returned.
     /// Otherwise the caller can read the next byte from [`buf`] starting
     /// at [`start_pos`].
-    fn ensure_non_empty_buffer(&mut self) -> Result<bool, IoError> {
+    fn ensure_non_empty_buffer(&mut self) -> Result<bool, ReaderIoError> {
         if self.buf_pos < self.buf_end_pos {
             return Ok(true);
         }
@@ -475,7 +492,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// Peeks at the next byte without consuming it
     ///
     /// Returns `None` if the end of the input has been reached.
-    fn peek_byte(&mut self) -> Result<Option<u8>, IoError> {
+    fn peek_byte(&mut self) -> Result<Option<u8>, ReaderIoError> {
         if self.ensure_non_empty_buffer()? {
             Ok(Some(self.buf[self.buf_pos]))
         } else {
@@ -916,6 +933,15 @@ impl<R: Read> JsonStreamReader<R> {
 trait Utf8MultibyteReader {
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError>;
 
+    fn create_error_location(&self) -> JsonErrorLocation;
+
+    fn invalid_utf8_err<'a>(&self) -> Result<&'a [u8], StringReadingError> {
+        Err(StringReadingError::IoError(ReaderIoError(
+            IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"),
+            self.create_error_location(),
+        )))
+    }
+
     /// Reads a UTF-8 char consisting of multiple bytes
     ///
     /// `byte0` is the first byte which has already been read by the caller. `destination_buf` is
@@ -926,23 +952,16 @@ trait Utf8MultibyteReader {
         byte0: u8,
         destination_buf: &'a mut [u8; utf8::MAX_BYTES_PER_CHAR],
     ) -> Result<&'a [u8], StringReadingError> {
-        fn invalid_utf8_err<'a>() -> Result<&'a [u8], StringReadingError> {
-            Err(StringReadingError::IoError(IoError::new(
-                ErrorKind::InvalidData,
-                "invalid UTF-8 data",
-            )))
-        }
-
         let result_slice: &'a mut [u8];
         let byte1 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
         if !utf8::is_continuation(byte1) {
-            return invalid_utf8_err();
+            return self.invalid_utf8_err();
         }
 
         if utf8::is_2byte_start(byte0) {
             if !utf8::is_valid_2bytes(byte0, byte1) {
-                return invalid_utf8_err();
+                return self.invalid_utf8_err();
             }
 
             result_slice = &mut destination_buf[..2];
@@ -952,12 +971,12 @@ trait Utf8MultibyteReader {
             let byte2 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
             if !utf8::is_continuation(byte2) {
-                return invalid_utf8_err();
+                return self.invalid_utf8_err();
             }
 
             if utf8::is_3byte_start(byte0) {
                 if !utf8::is_valid_3bytes(byte0, byte1, byte2) {
-                    return invalid_utf8_err();
+                    return self.invalid_utf8_err();
                 }
 
                 result_slice = &mut destination_buf[..3];
@@ -968,10 +987,10 @@ trait Utf8MultibyteReader {
                 let byte3 = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
                 if !utf8::is_continuation(byte3) {
-                    return invalid_utf8_err();
+                    return self.invalid_utf8_err();
                 }
                 if !utf8::is_valid_4bytes(byte0, byte1, byte2, byte3) {
-                    return invalid_utf8_err();
+                    return self.invalid_utf8_err();
                 }
 
                 result_slice = &mut destination_buf[..4];
@@ -980,7 +999,7 @@ trait Utf8MultibyteReader {
                 result_slice[2] = byte2;
                 result_slice[3] = byte3;
             } else {
-                return invalid_utf8_err();
+                return self.invalid_utf8_err();
             }
         }
         Ok(result_slice)
@@ -992,6 +1011,10 @@ trait Utf8MultibyteReader {
 impl<R: Read> Utf8MultibyteReader for JsonStreamReader<R> {
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
         self.read_byte(eof_error_kind)
+    }
+
+    fn create_error_location(&self) -> JsonErrorLocation {
+        self.create_error_location()
     }
 }
 
@@ -1429,6 +1452,10 @@ mod bytes_value_reader {
             // Note: Don't need to skip byte because it will be part of the final value
             self.0.read_byte(eof_error_kind)
         }
+
+        fn create_error_location(&self) -> JsonErrorLocation {
+            self.0.json_reader.create_error_location()
+        }
     }
 
     // 'newtype pattern' to avoid leaking `read_byte` implementation directly for BytesValueReader (and to avoid ambiguity)
@@ -1461,6 +1488,7 @@ impl<R: Read> JsonStreamReader<R> {
     ) -> Result<bool, StringReadingError> {
         let byte = self.read_byte(SyntaxErrorKind::IncompleteDocument)?;
 
+        let mut reached_end = false;
         let mut consumed_chars_count = 1;
         match byte {
             // Read escape sequence
@@ -1496,8 +1524,7 @@ impl<R: Read> JsonStreamReader<R> {
                 }
             }
             b'"' => {
-                self.column += 1;
-                return Ok(true);
+                reached_end = true;
             }
             // Control characters must be written as Unicode escape
             0x00..=0x1F => {
@@ -1522,7 +1549,7 @@ impl<R: Read> JsonStreamReader<R> {
 
         // Update column afterwards, so in case of error start position of escape sequence or multi-byte UTF-8 char is reported
         self.column += consumed_chars_count;
-        Ok(false)
+        Ok(reached_end)
     }
 
     fn read_all_string_bytes<C: FnMut(u8)>(
@@ -1793,15 +1820,15 @@ struct SkippingNumberBytesReader<'j, R: Read> {
     json_reader: &'j mut JsonStreamReader<R>,
     consumed_bytes: u32,
 }
-impl<'j, R: Read> NumberBytesProvider<IoError> for SkippingNumberBytesReader<'j, R> {
-    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, IoError> {
+impl<'j, R: Read> NumberBytesProvider<ReaderIoError> for SkippingNumberBytesReader<'j, R> {
+    fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ReaderIoError> {
         // Should not fail since last peek_byte() succeeded
         self.json_reader.skip_peeked_byte();
         self.consumed_bytes += 1;
         self.json_reader.peek_byte()
     }
 }
-impl<R: Read> NumberBytesReader<(), IoError> for SkippingNumberBytesReader<'_, R> {
+impl<R: Read> NumberBytesReader<(), ReaderIoError> for SkippingNumberBytesReader<'_, R> {
     fn get_consumed_bytes_count(&self) -> u32 {
         self.consumed_bytes
     }
@@ -2358,7 +2385,11 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
                     StringReadingError::SyntaxError(e) => {
                         return Err(IoError::new(ErrorKind::Other, e))
                     }
-                    StringReadingError::IoError(e) => return Err(e),
+                    StringReadingError::IoError(e) => {
+                        // Note: Could instead also directly return `Err(e.0)`; that would allow user to
+                        // inspect IO error, but would on the other hand lose location information
+                        return Err(IoError::new(ErrorKind::Other, e));
+                    }
                 },
             }
         }
@@ -2860,14 +2891,13 @@ mod tests {
             bytes.push(b'"');
             let mut json_reader = JsonStreamReader::new(bytes.as_slice());
             match json_reader.next_string() {
-                Ok(_) => panic!("Test should have failed for: {:?}", string_content),
-                Err(e) => match e {
-                    ReaderError::IoError(e) => {
-                        assert_eq!(ErrorKind::InvalidData, e.kind());
-                        assert_eq!("invalid UTF-8 data", e.to_string());
-                    }
-                    other => panic!("Unexpected error: {other}"),
-                },
+                Err(ReaderError::IoError { error, location }) => {
+                    assert_eq!(ErrorKind::InvalidData, error.kind());
+                    assert_eq!("invalid UTF-8 data", error.to_string());
+                    assert_eq!("$", location.path);
+                    assert_eq!(0, location.line);
+                }
+                result => panic!("Unexpected result for '{string_content:?}': {result:?}"),
             }
         }
 
@@ -3003,6 +3033,24 @@ mod tests {
                         }
                     },
                     cause
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn string_reader_utf8_error() -> TestResult {
+        let mut json_reader = JsonStreamReader::new(b"\"\x80\"" as &[u8]);
+        let reader = json_reader.next_string_reader()?;
+
+        match std::io::read_to_string(reader) {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => {
+                assert_eq!(ErrorKind::Other, e.kind());
+                assert_eq!(
+                    "IO error 'invalid UTF-8 data' at (roughly) line 0, column 1 at path $",
+                    e.get_ref().unwrap().to_string()
                 );
             }
         }
@@ -4697,15 +4745,24 @@ mod tests {
                 ..Default::default()
             },
         );
-        match json_reader.peek() {
-            Ok(_) => panic!("Test should have failed"),
-            Err(e) => match e {
-                ReaderError::IoError(e) => {
-                    assert_eq!(ErrorKind::InvalidData, e.kind());
-                    assert_eq!("invalid UTF-8 data", e.to_string());
-                }
-                other => panic!("Unexpected error: {other}"),
-            },
+        match &json_reader.peek() {
+            e @ Err(ReaderError::IoError { error, location }) => {
+                assert_eq!(ErrorKind::InvalidData, error.kind());
+                assert_eq!("invalid UTF-8 data", error.to_string());
+                assert_eq!(
+                    &JsonErrorLocation {
+                        path: "$".to_owned(),
+                        line: 0,
+                        column: 2,
+                    },
+                    location
+                );
+                assert_eq!(
+                    "IO error 'invalid UTF-8 data' at (roughly) line 0, column 2 at path $",
+                    e.as_ref().unwrap_err().to_string()
+                );
+            }
+            result => panic!("Unexpected result: {result:?}"),
         }
 
         Ok(())
