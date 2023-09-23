@@ -20,9 +20,10 @@ args = ["build", "--all-targets"]
 [tasks.test-default]
 command = "cargo"
 # Important: Don't use `--all-targets` here; that would exclude doc tests (see https://github.com/rust-lang/cargo/issues/6669)
-# and would include benchmarks, which should not be executed here
+# Benchmark tests are performed further below; could include them here for this execution in the future though
 args = ["test"]
 dependencies = ["build-default"]
+
 
 # Serde interoperability feature
 [tasks.build-serde-interop]
@@ -32,10 +33,17 @@ args = ["build", "--all-targets", "--features", "serde"]
 [tasks.test-serde-interop]
 command = "cargo"
 # Important: Don't use `--all-targets` here; that would exclude doc tests (see https://github.com/rust-lang/cargo/issues/6669)
-# and would include benchmarks, which should not be executed here
+# Benchmark tests are performed further below; could include them here for this execution in the future though
 args = ["test", "--features", "serde"]
 dependencies = ["build-serde-interop"]
 
+
+[tasks.test-benches]
+command = "cargo"
+# Run all benchmarks as tests to make sure they don't encounter any errors, e.g. due to malformed JSON
+# Unfortunately this seems to rerun library tests, see https://github.com/rust-lang/cargo/issues/6454
+args = ["test", "--benches", "--all-features"]
+dependencies = ["test-default", "test-serde-interop"]
 
 [tasks.build]
 dependencies = [
@@ -47,6 +55,7 @@ dependencies = [
 dependencies = [
     "test-default",
     "test-serde-interop",
+    "test-benches",
 ]
 
 # Note: Running Clippy should hopefully suffice, no need to run `cargo check`, see https://stackoverflow.com/q/57449356
