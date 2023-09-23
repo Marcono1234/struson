@@ -173,11 +173,10 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
 }
 
 fn benchmark_large_array(c: &mut Criterion) {
-    let json = "[".to_owned()
-        + "true, false, null, 12345689.123e12, \"abcdabcdabcdabcd\","
-            .repeat(1000)
-            .as_str()
-        + "true]";
+    let json = format!(
+        "[{}true]",
+        "true, false, null, 12345689.123e12, \"abcdabcdabcdabcd\",".repeat(1000)
+    );
     bench_compare(c, "read-large-array", &json);
 }
 
@@ -288,27 +287,25 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
 }
 
 fn benchmark_large_ascii_string(c: &mut Criterion) {
-    let json = "\"".to_owned() + "this is a test string".repeat(10_000).as_str() + "\"";
+    let json = format!("\"{}\"", "this is a test string".repeat(10_000));
     bench_compare(c, "read-large-ascii-string", &json);
     bench_compare_string_reading(c, "read-large-ascii-string (string reading)", &json);
 }
 
 fn benchmark_large_unicode_string(c: &mut Criterion) {
-    let json = "\"".to_owned()
-        + "ab\u{0080}cd\u{0800}ef\u{1234}gh\u{10FFFF}"
-            .repeat(10_000)
-            .as_str()
-        + "\"";
+    let json = format!(
+        "\"{}\"",
+        "ab\u{0080}cd\u{0800}ef\u{1234}gh\u{10FFFF}".repeat(10_000)
+    );
     bench_compare(c, "read-large-unicode-string", &json);
     bench_compare_string_reading(c, "read-large-unicode-string (string reading)", &json);
 }
 
 fn benchmark_escapes_string(c: &mut Criterion) {
-    let json = "\"".to_owned()
-        + r#"a\nb\tc\\d\"e\u0000f\u0080g\u0800h\u1234i\uD800\uDC00"#
-            .repeat(10_000)
-            .as_str()
-        + "\"";
+    let json = format!(
+        "\"{}\"",
+        r#"a\nb\tc\\d\"e\u0000f\u0080g\u0800h\u1234i\uD800\uDC00"#.repeat(10_000)
+    );
     bench_compare(c, "read-large-escapes-string", &json);
     bench_compare_string_reading(c, "read-large-escapes-string (string reading)", &json);
 }

@@ -2436,7 +2436,7 @@ mod tests {
         expected_path: &str,
         expected_column: u32,
     ) {
-        let input_display_str = input.map_or("".to_owned(), |s| " for '".to_owned() + s + "'");
+        let input_display_str = input.map_or("".to_owned(), |s| format!(" for '{s}'"));
         match result {
             Ok(_) => panic!("Test should have failed{}", input_display_str),
             Err(e) => match e {
@@ -2513,7 +2513,7 @@ mod tests {
     #[test]
     fn literals_valid_trailing_data() -> TestResult {
         ["", " ", "\t", "\r", "\n", "\r\n"].assert_all(|whitespace| {
-            let json = "true".to_owned() + whitespace;
+            let json = format!("true{whitespace}");
             let mut json_reader = new_reader(&json);
             assert_eq!(true, json_reader.next_bool()?);
             json_reader.consume_trailing_whitespace()?;
@@ -3714,7 +3714,7 @@ mod tests {
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            &("$".to_owned() + "[0]".repeat(nesting_depth).as_str()),
+            &format!("${}", "[0]".repeat(nesting_depth)),
             nesting_depth as u32,
         );
 
@@ -3759,7 +3759,7 @@ mod tests {
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            &("$".to_owned() + ".a".repeat(nesting_depth).as_str()),
+            &format!("${}", ".a".repeat(nesting_depth)),
             (json_start.len() * nesting_depth) as u32,
         );
 
@@ -3956,16 +3956,18 @@ mod tests {
     #[test]
     fn transfer_to_large_string() -> TestResult {
         let repeat_count = 1000;
-        let json = "\"".to_owned()
+        let json = format!(
+            "\"{}\"",
             // includes redundant escape `\u0062` for 'b'; this verifies that regular string writing
             // of JsonWriter is used and bytes are not just copied
-            + &"a\\u0062 \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
+            "a\\u0062 \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
                 .repeat(repeat_count)
-            + "\"";
-        let expected_json = "\"".to_owned()
-            + &"ab \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
+        );
+        let expected_json = format!(
+            "\"{}\"",
+            "ab \\n \\u0000 \u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}"
                 .repeat(repeat_count)
-            + "\"";
+        );
         let mut json_reader = new_reader(&json);
 
         let mut writer = Vec::<u8>::new();
@@ -4956,7 +4958,7 @@ mod tests {
     #[test]
     fn few_bytes_reader() -> TestResult {
         let count = READER_BUF_SIZE;
-        let json = "[".to_owned() + "true,".repeat(count - 1).as_str() + "true]";
+        let json = format!("[{}true]", "true,".repeat(count - 1));
         let mut json_reader = JsonStreamReader::new(FewBytesReader {
             bytes: json.as_bytes(),
             pos: 0,
@@ -4974,7 +4976,7 @@ mod tests {
     #[test]
     fn large_document() -> TestResult {
         let count = READER_BUF_SIZE;
-        let json = "[".to_owned() + "true,".repeat(count - 1).as_str() + "true]";
+        let json = format!("[{}true]", "true,".repeat(count - 1));
         let mut json_reader = new_reader(&json);
 
         json_reader.begin_array()?;
@@ -5184,7 +5186,7 @@ mod tests {
         let count = READER_BUF_SIZE;
         let string_json = "abc\u{10FFFF}d\\u1234e\\n".repeat(count);
         let expected_string_value = "abc\u{10FFFF}d\u{1234}e\n".repeat(count);
-        let json = "\"".to_owned() + string_json.as_str() + "\"";
+        let json = format!("\"{string_json}\"");
         let mut json_reader = new_reader(&json);
 
         assert_eq!(expected_string_value, json_reader.next_string()?);

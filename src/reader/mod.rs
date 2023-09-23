@@ -79,8 +79,8 @@ pub mod json_path {
             + json_path
                 .iter()
                 .map(|p| match p {
-                    JsonPathPiece::ArrayItem(index) => "[".to_owned() + &index.to_string() + "]",
-                    JsonPathPiece::ObjectMember(name) => ".".to_owned() + name,
+                    JsonPathPiece::ArrayItem(index) => format!("[{index}]"),
+                    JsonPathPiece::ObjectMember(name) => format!(".{name}"),
                 })
                 .collect::<String>()
                 .as_str()
@@ -128,7 +128,7 @@ pub mod json_path {
         if path.is_empty() {
             return Err(JsonPathParseError {
                 index: 0,
-                message: "Empty path".to_owned(),
+                message: "empty path".to_owned(),
             });
         }
 
@@ -145,7 +145,7 @@ pub mod json_path {
         if path_bytes[0] == b'.' {
             return Err(JsonPathParseError {
                 index: 0,
-                message: "Leading '.' is not allowed".to_owned(),
+                message: "leading '.' is not allowed".to_owned(),
             });
         }
 
@@ -161,7 +161,7 @@ pub mod json_path {
                     None => {
                         return Err(JsonPathParseError {
                             index,
-                            message: "Missing ']' for array index".to_owned(),
+                            message: "missing ']' for array index".to_owned(),
                         })
                     }
                     Some(i) => i,
@@ -169,13 +169,13 @@ pub mod json_path {
                 if end_index == index {
                     return Err(JsonPathParseError {
                         index,
-                        message: "Missing index value".to_owned(),
+                        message: "missing index value".to_owned(),
                     });
                 }
                 if path_bytes[index] == b'0' && end_index != index + 1 {
                     return Err(JsonPathParseError {
                         index,
-                        message: "Leading 0 is not allowed".to_owned(),
+                        message: "leading 0 is not allowed".to_owned(),
                     });
                 }
 
@@ -184,14 +184,14 @@ pub mod json_path {
                     if !path_bytes[i].is_ascii_digit() {
                         return Err(JsonPathParseError {
                             index: i,
-                            message: "Invalid index digit".to_owned(),
+                            message: "invalid index digit".to_owned(),
                         });
                     }
                 }
                 let path_index =
                     u32::from_str(&path[index..end_index]).map_err(|e| JsonPathParseError {
                         index,
-                        message: "Invalid index value: ".to_owned() + &e.to_string(),
+                        message: format!("invalid index value: {e}"),
                     })?;
                 parsed_path.push(JsonPathPiece::ArrayItem(path_index));
                 index = end_index + 1;
@@ -200,7 +200,7 @@ pub mod json_path {
                 if end_index == index {
                     return Err(JsonPathParseError {
                         index,
-                        message: "Missing member name".to_owned(),
+                        message: "missing member name".to_owned(),
                     });
                 }
 
@@ -210,7 +210,7 @@ pub mod json_path {
                     if !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
                         return Err(JsonPathParseError {
                             index: i,
-                            message: "Unsupported char in member name".to_owned(),
+                            message: "unsupported char in member name".to_owned(),
                         });
                     }
                 }
@@ -236,7 +236,7 @@ pub mod json_path {
                 _ => {
                     return Err(JsonPathParseError {
                         index,
-                        message: "Expecting either '.' or '['".to_owned(),
+                        message: "expecting either '.' or '['".to_owned(),
                     })
                 }
             }
@@ -363,30 +363,30 @@ pub mod json_path {
                 }
             }
 
-            assert_parse_error("", 0, "Empty path");
-            assert_parse_error(".a", 0, "Leading '.' is not allowed");
-            assert_parse_error("[", 1, "Missing ']' for array index");
-            assert_parse_error("[1", 1, "Missing ']' for array index");
-            assert_parse_error("[1.a]", 2, "Invalid index digit");
-            assert_parse_error("[1a2]", 2, "Invalid index digit");
-            assert_parse_error("[01]", 1, "Leading 0 is not allowed");
-            assert_parse_error("[00]", 1, "Leading 0 is not allowed");
-            assert_parse_error("[-1]", 1, "Invalid index digit");
+            assert_parse_error("", 0, "empty path");
+            assert_parse_error(".a", 0, "leading '.' is not allowed");
+            assert_parse_error("[", 1, "missing ']' for array index");
+            assert_parse_error("[1", 1, "missing ']' for array index");
+            assert_parse_error("[1.a]", 2, "invalid index digit");
+            assert_parse_error("[1a2]", 2, "invalid index digit");
+            assert_parse_error("[01]", 1, "leading 0 is not allowed");
+            assert_parse_error("[00]", 1, "leading 0 is not allowed");
+            assert_parse_error("[-1]", 1, "invalid index digit");
             assert_parse_error(
                 "[99999999999999999999999999999999999999999999]",
                 1,
                 // TODO: Should this test really check for specific Rust library message?
-                "Invalid index value: number too large to fit in target type",
+                "invalid index value: number too large to fit in target type",
             );
-            assert_parse_error("[1[0]]", 2, "Invalid index digit");
-            assert_parse_error("[a]", 1, "Invalid index digit");
-            assert_parse_error("[1]1]", 3, "Expecting either '.' or '['");
-            assert_parse_error("[1]a", 3, "Expecting either '.' or '['");
-            assert_parse_error("a.", 2, "Missing member name");
-            assert_parse_error("a..b", 2, "Missing member name");
-            assert_parse_error("a.[1]", 2, "Missing member name");
-            assert_parse_error("%a", 0, "Unsupported char in member name");
-            assert_parse_error("a%", 1, "Unsupported char in member name");
+            assert_parse_error("[1[0]]", 2, "invalid index digit");
+            assert_parse_error("[a]", 1, "invalid index digit");
+            assert_parse_error("[1]1]", 3, "expecting either '.' or '['");
+            assert_parse_error("[1]a", 3, "expecting either '.' or '['");
+            assert_parse_error("a.", 2, "missing member name");
+            assert_parse_error("a..b", 2, "missing member name");
+            assert_parse_error("a.[1]", 2, "missing member name");
+            assert_parse_error("%a", 0, "unsupported char in member name");
+            assert_parse_error("a%", 1, "unsupported char in member name");
 
             Ok(())
         }

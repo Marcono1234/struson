@@ -78,10 +78,8 @@ mod custom_reader {
                 + json_path
                     .iter()
                     .map(|p| match p {
-                        JsonPathPiece::ArrayItem(index) => {
-                            "[".to_owned() + &index.to_string() + "]"
-                        }
-                        JsonPathPiece::ObjectMember(name) => ".".to_owned() + name,
+                        JsonPathPiece::ArrayItem(index) => format!("[{index}]"),
+                        JsonPathPiece::ObjectMember(name) => format!(".{name}"),
                     })
                     .collect::<String>()
                     .as_str()

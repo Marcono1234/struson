@@ -1247,7 +1247,7 @@ mod tests {
         json_writer.finish_document()?;
 
         assert_eq!(
-            "\"".to_owned() + "abc\\\"def".repeat(WRITER_BUF_SIZE).as_str() + "\"",
+            format!("\"{}\"", "abc\\\"def".repeat(WRITER_BUF_SIZE)),
             String::from_utf8(writer)?
         );
         Ok(())
