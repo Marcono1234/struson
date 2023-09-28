@@ -1,4 +1,7 @@
 /target
 
+# IntelliJ / RustRover
+/.idea
+
 # VS Code
 /.vscode/settings.json
