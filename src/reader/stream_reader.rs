@@ -103,7 +103,7 @@ const INITIAL_VALUE_BYTES_BUF_CAPACITY: usize = 128;
 ///
 ///   JSON arrays and objects might be arbitrary deeply nested. Trying to process such JSON documents
 ///   in a recursive way could therefore lead to a stack overflow. While this JSON reader implementation
-///   does not use recrusive calls, users of this reader must make sure to not use recursive calls
+///   does not use recursive calls, users of this reader must make sure to not use recursive calls
 ///   either or track and limit the nesting depth.
 ///
 /// - Detect duplicate member names

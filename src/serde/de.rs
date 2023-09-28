@@ -978,7 +978,7 @@ impl<'de, R: JsonReader> serde::de::VariantAccess<'de> for &mut VariantAccess<'_
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         self.consumed_variant_value = true;
-        // Note: serde_json calls `deserialize_seq`, however here the current implemention
+        // Note: serde_json calls `deserialize_seq`, however here the current implementation
         // of `deserialize_tuple` eventually calls `deserialize_seq` as well
         self.de.deserialize_tuple(len, visitor)
     }

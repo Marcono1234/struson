@@ -693,7 +693,7 @@ pub enum ReaderError {
         error: IoError,
         /// Rough location where the error occurred within the JSON document
         ///
-        /// The location might not be completely accuracte. Since the IO error might have
+        /// The location might not be completely accurate. Since the IO error might have
         /// been returned by the underlying reader, it might not be related to the content
         /// of the JSON document. For example the location might still point to the beginning
         /// of the current JSON value while the IO error actually occurred multiple bytes
@@ -705,7 +705,7 @@ pub enum ReaderError {
 /// Error which occurred while calling [`JsonReader::transfer_to`]
 #[derive(Error, Debug)]
 pub enum TransferError {
-    /// Error which occurred while readering from the JSON reader
+    /// Error which occurred while reading from the JSON reader
     #[error("reader error: {0}")]
     ReaderError(#[from] ReaderError),
     /// Error which occurred while writing to the JSON writer

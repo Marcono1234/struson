@@ -73,7 +73,7 @@ pub struct WriterSettings {
     /// Whether to allow multiple top-level values, and if allowed which separator to use
     ///
     /// When `None` multiple top-level values are not allowed. Otherwise when `Some(...)` it
-    /// specifies the seperator to use between multiple top-level values. The separator can
+    /// specifies the separator to use between multiple top-level values. The separator can
     /// be an arbitrary string, however there are a few things to keep in mind:
     /// - An empty string (`""`) might prevent some JSON values from being properly parsed.
     ///   For example the values `true` and `false` would be written as `truefalse` which
@@ -698,7 +698,7 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
                     self.utf8_buf[..remaining_count].copy_from_slice(&buf[i..]);
                     return Ok(buf.len());
                 } else {
-                    // Skip over the bytes; - 1 because loop iteration will perfrom + 1
+                    // Skip over the bytes; - 1 because loop iteration will perform + 1
                     i += expected_bytes_count - 1;
                 }
             }
