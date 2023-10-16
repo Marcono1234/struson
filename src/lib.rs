@@ -93,7 +93,7 @@
 //! # Serde integration
 //! Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to
 //! allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from
-//! a `JsonReader`. See the [`serde`](crate::serde) module of this crate for more information.
+//! a `JsonReader`. See the [`serde`] module of this crate for more information.
 
 pub mod reader;
 pub mod writer;

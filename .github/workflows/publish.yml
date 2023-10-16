@@ -30,10 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        shell: bash
-        run: rustup toolchain install stable
-
       - name: Update project version
         shell: bash
         # https://github.com/killercup/cargo-edit
