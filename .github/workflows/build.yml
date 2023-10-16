@@ -23,8 +23,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-make
-        # https://github.com/sagiegurari/cargo-make#installation
-        run: cargo install --no-default-features cargo-make
+        uses: davidB/rust-cargo-make@10579dcff82285736fad5291533b52d3c93d6b3b
+        with:
+          version: '0.37.2'
 
       - name: Build
         run: cargo make

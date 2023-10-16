@@ -58,13 +58,15 @@ jobs:
           git commit -m "Release version ${{ steps.get-new-version.outputs.VERSION }}"
           git tag -a "v${{ steps.get-new-version.outputs.VERSION }}" -m "Release ${{ steps.get-new-version.outputs.VERSION }}"
 
+      - name: Install cargo-make
+        uses: davidB/rust-cargo-make@10579dcff82285736fad5291533b52d3c93d6b3b
+        with:
+          version: '0.37.2'
+
       # Perform full build to make sure there are no issues
       - name: Build project
         shell: bash
-        # https://github.com/sagiegurari/cargo-make#installation
-        run: |
-          cargo install --no-default-features cargo-make
-          cargo make
+        run: cargo make
 
       # TODO: Once this project is more stable, maybe include SemVer checks, e.g.
       # https://github.com/rust-lang/rust-semverver or https://github.com/obi1kenobi/cargo-semver-checks
