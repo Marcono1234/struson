@@ -6,7 +6,7 @@ Its main purpose is to allow writing JSON documents in a memory efficient way wi
 
 The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
-ℹ This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/), breaking changes may occur.  
+**Note:** This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/), breaking changes may occur.  
 Feedback and suggestions for improvements are welcome!
 
 ## Why?
@@ -28,7 +28,8 @@ If you need to process JSON in a DOM like way or want object mapper functionalit
   Malformed JSON and unexpected JSON structure only causes errors
 - API does not require recursion for JSON arrays and objects  
   Can theoretically read and write arbitrarily deeply nested JSON data
-- Read arbitrarily precise JSON numbers as string
+- Read and write arbitrarily precise JSON numbers as string  
+  ([`JsonReader::next_number_as_str`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.next_number_as_str) and [`JsonWriter::number_value_from_string`](https://docs.rs/struson/latest/struson/writer/trait.JsonWriter.html#tymethod.number_value_from_string))
 - Seek to specific location in JSON data ([`JsonReader::seek_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.seek_to))
 - Transfer JSON data from a reader to a writer ([`JsonReader::transfer_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.transfer_to))
 - Read and write arbitrarily large JSON string values  
