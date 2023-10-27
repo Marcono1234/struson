@@ -89,6 +89,9 @@ const INITIAL_VALUE_BYTES_BUF_CAPACITY: usize = 128;
 /// The JSON reader methods will return a [`ReaderError::IoError`] if invalid UTF-8 data
 /// is detected. A leading byte order mark (BOM) is not allowed.
 ///
+/// If the underlying reader returns an error of kind [`ErrorKind::Interrupted`], this
+/// JSON reader will keep retrying to read data.
+///
 /// # Security
 /// Besides UTF-8 validation this JSON reader only implements a basic restriction on JSON numbers,
 /// see [`ReaderSettings::restrict_number_values`], but does not implement any other security
@@ -463,11 +466,16 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         self.buf_pos = start_pos;
-        let read_bytes_count = match self.reader.read(&mut self.buf[start_pos..]) {
-            Ok(read_bytes_count) => read_bytes_count,
-            Err(e) => return Err(ReaderIoError(e, self.create_error_location())),
-        };
-        self.buf_end_pos = start_pos + read_bytes_count;
+        loop {
+            let read_bytes_count = match self.reader.read(&mut self.buf[start_pos..]) {
+                Ok(read_bytes_count) => read_bytes_count,
+                // Retry if interrupted
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(ReaderIoError(e, self.create_error_location())),
+            };
+            self.buf_end_pos = start_pos + read_bytes_count;
+            break;
+        }
         if self.buf_end_pos == start_pos {
             self.reached_eof = true;
             Ok(false)
@@ -5034,6 +5042,90 @@ mod tests {
             51,
         );
 
+        Ok(())
+    }
+
+    /// Reader which returns `ErrorKind::Interrupted` most of the time
+    struct InterruptedReader<'a> {
+        remaining_data: &'a [u8],
+        // For every read attempt return `ErrorKind::Interrupted` a few times before performing read
+        interrupted_count: u32,
+    }
+    impl<'a> InterruptedReader<'a> {
+        pub fn new(json: &'a str) -> Self {
+            InterruptedReader {
+                remaining_data: json.as_bytes(),
+                interrupted_count: 0,
+            }
+        }
+    }
+    impl Read for InterruptedReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.remaining_data.is_empty() || buf.is_empty() {
+                return Ok(0);
+            }
+
+            if self.interrupted_count >= 3 {
+                self.interrupted_count = 0;
+                // Only read a single byte
+                buf[0] = self.remaining_data[0];
+                self.remaining_data = &self.remaining_data[1..];
+                Ok(1)
+            } else {
+                self.interrupted_count += 1;
+                Err(IoError::from(ErrorKind::Interrupted))
+            }
+        }
+    }
+
+    /// String value reader must not return (or rather propagate) `ErrorKind::Interrupted`;
+    /// otherwise most `Read` methods will re-attempt the read even though the underlying
+    /// JSON stream reader is in an inconsistent state (e.g. incomplete escape sequence
+    /// having been consumed).
+    #[test]
+    fn string_reader_interrupted() -> TestResult {
+        let mut reader = InterruptedReader::new("\"test \\\" \u{10FFFF}\"");
+        let mut json_reader = JsonStreamReader::new(&mut reader);
+
+        let mut string_reader = json_reader.next_string_reader()?;
+        let mut buf = [0_u8; 11]; // sized to matched expected string
+        match string_reader.read(&mut buf) {
+            // Current implementation should have filled complete buf (this is not a requirement of `Read::read` though)
+            Ok(n) => assert_eq!(buf.len(), n),
+            // For current implementation no error should have occurred
+            // Especially regardless of implemention, `ErrorKind::Interrupted` must not have been returned
+            r => panic!("Unexpected result: {r:?}"),
+        }
+        assert_eq!("test \" \u{10FFFF}", std::str::from_utf8(&buf)?);
+        assert_eq!(0, string_reader.read(&mut buf)?);
+        drop(string_reader);
+
+        json_reader.consume_trailing_whitespace()?;
+        Ok(())
+    }
+
+    /// JSON stream reader should continuously retry reading in case underlying `Read`
+    /// returns `ErrorKind::Interrupted`.
+    #[test]
+    fn reader_interrupted() -> TestResult {
+        let mut reader = InterruptedReader::new(
+            "[true, 123.4e5, \"test \\\" 1 \u{10FFFF}\", \"test \\\" 2 \u{10FFFF}\"]",
+        );
+        let mut json_reader = JsonStreamReader::new(&mut reader);
+
+        json_reader.begin_array()?;
+        assert_eq!(true, json_reader.next_bool()?);
+        assert_eq!("123.4e5", json_reader.next_number_as_str()?);
+        assert_eq!("test \" 1 \u{10FFFF}", json_reader.next_str()?);
+
+        let mut string_reader = json_reader.next_string_reader()?;
+        let mut string_buf = String::new();
+        string_reader.read_to_string(&mut string_buf)?;
+        drop(string_reader);
+        assert_eq!("test \" 2 \u{10FFFF}", string_buf);
+
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
 

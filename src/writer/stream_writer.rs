@@ -121,6 +121,9 @@ const WRITER_BUF_SIZE: usize = 1024;
 /// The data written to the underlying writer will be valid UTF-8 data if the JSON document
 /// is finished properly by calling [`JsonWriter::finish_document`]. No leading byte order mark (BOM)
 /// is written.
+///
+/// If the underlying writer returns an error of kind [`ErrorKind::Interrupted`], this
+/// JSON writer will keep retrying to write the data.
 pub struct JsonStreamWriter<W: Write> {
     // When adding more fields to this struct, adjust the Debug implementation below, if necessary
     writer: W,
@@ -176,6 +179,7 @@ impl<W: Write> JsonStreamWriter<W> {
             pos += copied_count;
 
             if self.buf_write_pos >= self.buf.len() {
+                // write_all retries on `ErrorKind::Interrupted`, as desired
                 self.writer.write_all(&self.buf)?;
                 self.buf_write_pos = 0;
             }
@@ -185,6 +189,7 @@ impl<W: Write> JsonStreamWriter<W> {
     }
 
     fn flush(&mut self) -> Result<(), IoError> {
+        // write_all retries on `ErrorKind::Interrupted`, as desired
         self.writer.write_all(&self.buf[0..self.buf_write_pos])?;
         self.buf_write_pos = 0;
         self.writer.flush()
@@ -1437,6 +1442,100 @@ mod tests {
         json_writer.begin_array().unwrap();
 
         json_writer.finish_document().unwrap();
+    }
+
+    /// Writer which returns `ErrorKind::Interrupted` most of the time
+    struct InterruptedWriter {
+        buf: Vec<u8>,
+        // For every write attempt return `ErrorKind::Interrupted` a few times before performing write
+        interrupted_count: u32,
+    }
+    impl InterruptedWriter {
+        pub fn new() -> Self {
+            InterruptedWriter {
+                buf: Vec::new(),
+                interrupted_count: 0,
+            }
+        }
+
+        pub fn get_written_string(self) -> String {
+            String::from_utf8(self.buf).unwrap()
+        }
+    }
+    impl Write for InterruptedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+
+            if self.interrupted_count >= 3 {
+                self.interrupted_count = 0;
+                // Only write a single byte
+                self.buf.push(buf[0]);
+                Ok(1)
+            } else {
+                self.interrupted_count += 1;
+                Err(IoError::from(ErrorKind::Interrupted))
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            // Do nothing
+            Ok(())
+        }
+    }
+
+    /// String value writer must not return (or rather propagate) `ErrorKind::Interrupted`;
+    /// otherwise most `Write` methods will re-attempt the write even though the underlying
+    /// JSON stream writer is in an inconsistent state (e.g. incomplete escape sequence
+    /// having been written).
+    #[test]
+    fn string_writer_interrupted() -> TestResult {
+        let mut writer = InterruptedWriter::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        let mut string_writer = json_writer.string_value_writer()?;
+        let string_bytes = "test \" \u{10FFFF}".as_bytes();
+        match string_writer.write(string_bytes) {
+            // Current implementation should have written complete buf content (this is not a requirement of `Write::write` though)
+            Ok(n) => assert_eq!(string_bytes.len(), n),
+            // For current implementation no error should have occurred
+            // Especially regardless of implemention, `ErrorKind::Interrupted` must not have been returned
+            r => panic!("Unexpected result: {r:?}"),
+        }
+
+        string_writer.finish_value()?;
+        json_writer.finish_document()?;
+        assert_eq!("\"test \\\" \u{10FFFF}\"", writer.get_written_string());
+
+        Ok(())
+    }
+
+    /// JSON stream writer should continuously retry writing in case underlying `Write`
+    /// returns `ErrorKind::Interrupted`.
+    #[test]
+    fn writer_interrupted() -> TestResult {
+        let mut writer = InterruptedWriter::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        json_writer.begin_array()?;
+        json_writer.bool_value(true)?;
+        json_writer.number_value_from_string("123.4e5")?;
+        json_writer.string_value("test \" 1 \u{10FFFF}")?;
+
+        let mut string_writer = json_writer.string_value_writer()?;
+        string_writer.write_all("test \" 2 \u{10FFFF}, ".as_bytes())?;
+        string_writer.write_str("test \" 3 \u{10FFFF}")?;
+        string_writer.finish_value()?;
+
+        json_writer.end_array()?;
+        json_writer.finish_document()?;
+
+        assert_eq!(
+            "[true,123.4e5,\"test \\\" 1 \u{10FFFF}\",\"test \\\" 2 \u{10FFFF}, test \\\" 3 \u{10FFFF}\"]",
+            writer.get_written_string()
+        );
+        Ok(())
     }
 
     struct DebuggableWriter;

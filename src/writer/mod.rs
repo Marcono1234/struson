@@ -552,6 +552,9 @@ pub trait StringValueWriter: Write {
     /// Calls to `write_str` can be mixed with regular `write` calls, however preceding
     /// `write` calls must have written complete UTF-8 data, otherwise an error is returned.
     ///
+    /// If an error of kind [`ErrorKind::Interrupted`](std::io::ErrorKind::Interrupted) occurs
+    /// while writing, this method will keep retrying to write the data.
+    ///
     /// # Examples
     /// ```
     /// # use struson::writer::*;
@@ -573,6 +576,7 @@ pub trait StringValueWriter: Write {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+        // write_all retries on `ErrorKind::Interrupted`, as desired
         self.write_all(s.as_bytes())
     }
 
