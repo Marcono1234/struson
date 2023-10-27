@@ -119,6 +119,8 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
   > High-fidelity JSON lexer and parser
 - <https://github.com/khonsulabs/justjson>'s `justjson::parser::Tokenizer`
   > A JSON tokenizer, which converts JSON source to a series of Tokens
+- <https://github.com/iovxw/jsonpull>
+  > Json pull parser
 - [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
