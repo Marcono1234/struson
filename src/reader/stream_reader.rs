@@ -1779,7 +1779,7 @@ struct NumberBytesValueReader<'j, R: Read> {
     restrict_number: bool,
     requires_borrowed_result: bool,
 }
-impl<'j, R: Read> NumberBytesProvider<ReaderError> for NumberBytesValueReader<'j, R> {
+impl<R: Read> NumberBytesProvider<ReaderError> for NumberBytesValueReader<'_, R> {
     fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ReaderError> {
         // Note: The first byte was not actually read by `BytesValueReader`, instead it was peeked by creator
         // of NumberBytesValueReader. However, consume it here to include it in the final value.
@@ -1814,7 +1814,7 @@ struct SkippingNumberBytesReader<'j, R: Read> {
     json_reader: &'j mut JsonStreamReader<R>,
     consumed_bytes: u32,
 }
-impl<'j, R: Read> NumberBytesProvider<ReaderIoError> for SkippingNumberBytesReader<'j, R> {
+impl<R: Read> NumberBytesProvider<ReaderIoError> for SkippingNumberBytesReader<'_, R> {
     fn consume_current_peek_next(&mut self) -> Result<Option<u8>, ReaderIoError> {
         // Should not fail since last peek_byte() succeeded
         self.json_reader.skip_peeked_byte();
@@ -5197,7 +5197,7 @@ mod tests {
         }
     }
 
-    impl<'a> Read for DebuggableReader<'a> {
+    impl Read for DebuggableReader<'_> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             if self.has_read {
                 return Ok(0);
@@ -5213,7 +5213,7 @@ mod tests {
         }
     }
 
-    impl<'a> Debug for DebuggableReader<'a> {
+    impl Debug for DebuggableReader<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "debuggable-reader")
         }

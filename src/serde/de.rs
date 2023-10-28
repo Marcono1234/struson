@@ -340,7 +340,7 @@ impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
  * TODO: In the documentation of the methods below use links when referring to other method,
  *   e.g. [`deserialize_map`]; however, rustdoc seems to be unable to create links?
  */
-impl<'de, 's, 'a, R: JsonReader> Deserializer<'de> for &'s mut JsonReaderDeserializer<'a, R> {
+impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R> {
     type Error = DeserializerError;
 
     /// Require the `Deserializer` to figure out how to drive the visitor based
@@ -937,7 +937,7 @@ struct VariantAccess<'s, 'a, R: JsonReader> {
     consumed_variant_value: bool,
 }
 
-impl<'de, 's, 'a, R: JsonReader> serde::de::EnumAccess<'de> for &mut VariantAccess<'s, 'a, R> {
+impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut VariantAccess<'_, '_, R> {
     type Error = DeserializerError;
     type Variant = Self;
 
@@ -1003,7 +1003,7 @@ struct UnitVariantAccess<'s, 'a, R: JsonReader> {
     consumed_variant_value: bool,
 }
 
-impl<'de, 's, 'a, R: JsonReader> serde::de::EnumAccess<'de> for &mut UnitVariantAccess<'s, 'a, R> {
+impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
     type Error = DeserializerError;
     type Variant = Self;
 
