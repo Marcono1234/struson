@@ -577,6 +577,8 @@ pub trait StringValueWriter: Write {
     /// ```
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
         // write_all retries on `ErrorKind::Interrupted`, as desired
+        // this is mostly relevant for custom JsonWriter implementations, for JsonStreamWriter it
+        // should not matter because it is not expected to return `Interrupted`, see also tests there
         self.write_all(s.as_bytes())
     }
 

@@ -225,20 +225,6 @@ impl<R: Read + Debug> Debug for JsonStreamReader<R> {
     }
 }
 
-// 4 (max bytes for UTF-8 encoded char) - 1, since at least one byte was already consumed
-const STRING_VALUE_READER_BUF_SIZE: usize = 3;
-
-struct StringValueReader<'j, R: Read> {
-    json_reader: &'j mut JsonStreamReader<R>,
-    /// Buffer in case multi-byte character is read but caller did not provide large enough buffer
-    utf8_buf: [u8; STRING_VALUE_READER_BUF_SIZE],
-    /// Start position within [utf8_buf]
-    utf8_start_pos: usize,
-    /// Number of bytes currently in the [utf8_buf]
-    utf8_count: usize,
-    reached_end: bool,
-}
-
 /// Settings to customize the JSON reader behavior
 ///
 /// These settings are used by [`JsonStreamReader::new_custom`]. To avoid repeating the
@@ -2112,6 +2098,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             utf8_start_pos: 0,
             utf8_count: 0,
             reached_end: false,
+            error: None,
         }))
     }
 
@@ -2339,8 +2326,25 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 }
 
-impl<'j, R: Read> Read for StringValueReader<'j, R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+// - 1, since at least one byte was already consumed
+const STRING_VALUE_READER_BUF_SIZE: usize = utf8::MAX_BYTES_PER_CHAR - 1;
+
+struct StringValueReader<'j, R: Read> {
+    json_reader: &'j mut JsonStreamReader<R>,
+    /// Buffer in case multi-byte character is read but caller did not provide large enough buffer
+    utf8_buf: [u8; STRING_VALUE_READER_BUF_SIZE],
+    /// Start position within [utf8_buf]
+    utf8_start_pos: usize,
+    /// Number of bytes currently in the [utf8_buf]
+    utf8_count: usize,
+    reached_end: bool,
+    /// The last error which occurred, and which should be returned for every subsequent `read` call
+    // `io::Error` does not implement Clone, so this only contains some of its data
+    error: Option<(ErrorKind, String)>,
+}
+
+impl<R: Read> StringValueReader<'_, R> {
+    fn read_impl(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.reached_end || buf.is_empty() {
             return Ok(0);
         }
@@ -2402,6 +2406,26 @@ impl<'j, R: Read> Read for StringValueReader<'j, R> {
             }
         }
         Ok(pos)
+    }
+}
+impl<R: Read> Read for StringValueReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(e) = &self.error {
+            return Err(IoError::new(e.0, e.1.clone()));
+        }
+
+        let result = self.read_impl(buf);
+        if let Err(e) = &result {
+            // Must not store `Interrupted` error as `self.error` and return the error again
+            // for subsequent calls because that could lead to infinite loops since `Interrupted`
+            // normally allows retrying
+            // However, JsonStreamReader implementation is not propagating `Interrupted` error anyway
+            if e.kind() == ErrorKind::Interrupted {
+                panic!("Unexpected Interrupted error: {e:?}");
+            }
+            self.error = Some((e.kind(), e.to_string()));
+        }
+        result
     }
 }
 
@@ -3058,6 +3082,37 @@ mod tests {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
                     "IO error 'invalid UTF-8 data' at (roughly) line 0, column 1 at path $",
+                    e.get_ref().unwrap().to_string()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn string_reader_repeats_error() -> TestResult {
+        let mut json_reader = new_reader("\"\\uINVALID\"");
+        let mut reader = json_reader.next_string_reader()?;
+
+        let mut buf = [0_u8; 10];
+        match reader.read(&mut buf) {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => {
+                assert_eq!(ErrorKind::Other, e.kind());
+                assert_eq!(
+                    "JSON syntax error MalformedEscapeSequence at line 0, column 1 at path $",
+                    e.get_ref().unwrap().to_string()
+                );
+            }
+        }
+
+        // Subsequent read attemps should fail with the same error
+        match reader.read(&mut buf) {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => {
+                assert_eq!(ErrorKind::Other, e.kind());
+                assert_eq!(
+                    "JSON syntax error MalformedEscapeSequence at line 0, column 1 at path $",
                     e.get_ref().unwrap().to_string()
                 );
             }

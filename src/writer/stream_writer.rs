@@ -531,6 +531,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             utf8_buf: [0; utf8::MAX_BYTES_PER_CHAR],
             utf8_pos: 0,
             utf8_expected_len: 0,
+            error: None,
         }))
     }
 }
@@ -623,6 +624,9 @@ struct StringValueWriterImpl<'j, W: Write> {
     utf8_pos: usize,
     /// Expected number of total bytes for the character whose bytes are currently in [utf8_buf]
     utf8_expected_len: usize,
+    /// The last error which occurred, and which should be returned for every subsequent `write` call
+    // `io::Error` does not implement Clone, so this only contains some of its data
+    error: Option<(ErrorKind, String)>,
 }
 
 fn map_utf8_error(e: Utf8Error) -> IoError {
@@ -639,8 +643,8 @@ fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
     }
 }
 
-impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl<W: Write> StringValueWriterImpl<'_, W> {
+    fn write_impl(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -716,13 +720,37 @@ impl<'j, W: Write> Write for StringValueWriterImpl<'j, W> {
         )?;
         Ok(buf.len())
     }
+}
+impl<W: Write> Write for StringValueWriterImpl<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(e) = &self.error {
+            return Err(IoError::new(
+                e.0,
+                // Adjusts error message to indicate that the error is not related to data provided in `buf`
+                format!("previous error: {}", e.1.clone()),
+            ));
+        }
+
+        let result = self.write_impl(buf);
+        if let Err(e) = &result {
+            // Must not store `Interrupted` error as `self.error` and return the error again
+            // for subsequent calls because that could lead to infinite loops since `Interrupted`
+            // normally allows retrying
+            // However, JsonStreamWriter implementation is not propagating `Interrupted` error anyway
+            if e.kind() == ErrorKind::Interrupted {
+                panic!("Unexpected Interrupted error: {e:?}");
+            }
+            self.error = Some((e.kind(), e.to_string()));
+        }
+        result
+    }
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.json_writer.flush()
     }
 }
 
-impl<'j, W: Write> StringValueWriter for StringValueWriterImpl<'j, W> {
+impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
     // Provides more efficient implementation which benefits from avoided UTF-8 validation
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
         if self.utf8_pos > 0 {
@@ -1163,6 +1191,32 @@ mod tests {
             },
             Some("incomplete multi-byte UTF-8 data"),
         );
+    }
+
+    #[test]
+    fn string_writer_repeats_error() -> TestResult {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        let mut string_writer = json_writer.string_value_writer()?;
+        // Invalid UTF-8 byte 1111_1000
+        match string_writer.write_all(b"\xF8") {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => {
+                assert_eq!(ErrorKind::InvalidData, e.kind());
+                assert_eq!("invalid UTF-8 data", e.to_string());
+            }
+        }
+
+        // Subsequent write attemps should fail with the same error
+        match string_writer.write_all(b"test") {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => {
+                assert_eq!(ErrorKind::InvalidData, e.kind());
+                assert_eq!("previous error: invalid UTF-8 data", e.to_string());
+            }
+        }
+        Ok(())
     }
 
     #[test]
