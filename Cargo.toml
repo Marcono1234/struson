@@ -30,6 +30,17 @@ assert_no_alloc = { git = "https://github.com/Windfisch/rust-assert-no-alloc.git
     "backtrace",
 ] }
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Allow needless `return` because that makes it sometimes more obvious that
+# an expression is the result of the function
+needless_return = "allow"
+# Allow `assert_eq!(true, ...)` because in some cases it is used to check a bool
+# value and not a 'flag' / 'state', and `assert_eq!` makes that more explicit
+bool_assert_comparison = "allow"
+
 # docs.rs specific configuration
 [package.metadata.docs.rs]
 # Document all features

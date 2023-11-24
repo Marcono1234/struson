@@ -1,11 +1,4 @@
 #![warn(missing_docs)]
-#![forbid(unsafe_code)]
-// Allow needless `return` because that makes it sometimes more obvious that
-// an expression is the result of the function
-#![allow(clippy::needless_return)]
-// Allow `assert_eq!(true, ...)` because in some cases it is used to check a bool
-// value and not a 'flag' / 'state', and `assert_eq!` makes that more explicit
-#![allow(clippy::bool_assert_comparison)]
 // Enable 'unused' warnings for doc tests (are disabled by default)
 #![doc(test(no_crate_inject))]
 #![doc(test(attr(warn(unused))))]

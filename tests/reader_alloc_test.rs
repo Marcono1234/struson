@@ -1,7 +1,3 @@
-// Allow `assert_eq!(true, ...)` because it is used to check a bool value and not
-// a 'flag' / 'state', and `assert_eq!` makes that more explicit
-#![allow(clippy::bool_assert_comparison)]
-
 use std::error::Error;
 
 use assert_no_alloc::permit_alloc;

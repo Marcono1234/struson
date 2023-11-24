@@ -1,7 +1,3 @@
-// Allow `assert_eq!(true, ...)` because in some cases it is used to check a bool
-// value and not a 'flag' / 'state', and `assert_eq!` makes that more explicit
-#![allow(clippy::bool_assert_comparison)]
-
 //! Integration test for a custom `JsonWriter` implementation
 //!
 //! The `JsonWriter` implementation here is built on top of serde_json's `Value`.
