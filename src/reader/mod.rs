@@ -251,7 +251,7 @@ pub mod json_path {
     /// - numbers of type `u32` are converted to [`JsonPathPiece::ArrayItem`]
     /// - strings are converted to [`JsonPathPiece::ObjectMember`]
     ///
-    /// At least one path piece argument must be provided.
+    /// Providing no arguments creates an empty path without any path pieces.
     ///
     /// # Examples
     /// ```
@@ -272,6 +272,10 @@ pub mod json_path {
      */
     #[macro_export]
     macro_rules! json_path {
+        () => {
+            // Specify the type to avoid it being used by accident as an empty array of any type
+            [] as [JsonPathPiece; 0]
+        };
         ( $( $piece:expr ),+ ) => {
             {
                 [
@@ -392,7 +396,12 @@ pub mod json_path {
 
         #[test]
         fn macro_json_path() {
+            assert_eq!(json_path![], []);
+            // Make sure the type is correct and it can be compared with a &JsonPath
+            assert_ne!(json_path![], &[JsonPathPiece::ArrayItem(1)] as &JsonPath);
             assert_eq!(json_path![3], [JsonPathPiece::ArrayItem(3)]);
+            // Make sure the type is correct and it can be compared with a &JsonPath
+            assert_eq!(json_path![3], &[JsonPathPiece::ArrayItem(3)] as &JsonPath);
             assert_eq!(
                 json_path!["a"],
                 [JsonPathPiece::ObjectMember("a".to_owned())]
