@@ -26,7 +26,7 @@ use crate::{
  *   Would require new methods on JsonReader; one to get peeked location, one to get
  *   location of last value, e.g. when number string was read successfully from JsonReader
  *   but then parsing number fails
- *   Should mention here then how to interpret location information, or refer to `JsonErrorLocation`
+ *   Should mention here then how to interpret location information, or refer to `JsonReaderPosition`
  */
 #[non_exhaustive]
 #[derive(Error, Debug)]
@@ -1066,7 +1066,7 @@ mod tests {
 
     use super::*;
     use crate::reader::{
-        JsonErrorLocation, JsonStreamReader, ReaderSettings, SyntaxErrorKind,
+        JsonReaderPosition, JsonStreamReader, LinePosition, ReaderSettings, SyntaxErrorKind,
         UnexpectedStructureKind,
     };
 
@@ -1813,11 +1813,14 @@ mod tests {
                 Err(DeserializerError::ReaderError(ReaderError::IoError { error, location })) => {
                     assert_eq!(ErrorKind::InvalidData, error.kind());
                     assert_eq!("invalid UTF-8 data", error.to_string());
-                    assert_eq!(JsonErrorLocation {
-                        path: "$".to_owned(),
-                        line: 0,
-                        column: 1,
-                    }, location);
+                    assert_eq!(
+                        JsonReaderPosition {
+                            path: Some(Vec::new()),
+                            line_pos: Some(LinePosition { line: 0, column: 1 }),
+                            data_pos: None,
+                        },
+                        location
+                    );
                 }
                 r => panic!("Unexpected result: {r:?}"),
             }

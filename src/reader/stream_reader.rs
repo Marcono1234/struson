@@ -7,10 +7,7 @@ use thiserror::Error;
 use self::bytes_value_reader::{
     AsUnicodeEscapeReader, AsUtf8MultibyteReader, BytesValue, BytesValueReader,
 };
-use super::{
-    json_path::{format_abs_json_path, JsonPathPiece},
-    *,
-};
+use super::{json_path::JsonPathPiece, *};
 // Ignore false positive for unused import of `json_path!` macro
 #[allow(unused_imports)]
 use super::json_path::json_path;
@@ -38,7 +35,7 @@ enum PeekedValue {
 
 #[derive(Error, Debug)]
 #[error("IO error '{0}' at (roughly) {1}")]
-struct ReaderIoError(IoError, JsonErrorLocation);
+struct ReaderIoError(IoError, JsonReaderPosition);
 
 impl From<ReaderIoError> for ReaderError {
     fn from(value: ReaderIoError) -> Self {
@@ -152,8 +149,8 @@ pub struct JsonStreamReader<R: Read> {
     stack: Vec<StackValue>,
     is_string_value_reader_active: bool,
 
-    line: u32,
-    column: u32,
+    line: u64,
+    column: u64,
     json_path: Option<Vec<JsonPathPiece>>,
 
     reader_settings: ReaderSettings,
@@ -305,7 +302,7 @@ pub struct ReaderSettings {
 
     /// Whether to track the JSON path while parsing
     ///
-    /// The JSON path is reported for [error locations](JsonErrorLocation::path) to make debugging
+    /// The JSON path is reported for [error locations](JsonReaderPosition::path) to make debugging
     /// easier. Disabling path tracking can therefore make troubleshooting malformed JSON data more
     /// difficult, but it might on the other hand improve performance.
     ///
@@ -393,15 +390,15 @@ impl<R: Read> JsonStreamReader<R> {
 
 // Implementation with error utility methods, and methods for inspecting JSON structure state
 impl<R: Read> JsonStreamReader<R> {
-    fn create_error_location(&self) -> JsonErrorLocation {
-        JsonErrorLocation {
-            path: self
-                .json_path
-                .as_ref()
-                // When changing this string, have to also update documentation for JsonErrorLocation
-                .map_or("<?>".to_owned(), |p| format_abs_json_path(p)),
-            line: self.line,
-            column: self.column,
+    fn create_error_location(&self) -> JsonReaderPosition {
+        JsonReaderPosition {
+            path: self.json_path.clone(),
+            line_pos: Some(LinePosition {
+                line: self.line,
+                column: self.column,
+            }),
+            // TODO: Track data pos
+            data_pos: None,
         }
     }
 
@@ -927,7 +924,7 @@ impl<R: Read> JsonStreamReader<R> {
 trait Utf8MultibyteReader {
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError>;
 
-    fn create_error_location(&self) -> JsonErrorLocation;
+    fn create_error_location(&self) -> JsonReaderPosition;
 
     fn invalid_utf8_err<'a>(&self) -> Result<&'a [u8], StringReadingError> {
         Err(StringReadingError::IoError(ReaderIoError(
@@ -1007,7 +1004,7 @@ impl<R: Read> Utf8MultibyteReader for JsonStreamReader<R> {
         self.read_byte(eof_error_kind)
     }
 
-    fn create_error_location(&self) -> JsonErrorLocation {
+    fn create_error_location(&self) -> JsonReaderPosition {
         self.create_error_location()
     }
 }
@@ -1025,7 +1022,7 @@ struct UnicodeEscapeChar {
 trait UnicodeEscapeReader {
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError>;
 
-    fn create_error_location(&self) -> JsonErrorLocation;
+    fn create_error_location(&self) -> JsonReaderPosition;
 
     fn parse_unicode_escape_hex_digit(&self, digit: u8) -> Result<u32, StringReadingError> {
         match digit {
@@ -1106,7 +1103,7 @@ impl<R: Read> UnicodeEscapeReader for JsonStreamReader<R> {
         self.read_byte(eof_error_kind)
     }
 
-    fn create_error_location(&self) -> JsonErrorLocation {
+    fn create_error_location(&self) -> JsonReaderPosition {
         self.create_error_location()
     }
 }
@@ -1447,7 +1444,7 @@ mod bytes_value_reader {
             self.0.read_byte(eof_error_kind)
         }
 
-        fn create_error_location(&self) -> JsonErrorLocation {
+        fn create_error_location(&self) -> JsonReaderPosition {
             self.0.json_reader.create_error_location()
         }
     }
@@ -1464,7 +1461,7 @@ mod bytes_value_reader {
             Ok(byte)
         }
 
-        fn create_error_location(&self) -> JsonErrorLocation {
+        fn create_error_location(&self) -> JsonReaderPosition {
             self.0.json_reader.create_error_location()
         }
     }
@@ -1502,7 +1499,7 @@ impl<R: Read> JsonStreamReader<R> {
                             c,
                             consumed_chars_count,
                         } = self.read_unicode_escape_char()?;
-                        self.column += consumed_chars_count;
+                        self.column += consumed_chars_count as u64;
                         let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
                         let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
                         for b in &char_encode_buf[..bytes_count] {
@@ -1616,7 +1613,7 @@ impl<R: Read> JsonStreamReader<R> {
                                 consumed_chars_count,
                             } = AsUnicodeEscapeReader(&mut bytes_reader)
                                 .read_unicode_escape_char()?;
-                            bytes_reader.json_reader.column += consumed_chars_count;
+                            bytes_reader.json_reader.column += consumed_chars_count as u64;
                             let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
                             let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
                             bytes_reader.push_bytes(&char_encode_buf[..bytes_count]);
@@ -1744,7 +1741,7 @@ macro_rules! collect_next_number_bytes {
         }
 
         let result = reader.get_result();
-        $self.column += consumed_bytes;
+        $self.column += consumed_bytes as u64;
         // Make sure there are no misleading chars directly afterwards, e.g. "123f"
         if let Some(byte) = $self.peek_byte()? {
             $self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
@@ -2465,8 +2462,8 @@ mod tests {
         input: Option<&str>,
         result: Result<T, ReaderError>,
         expected_kind: SyntaxErrorKind,
-        expected_path: &str,
-        expected_column: u32,
+        expected_path: &JsonPath,
+        expected_column: u64,
     ) {
         let input_display_str = input.map_or("".to_owned(), |s| format!(" for '{s}'"));
         match result {
@@ -2475,10 +2472,13 @@ mod tests {
                 ReaderError::SyntaxError(e) => assert_eq!(
                     JsonSyntaxError {
                         kind: expected_kind,
-                        location: JsonErrorLocation {
-                            path: expected_path.to_owned(),
-                            line: 0,
-                            column: expected_column
+                        location: JsonReaderPosition {
+                            path: Some(expected_path.to_owned()),
+                            line_pos: Some(LinePosition {
+                                line: 0,
+                                column: expected_column
+                            }),
+                            data_pos: None,
                         },
                     },
                     e,
@@ -2496,9 +2496,9 @@ mod tests {
         input: Option<&str>,
         result: Result<T, ReaderError>,
         expected_kind: SyntaxErrorKind,
-        expected_column: u32,
+        expected_column: u64,
     ) {
-        assert_parse_error_with_path(input, result, expected_kind, "$", expected_column);
+        assert_parse_error_with_path(input, result, expected_kind, &[], expected_column);
     }
 
     #[test]
@@ -2711,10 +2711,10 @@ mod tests {
                 Err(ReaderError::UnsupportedNumberValue { number, location }) => {
                     assert_eq!(number_json, number);
                     assert_eq!(
-                        JsonErrorLocation {
-                            line: 0,
-                            column: 0,
-                            path: "$".to_owned(),
+                        JsonReaderPosition {
+                            path: Some(Vec::new()),
+                            line_pos: Some(LinePosition { line: 0, column: 0 }),
+                            data_pos: None
                         },
                         location
                     );
@@ -2727,10 +2727,10 @@ mod tests {
                 Err(ReaderError::UnsupportedNumberValue { number, location }) => {
                     assert_eq!(number_json, number);
                     assert_eq!(
-                        JsonErrorLocation {
-                            line: 0,
-                            column: 0,
-                            path: "$".to_owned(),
+                        JsonReaderPosition {
+                            path: Some(Vec::new()),
+                            line_pos: Some(LinePosition { line: 0, column: 0 }),
+                            data_pos: None
                         },
                         location
                     );
@@ -2858,7 +2858,7 @@ mod tests {
 
     #[test]
     fn strings_invalid() {
-        fn assert_invalid(json: &str, expected_kind: SyntaxErrorKind, expected_column: u32) {
+        fn assert_invalid(json: &str, expected_kind: SyntaxErrorKind, expected_column: u64) {
             let mut json_reader = new_reader(json);
             assert_parse_error(
                 Some(json),
@@ -2926,8 +2926,8 @@ mod tests {
                 Err(ReaderError::IoError { error, location }) => {
                     assert_eq!(ErrorKind::InvalidData, error.kind());
                     assert_eq!("invalid UTF-8 data", error.to_string());
-                    assert_eq!("$", location.path);
-                    assert_eq!(0, location.line);
+                    assert_eq!(Some(Vec::new()), location.path);
+                    assert_eq!(0, location.line_pos.unwrap().line);
                 }
                 result => panic!("Unexpected result for '{string_content:?}': {result:?}"),
             }
@@ -3047,7 +3047,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error UnknownEscapeSequence at line 0, column 1 at path $",
+                    "JSON syntax error UnknownEscapeSequence at path '$', line 0, column 1",
                     e.to_string()
                 );
                 let cause: &JsonSyntaxError = e
@@ -3058,11 +3058,11 @@ mod tests {
                 assert_eq!(
                     &JsonSyntaxError {
                         kind: SyntaxErrorKind::UnknownEscapeSequence,
-                        location: JsonErrorLocation {
-                            path: "$".to_owned(),
-                            line: 0,
-                            column: 1
-                        }
+                        location: JsonReaderPosition {
+                            path: Some(Vec::new()),
+                            line_pos: Some(LinePosition { line: 0, column: 1 }),
+                            data_pos: None
+                        },
                     },
                     cause
                 );
@@ -3081,7 +3081,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) line 0, column 1 at path $",
+                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3100,7 +3100,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at line 0, column 1 at path $",
+                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3112,7 +3112,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at line 0, column 1 at path $",
+                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3198,7 +3198,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedComma,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -3209,7 +3209,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::TrailingCommaNotEnabled,
-            "$[1]",
+            &json_path![1],
             2,
         );
 
@@ -3226,7 +3226,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedComma,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -3237,7 +3237,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedComma,
-            "$[1]",
+            &json_path![1],
             3,
         );
 
@@ -3255,7 +3255,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedComma,
-            "$",
+            &[],
             1,
         );
 
@@ -3271,7 +3271,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::MissingComma,
-            "$[1]",
+            &json_path![1],
             3,
         );
 
@@ -3282,7 +3282,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedColon,
-            "$[1]",
+            &json_path![1],
             2,
         );
 
@@ -3293,7 +3293,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedColon,
-            "$[1]",
+            &json_path![1],
             4,
         );
 
@@ -3304,14 +3304,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedClosingBracket,
-            "$[1]",
+            &json_path![1],
             2,
         );
         assert_parse_error_with_path(
             None,
             json_reader.end_array(),
             SyntaxErrorKind::UnexpectedClosingBracket,
-            "$[1]",
+            &json_path![1],
             2,
         );
 
@@ -3335,7 +3335,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedComma,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3347,7 +3347,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::TrailingCommaNotEnabled,
-            "$.a",
+            &json_path!["a"],
             6,
         );
 
@@ -3365,7 +3365,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::UnexpectedComma,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3377,7 +3377,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.a",
+            &json_path!["a"],
             7,
         );
 
@@ -3497,14 +3497,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3514,14 +3514,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3531,14 +3531,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3550,7 +3550,7 @@ mod tests {
             None,
             json_reader.next_number_as_string(),
             SyntaxErrorKind::UnexpectedColon,
-            "$.a",
+            &json_path!["a"],
             5,
         );
 
@@ -3562,7 +3562,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::MissingColon,
-            "$.a",
+            &json_path!["a"],
             4,
         );
 
@@ -3574,7 +3574,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::UnexpectedClosingBracket,
-            "$.a",
+            &json_path!["a"],
             5,
         );
 
@@ -3586,7 +3586,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::MissingColon,
-            "$.a",
+            &json_path!["a"],
             5,
         );
 
@@ -3598,7 +3598,7 @@ mod tests {
             None,
             json_reader.peek(),
             SyntaxErrorKind::MissingColon,
-            "$.a",
+            &json_path!["a"],
             4,
         );
 
@@ -3611,14 +3611,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::MissingComma,
-            "$.a",
+            &json_path!["a"],
             8,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::MissingComma,
-            "$.a",
+            &json_path!["a"],
             8,
         );
 
@@ -3631,7 +3631,7 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.a",
+            &json_path!["a"],
             8,
         );
         /* TODO: Reader currently already advances after duplicate comma, so this won't fail
@@ -3640,7 +3640,7 @@ mod tests {
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::MalformedJson,
-            "$.a",
+            &json_path!["a"],
             8,
         );
          */
@@ -3654,14 +3654,14 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd, // Maybe a bit misleading because it also expects comma?
-            "$.a",
+            &json_path!["a"],
             7,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.a",
+            &json_path!["a"],
             7,
         );
 
@@ -3671,21 +3671,21 @@ mod tests {
             None,
             json_reader.has_next(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
         assert_parse_error_with_path(
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
         assert_parse_error_with_path(
             None,
             json_reader.end_object(),
             SyntaxErrorKind::ExpectingMemberNameOrObjectEnd,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -3750,7 +3750,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.skip_value(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[14]",
+            &json_path![14],
             78,
         );
 
@@ -3777,8 +3777,8 @@ mod tests {
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            &format!("${}", "[0]".repeat(nesting_depth)),
-            nesting_depth as u32,
+            &vec![JsonPathPiece::ArrayItem(0); nesting_depth],
+            nesting_depth as u64,
         );
 
         Ok(())
@@ -3822,8 +3822,8 @@ mod tests {
             None,
             json_reader.skip_value(),
             SyntaxErrorKind::MalformedJson,
-            &format!("${}", ".a".repeat(nesting_depth)),
-            (json_start.len() * nesting_depth) as u32,
+            &vec![JsonPathPiece::ObjectMember("a".to_owned()); nesting_depth],
+            (json_start.len() * nesting_depth) as u64,
         );
 
         Ok(())
@@ -3853,7 +3853,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.skip_value(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -3934,7 +3934,7 @@ mod tests {
             None,
             json_reader.skip_to_top_level(),
             SyntaxErrorKind::MalformedJson,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -3997,7 +3997,7 @@ mod tests {
                 .transfer_to(&mut json_writer)
                 .map_err(as_transfer_read_error),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[8]",
+            &json_path![8],
             99,
         );
 
@@ -4281,8 +4281,8 @@ mod tests {
         result: Result<T, ReaderError>,
         expected_expected: ValueType,
         expected_actual: ValueType,
-        expected_path: &str,
-        expected_column: u32,
+        expected_path: &JsonPath,
+        expected_column: u64,
     ) {
         match result {
             Ok(_) => panic!("Test should have failed"),
@@ -4295,10 +4295,13 @@ mod tests {
                     assert_eq!(expected_expected, expected);
                     assert_eq!(expected_actual, actual);
                     assert_eq!(
-                        JsonErrorLocation {
-                            path: expected_path.to_string(),
-                            line: 0,
-                            column: expected_column
+                        JsonReaderPosition {
+                            path: Some(expected_path.to_owned()),
+                            line_pos: Some(LinePosition {
+                                line: 0,
+                                column: expected_column
+                            }),
+                            data_pos: None
                         },
                         location
                     );
@@ -4313,8 +4316,8 @@ mod tests {
     fn assert_unexpected_structure<T>(
         result: Result<T, ReaderError>,
         expected_kind: UnexpectedStructureKind,
-        expected_path: &str,
-        expected_column: u32,
+        expected_path: &JsonPath,
+        expected_column: u64,
     ) {
         match result {
             Ok(_) => panic!("Test should have failed"),
@@ -4322,10 +4325,13 @@ mod tests {
                 ReaderError::UnexpectedStructure { kind, location } => {
                     assert_eq!(expected_kind, kind);
                     assert_eq!(
-                        JsonErrorLocation {
-                            path: expected_path.to_string(),
-                            line: 0,
-                            column: expected_column
+                        JsonReaderPosition {
+                            path: Some(expected_path.to_owned()),
+                            line_pos: Some(LinePosition {
+                                line: 0,
+                                column: expected_column
+                            }),
+                            data_pos: None
                         },
                         location
                     );
@@ -4343,7 +4349,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.seek_to(&[JsonPathPiece::ArrayItem(0)]),
             UnexpectedStructureKind::TooShortArray { expected_index: 0 },
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -4351,7 +4357,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.seek_to(&[JsonPathPiece::ArrayItem(1)]),
             UnexpectedStructureKind::TooShortArray { expected_index: 1 },
-            "$[1]",
+            &json_path![1],
             2,
         );
 
@@ -4361,7 +4367,7 @@ mod tests {
             UnexpectedStructureKind::MissingObjectMember {
                 member_name: "b".to_owned(),
             },
-            "$.a",
+            &json_path!["a"],
             7,
         );
 
@@ -4370,7 +4376,7 @@ mod tests {
             json_reader.seek_to(&[JsonPathPiece::ArrayItem(0)]),
             ValueType::Array,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
 
@@ -4379,7 +4385,7 @@ mod tests {
             json_reader.seek_to(&[JsonPathPiece::ObjectMember("a".to_owned())]),
             ValueType::Object,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
 
@@ -4393,13 +4399,13 @@ mod tests {
         assert_unexpected_structure(
             json_reader.peek(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[0]",
+            &json_path![0],
             1,
         );
         assert_unexpected_structure(
             json_reader.next_bool(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -4408,7 +4414,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.end_array(),
             UnexpectedStructureKind::MoreElementsThanExpected,
-            "$[0]",
+            &json_path![0],
             1,
         );
 
@@ -4417,7 +4423,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.next_name_owned(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -4426,7 +4432,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.end_object(),
             UnexpectedStructureKind::MoreElementsThanExpected,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -4440,35 +4446,35 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
         assert_unexpected_value_type(
             json_reader.next_null(),
             ValueType::Null,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
         assert_unexpected_value_type(
             json_reader.next_string(),
             ValueType::String,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
         assert_unexpected_value_type(
             json_reader.begin_array(),
             ValueType::Array,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
         assert_unexpected_value_type(
             json_reader.begin_object(),
             ValueType::Object,
             ValueType::Number,
-            "$",
+            &[],
             0,
         );
 
@@ -4477,7 +4483,7 @@ mod tests {
             json_reader.next_number_as_string(),
             ValueType::Number,
             ValueType::Boolean,
-            "$",
+            &[],
             0,
         );
 
@@ -4486,7 +4492,7 @@ mod tests {
             json_reader.next_null(),
             ValueType::Null,
             ValueType::Boolean,
-            "$",
+            &[],
             0,
         );
 
@@ -4495,7 +4501,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Null,
-            "$",
+            &[],
             0,
         );
 
@@ -4504,7 +4510,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::String,
-            "$",
+            &[],
             0,
         );
 
@@ -4513,7 +4519,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Array,
-            "$",
+            &[],
             0,
         );
 
@@ -4522,7 +4528,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Object,
-            "$",
+            &[],
             0,
         );
     }
@@ -4552,13 +4558,13 @@ mod tests {
         assert_unexpected_structure(
             json_reader.peek(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$",
+            &[],
             7,
         );
         assert_unexpected_structure(
             json_reader.next_bool(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$",
+            &[],
             7,
         );
 
@@ -4815,15 +4821,15 @@ mod tests {
                 assert_eq!(ErrorKind::InvalidData, error.kind());
                 assert_eq!("invalid UTF-8 data", error.to_string());
                 assert_eq!(
-                    &JsonErrorLocation {
-                        path: "$".to_owned(),
-                        line: 0,
-                        column: 2,
+                    &JsonReaderPosition {
+                        path: Some(Vec::new()),
+                        line_pos: Some(LinePosition { line: 0, column: 2 }),
+                        data_pos: None
                     },
                     location
                 );
                 assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) line 0, column 2 at path $",
+                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 2",
                     e.as_ref().unwrap_err().to_string()
                 );
             }
@@ -4835,7 +4841,7 @@ mod tests {
 
     #[test]
     fn location_whitespace() {
-        fn assert_location(json: &str, expected_line: u32, expected_column: u32) {
+        fn assert_location(json: &str, expected_line: u64, expected_column: u64) {
             let mut json_reader = new_reader_with_comments(json);
             match json_reader.peek() {
                 Ok(_) => panic!("Test should have failed"),
@@ -4843,10 +4849,13 @@ mod tests {
                     ReaderError::SyntaxError(e) => assert_eq!(
                         JsonSyntaxError {
                             kind: SyntaxErrorKind::IncompleteDocument,
-                            location: JsonErrorLocation {
-                                path: "$".to_owned(),
-                                line: expected_line,
-                                column: expected_column
+                            location: JsonReaderPosition {
+                                path: Some(Vec::new()),
+                                line_pos: Some(LinePosition {
+                                    line: expected_line,
+                                    column: expected_column
+                                }),
+                                data_pos: None
                             },
                         },
                         e
@@ -4884,7 +4893,7 @@ mod tests {
 
     #[test]
     fn location_value() {
-        fn assert_location(json: &str, expected_column: u32) {
+        fn assert_location(json: &str, expected_column: u64) {
             let mut json_reader = new_reader(json);
             json_reader.begin_array().unwrap();
             json_reader.skip_value().unwrap();
@@ -4892,7 +4901,7 @@ mod tests {
                 Some(json),
                 json_reader.peek(),
                 SyntaxErrorKind::IncompleteDocument,
-                "$[1]",
+                &json_path![1],
                 expected_column,
             );
         }
@@ -4926,7 +4935,7 @@ mod tests {
             None,
             json_reader.next_name_owned(),
             SyntaxErrorKind::UnknownEscapeSequence,
-            "$.a",
+            &json_path!["a"],
             11,
         );
 
@@ -4939,12 +4948,11 @@ mod tests {
             new_reader(r#"[true, false, null, 12, "test", [], [34], {}, {"a": 1}]"#);
         json_reader.begin_array()?;
 
-        for (i, column_position) in [1, 7, 14, 20, 24, 32, 36, 42, 46].iter().enumerate() {
-            let expected_path = format!("$[{i}]");
+        for (item_index, column_position) in [1, 7, 14, 20, 24, 32, 36, 42, 46].iter().enumerate() {
             assert_unexpected_structure(
                 json_reader.end_array(),
                 UnexpectedStructureKind::MoreElementsThanExpected,
-                &expected_path,
+                &json_path![item_index as u32],
                 *column_position,
             );
             json_reader.skip_value()?;
@@ -4956,7 +4964,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.end_object(),
             UnexpectedStructureKind::MoreElementsThanExpected,
-            "$.<?>",
+            &json_path!["<?>"],
             1,
         );
 
@@ -4965,7 +4973,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Number,
-            "$.a",
+            &json_path!["a"],
             6,
         );
 
@@ -4974,7 +4982,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.end_object(),
             UnexpectedStructureKind::MoreElementsThanExpected,
-            "$.a",
+            &json_path!["a"],
             9,
         );
         json_reader.skip_name()?;
@@ -4982,7 +4990,7 @@ mod tests {
             json_reader.next_bool(),
             ValueType::Boolean,
             ValueType::Number,
-            "$.b",
+            &json_path!["b"],
             14,
         );
 
@@ -4991,7 +4999,7 @@ mod tests {
         assert_unexpected_structure(
             json_reader.next_name_owned(),
             UnexpectedStructureKind::FewerElementsThanExpected,
-            "$.b",
+            &json_path!["b"],
             15,
         );
         json_reader.end_object()?;
@@ -5047,7 +5055,7 @@ mod tests {
             assert_eq!(true, json_reader.next_bool()?);
         }
         json_reader.end_array()?;
-        assert_eq!(json.len() as u32, json_reader.column);
+        assert_eq!(json.len() as u64, json_reader.column);
         json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
@@ -5088,14 +5096,23 @@ mod tests {
         json_reader.end_object()?;
 
         json_reader.skip_value()?;
-        assert_parse_error_with_path(
-            None,
-            json_reader.peek(),
-            SyntaxErrorKind::MalformedJson,
-            // Is '<?>' because path tracking is disabled
-            "<?>",
-            51,
-        );
+        match json_reader.peek() {
+            Err(ReaderError::SyntaxError(JsonSyntaxError {
+                kind: SyntaxErrorKind::MalformedJson,
+                location:
+                    JsonReaderPosition {
+                        // `None` because path tracking is disabled
+                        path: None,
+                        line_pos:
+                            Some(LinePosition {
+                                line: 0,
+                                column: 51,
+                            }),
+                        data_pos: None,
+                    },
+            })) => {}
+            r => panic!("Unexpected result: {r:?}"),
+        }
 
         Ok(())
     }
@@ -5323,7 +5340,7 @@ mod tests {
         );
 
         assert_eq!(number_json, json_reader.next_number_as_string()?);
-        assert_eq!(number_json.len() as u32, json_reader.column);
+        assert_eq!(number_json.len() as u64, json_reader.column);
         json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
@@ -5338,7 +5355,7 @@ mod tests {
 
         assert_eq!(expected_string_value, json_reader.next_string()?);
         // `- (3 * count)` to account for \u{10FFFF} taking up 4 bytes but representing a single char
-        assert_eq!((json.len() - (3 * count)) as u32, json_reader.column);
+        assert_eq!((json.len() - (3 * count)) as u64, json_reader.column);
         json_reader.consume_trailing_whitespace()?;
         Ok(())
     }
@@ -5387,10 +5404,10 @@ mod tests {
                     assert_eq!(ValueType::Number, expected);
                     assert_eq!(ValueType::Boolean, actual);
                     assert_eq!(
-                        JsonErrorLocation {
-                            path: "$".to_owned(),
-                            line: 0,
-                            column: 0
+                        JsonReaderPosition {
+                            path: Some(Vec::new()),
+                            line_pos: Some(LinePosition { line: 0, column: 0 }),
+                            data_pos: None
                         },
                         location
                     );

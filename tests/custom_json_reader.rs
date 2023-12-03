@@ -23,7 +23,7 @@ mod custom_reader {
     use struson::{
         reader::{
             json_path::{JsonPath, JsonPathPiece},
-            JsonErrorLocation, JsonReader, ReaderError, TransferError, UnexpectedStructureKind,
+            JsonReader, JsonReaderPosition, ReaderError, TransferError, UnexpectedStructureKind,
             ValueType,
         },
         writer::{JsonNumberError, JsonWriter},
@@ -68,24 +68,11 @@ mod custom_reader {
             }
         }
 
-        // TODO: This is copied from JsonStreamReader; maybe this should be exposed as public method?
-        fn format_abs_json_path(json_path: &JsonPath) -> String {
-            "$".to_string()
-                + json_path
-                    .iter()
-                    .map(|p| match p {
-                        JsonPathPiece::ArrayItem(index) => format!("[{index}]"),
-                        JsonPathPiece::ObjectMember(name) => format!(".{name}"),
-                    })
-                    .collect::<String>()
-                    .as_str()
-        }
-
-        fn create_error_location(&self) -> JsonErrorLocation {
-            JsonErrorLocation {
-                path: JsonValueReader::format_abs_json_path(&self.json_path),
-                line: 0,
-                column: 0,
+        fn create_error_location(&self) -> JsonReaderPosition {
+            JsonReaderPosition {
+                path: Some(self.json_path.clone()),
+                line_pos: None,
+                data_pos: None,
             }
         }
 

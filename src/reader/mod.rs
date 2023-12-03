@@ -3,16 +3,16 @@
 //! [`JsonReader`] is the general trait for JSON readers, [`JsonStreamReader`] is an implementation
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 
-/// Module for JSONPath
+/// Module for JSON path
 ///
-/// A JSONPath consists of zero or more [`JsonPathPiece`](self::json_path::JsonPathPiece) elements which either represent the index of a
+/// A JSON path consists of zero or more [`JsonPathPiece`] elements which either represent the index of a
 /// JSON array item or the name of a JSON object member. These elements combined form the _path_ to a value
 /// in a JSON document.
 ///
 /// The macro [`json_path!`](json_path::json_path) and the function [`parse_json_path`](json_path::parse_json_path)
-/// can be used to create a JSONPath in a concise way.
+/// can be used to create a JSON path in a concise way.
 ///
-/// JSONPath was originally specified in [this article](https://goessner.net/articles/JsonPath/). However,
+/// JSON path was originally specified in [this article](https://goessner.net/articles/JsonPath/). However,
 /// this module only supports a small subset needed for JSON reader functionality, most notably for reporting
 /// the location of errors and for [`JsonReader::seek_to`].
 ///
@@ -34,7 +34,7 @@ pub mod json_path {
     use std::str::FromStr;
     use thiserror::Error;
 
-    /// A piece of a JSONPath
+    /// A piece of a JSON path
     ///
     /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
     #[derive(PartialEq, Eq, Clone, Debug)]
@@ -66,11 +66,11 @@ pub mod json_path {
         }
     }
 
-    /// A JSONPath
+    /// A JSON path
     ///
-    /// A JSONPath as represented by this module are zero or more [`JsonPathPiece`] elements.
+    /// A JSON path as represented by this module are zero or more [`JsonPathPiece`] elements.
     /// The macro [`json_path!`] and the function [`parse_json_path`] can be used to create
-    /// a JSONPath in a concise way.
+    /// a JSON path in a concise way.
     /* TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then) */
     pub type JsonPath = [JsonPathPiece];
 
@@ -86,7 +86,7 @@ pub mod json_path {
                 .as_str()
     }
 
-    /// Error which occurred while [parsing a JSONPath](parse_json_path)
+    /// Error which occurred while [parsing a JSON path](parse_json_path)
     #[deprecated = "Only used by parse_json_path, which is deprecated"]
     #[derive(Error, Clone, Debug)]
     #[error("parse error at index {index}: {message}")]
@@ -97,7 +97,7 @@ pub mod json_path {
         pub message: String,
     }
 
-    /// Parses a JSONPath in dot-notation, for example `outer[4].inner`
+    /// Parses a JSON path in dot-notation, for example `outer[4].inner`
     ///
     /// This is a convenience function which allows obtaining a vector of [`JsonPathPiece`] from a string form.
     /// The path string must not start with `$` (respectively `$.`) and member names are limited to contain only
@@ -245,7 +245,7 @@ pub mod json_path {
         Ok(parsed_path)
     }
 
-    /// Creates a JSONPath from path pieces
+    /// Creates a JSON path from path pieces
     ///
     /// The arguments to this macro represent the path pieces:
     /// - numbers of type `u32` are converted to [`JsonPathPiece::ArrayItem`]
@@ -269,7 +269,6 @@ pub mod json_path {
     /*
      * TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
      *       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
-     * TODO: Instead of returning [...], should this directly return &[...] to make usage easier? (is that even possible though?)
      */
     #[macro_export]
     macro_rules! json_path {
@@ -416,14 +415,14 @@ pub mod json_path {
 }
 
 use std::{
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Formatter},
     io::Read,
     str::FromStr,
 };
 
 use thiserror::Error;
 
-use self::json_path::JsonPath;
+use self::json_path::{format_abs_json_path, JsonPath, JsonPathPiece};
 use crate::writer::JsonWriter;
 
 mod stream_reader;
@@ -452,79 +451,145 @@ pub enum ValueType {
     // No ArrayEnd and ObjectEnd, should use has_next()
 }
 
-/// Location of an error which occurred while reading a JSON document
+/// Line and column position
 ///
-/// A location consists of a JSONPath, the line and column number. Consider the following malformed
-/// JSON document (`@` being the malformed character):
+/// # Examples
+/// Consider the following JSON document:
 /// ```json
 /// {
-///   "a": @
+///   "a": null
 /// }
 /// ```
-/// The location would be:
-/// - path: `$.a`  
-///   The error occurred for the member with name "a"
+/// The position of `null` is:
 /// - line: 1  
-///   Line numbering starts at 0 and the error occurred in the second line
+///   Line numbering starts at 0 and it is in the second line
 /// - column: 7  
-///   Column numbering starts at 0 and the `@` is the 8th character in that line, respectively
-///   there are 7 characters in front of it
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct JsonErrorLocation {
-    /// [JSONPath](https://goessner.net/articles/JsonPath/) of the error in dot-notation, for example `$.outer[4].second`
-    ///
-    /// This path is mainly intended to help troubleshooting, it should not be parsed in any way since it might be ambiguous
-    /// or incorrect for certain member names. For example when a member name is `"address.street"` it would erroneously be
-    /// considered to consist of two separate names `"address"` and a nested member named `"street"`.
-    ///
-    /// The last piece of the path cannot accurately point to the error location in all cases because errors can occur at
-    /// any position in the JSON document and some cannot be described properly using a JSONPath. The last path piece has
-    /// the following meaning:
-    ///
-    /// - Array item index: Index of the currently processed item, or index of the potential next item
-    ///
-    ///   For example the path `$[2]` means, depending on the error type, that either the error occurred in front of the
-    ///   item at index 2 or the end of the array, for example when a comma is missing. Or it means that parsing the
-    ///   item at index 2 failed, for example because it is a malformed number value. Note that array indices start at 0.
-    ///
-    ///   In general the index is incremented once a value in an array was fully consumed, which results in the
-    ///   behavior described above.
-    ///
-    /// - Object member name: Name of the previously read member, or name of the current member
-    ///
-    ///   For example the path `$.a` means, depending on the error type, that either the error occurred for the value
-    ///   of the member with name "a", for example when the value of the member is malformed. Or it means that parsing
-    ///   the name of the member after "a" or the end of the object failed.  
-    ///   The special name `<?>` is used to indicate that a JSON object was started, but the name of the first member
-    ///   has not been consumed yet.
-    ///
-    /// If tracking the JSON path is [disabled in the `ReaderSettings`](ReaderSettings::track_path) `<?>` will be
-    /// reported as path.
-    ///
-    /// For the exact location of the error the [`line`](Self::line) and [`column`](Self::column) values should be used.
-    pub path: String,
-    /// Line number of the error, starting at 0
+///   Column numbering starts at 0 and the `n` of `null` is the 8th character in that line,
+///   respectively there are 7 characters in front of it
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub struct LinePosition {
+    /// Line number, starting at 0
     ///
     /// The characters _CR_ (U+000D), _LF_ (U+000A) and _CR LF_ are considered line breaks. Other characters and
     /// escaped line breaks in member names and string values are not considered line breaks.
-    pub line: u32,
-    /// Character column of the error within the current line, starting at 0
+    pub line: u64,
+    /// Character column within the current line, starting at 0
     ///
     /// For all Unicode characters this value is incremented only by one, regardless of whether some encodings
     /// such as UTF-8 might use more than one byte for the character, or whether encodings such as UTF-16
     /// might use two characters (a *surrogate pair*) to encode the character. Similarly the tab character
     /// (U+0009) is also considered a single character even though code editors might display it as if it
     /// consisted of more than one space character.
-    pub column: u32,
+    pub column: u64,
 }
 
-impl Display for JsonErrorLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "line {}, column {} at path {}",
-            self.line, self.column, self.path
-        )
+impl Display for LinePosition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}, column {}", self.line, self.column)
+    }
+}
+
+/// Position of the JSON reader in the JSON document
+///
+/// The position information can be used for troubleshooting malformed JSON or JSON data with an unexpected structure.
+/// Which position information is available depends on the implementation of the JSON reader and its configuration.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct JsonReaderPosition {
+    /// JSON path of the position
+    ///
+    /// The path describes which JSON array items and JSON object members to traverse to reach this position.  
+    /// The last piece of the path cannot accurately point to the position in all cases because the position can be
+    /// anywhere in the JSON document and in some cases this cannot be accurately or unambiguously described using
+    /// a JSON path. The last path piece has the following meaning:
+    ///
+    /// - [`JsonPathPiece::ArrayItem`]: Index of the currently processed item, or index of the potential next item
+    ///
+    ///   For example the path `[..., ArrayItem(2)]` means that either the position is in front of a potential item
+    ///   at index 2 (including the case where there are no subsequent items), or at the start or within the item at
+    ///   index 2.
+    ///
+    ///   In general the index is incremented once a value in an array was fully consumed, which results in the
+    ///   behavior described above.
+    ///
+    /// - [`JsonPathPiece::ObjectMember`]: Name of the previously read member, or name of the current member
+    ///
+    ///   For example the path `[..., ObjectMember("a")]` means that either the position is at the start or within
+    ///   the value of the member with name "a" or before the end of the potential next member name (including the
+    ///   case where there are no subsequent members).  
+    ///   The special name `<?>` is used to indicate that a JSON object was started, but the name of the first member
+    ///   has not been consumed yet.
+    ///
+    ///   In general the name in the JSON path is updated once the name of a member has been successfully read,
+    ///   which results in the behavior described above.
+    ///
+    /// The path is `None` if the JSON reader implementation does not track the JSON path or if tracking the
+    /// JSON path is [disabled in the `ReaderSettings`](ReaderSettings::track_path).
+    ///
+    /// For the exact position the [`line_pos`](Self::line_pos) and [`data_pos`](Self::data_pos) should be used.
+    ///
+    /// # Examples
+    /// Consider the following JSON document:
+    /// ```json
+    /// {
+    ///   "a": [1, null]
+    /// }
+    /// ```
+    /// The position of `null` is `[ObjectMember("a"), ArrayItem(1)]`:
+    /// - `ObjectMember("a")`: It is part of the value for the JSON object member named "a"
+    /// - `ArrayItem(1)`: Within that value, which is a JSON array, it is at index 1 (numbering starts at 0)
+    /* TODO: Maybe this should be `Cow<'a, JsonPath>`, but then need to propagate lifetime everywhere? */
+    pub path: Option<Vec<JsonPathPiece>>,
+
+    /// Line and column number
+    ///
+    /// This information is generally only provided by JSON reader implementations which read the JSON
+    /// document as text in some way and where the concept of a line and column number makes sense.
+    /// For other JSON reader implementations this might be `None`.
+    pub line_pos: Option<LinePosition>,
+
+    /// Position in the underlying data source
+    ///
+    /// The exact meaning depends on the JSON reader implementation and what type the underlying data
+    /// has. The value starts at 0, representing the first data unit. It may either refer to the data
+    /// unit which is currently processed (for example if it has an unexpected value) or the potential
+    /// next data unit. For example for a JSON reader implementation based on [`std::io::Read`] the
+    /// value might be the byte position.
+    ///
+    /// `None` if the JSON reader implementation does provide information about the data position.
+    ///
+    /// This value might not be equal to the amount of data consumed from the underlying data source
+    /// in case the JSON reader buffers data internally which it has not processed yet.
+    pub data_pos: Option<u64>,
+}
+
+impl Display for JsonReaderPosition {
+    // Create display string depending on which of the Option values are present
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(path) = &self.path {
+            write!(f, "path '{}'", format_abs_json_path(path))?;
+
+            if let Some(line_pos) = &self.line_pos {
+                write!(f, ", {line_pos}")?;
+
+                if let Some(data_pos) = &self.data_pos {
+                    write!(f, " (data pos {data_pos})")?;
+                }
+            } else if let Some(data_pos) = &self.data_pos {
+                write!(f, ", data pos {data_pos}")?;
+            }
+        } else if let Some(line_pos) = &self.line_pos {
+            write!(f, "{line_pos}")?;
+
+            if let Some(data_pos) = &self.data_pos {
+                write!(f, " (data pos {data_pos})")?;
+            }
+        } else if let Some(data_pos) = &self.data_pos {
+            write!(f, "data pos {data_pos}")?;
+        } else {
+            write!(f, "<location unavailable>")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -540,7 +605,7 @@ pub struct JsonSyntaxError {
     /// Kind of the error
     pub kind: SyntaxErrorKind,
     /// Location where the error occurred in the JSON document
-    pub location: JsonErrorLocation,
+    pub location: JsonReaderPosition,
 }
 
 /// Describes why a syntax error occurred
@@ -650,7 +715,7 @@ pub enum ReaderError {
         /// The actual JSON value type
         actual: ValueType,
         /// Location where the error occurred in the JSON document
-        location: JsonErrorLocation,
+        location: JsonReaderPosition,
     },
     /// The JSON document had an unexpected structure
     ///
@@ -673,7 +738,7 @@ pub enum ReaderError {
         /// Describes why the JSON document is considered to have an invalid structure
         kind: UnexpectedStructureKind,
         /// Location where the error occurred in the JSON document
-        location: JsonErrorLocation,
+        location: JsonReaderPosition,
     },
     /// An unsupported JSON number value was encountered
     ///
@@ -683,7 +748,7 @@ pub enum ReaderError {
         /// The unsupported number value
         number: String,
         /// Location of the number value within the JSON document
-        location: JsonErrorLocation,
+        location: JsonReaderPosition,
     },
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
@@ -698,7 +763,7 @@ pub enum ReaderError {
         /// of the JSON document. For example the location might still point to the beginning
         /// of the current JSON value while the IO error actually occurred multiple bytes
         /// ahead while fetching more data from the underlying reader.
-        location: JsonErrorLocation,
+        location: JsonReaderPosition,
     },
 }
 
@@ -1471,12 +1536,12 @@ pub trait JsonReader {
 
     /// Seeks to the specified location in the JSON document
     ///
-    /// Seeks to the specified relative JSONPath in the JSON document by skipping all previous
+    /// Seeks to the specified relative JSON path in the JSON document by skipping all previous
     /// values. The JSON reader is expected to be positioned before the first value specified
     /// in the path. Once this method returns successfully the reader will be positioned
     /// before the last element specified by the path.
     ///
-    /// For example for the JSONPath `foo[2]` it will start consuming a JSON object, skipping members
+    /// For example for the JSON path `foo[2]` it will start consuming a JSON object, skipping members
     /// until it finds one with name "foo". Then it starts consuming the member value, expecting that
     /// it is a JSON array, until right before the array item with (starting at 0) index 2.
     /// If multiple members in a JSON object have the same name (for example `{"a": 1, "a": 2}`)
@@ -1503,7 +1568,7 @@ pub trait JsonReader {
     /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
     ///
     /// If the structure or the value types of the JSON document do not match the structure expected
-    /// by the JSONPath, either a [`ReaderError::UnexpectedStructure`] or a [`ReaderError::UnexpectedValueType`]
+    /// by the JSON path, either a [`ReaderError::UnexpectedStructure`] or a [`ReaderError::UnexpectedValueType`]
     /// is returned.
     ///
     /// # Panics
@@ -1669,4 +1734,54 @@ pub trait JsonReader {
     /// indicate incorrect usage by the user and are unrelated to the JSON data.
     /* Consumes 'self' */
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{json_path::JsonPathPiece, JsonReaderPosition, LinePosition};
+
+    #[test]
+    fn json_reader_location_display() {
+        let path = Some(vec![
+            JsonPathPiece::ArrayItem(1),
+            JsonPathPiece::ObjectMember("name".to_owned()),
+        ]);
+        let line_pos = Some(LinePosition { line: 1, column: 2 });
+        let data_pos = Some(3);
+
+        let combinations = vec![
+            ((None, None, None), "<location unavailable>"),
+            ((None, None, data_pos), "data pos 3"),
+            ((None, line_pos, None), "line 1, column 2"),
+            ((None, line_pos, data_pos), "line 1, column 2 (data pos 3)"),
+            ((path.clone(), None, None), "path '$[1].name'"),
+            (
+                (path.clone(), None, data_pos),
+                "path '$[1].name', data pos 3",
+            ),
+            (
+                (path.clone(), line_pos, None),
+                "path '$[1].name', line 1, column 2",
+            ),
+            (
+                (path.clone(), line_pos, data_pos),
+                "path '$[1].name', line 1, column 2 (data pos 3)",
+            ),
+        ];
+
+        for combination in combinations {
+            let location_data = combination.0;
+            let reader_location = JsonReaderPosition {
+                path: location_data.0.clone(),
+                line_pos: location_data.1,
+                data_pos: location_data.2,
+            };
+            let display_string = reader_location.to_string();
+            let expected_display_string = combination.1;
+            assert_eq!(
+                expected_display_string, display_string,
+                "expected display string for {location_data:?}: {expected_display_string}"
+            );
+        }
+    }
 }
