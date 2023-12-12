@@ -151,6 +151,7 @@ pub struct JsonStreamReader<R: Read> {
 
     line: u64,
     column: u64,
+    byte_pos: u64,
     json_path: Option<Vec<JsonPathPiece>>,
 
     reader_settings: ReaderSettings,
@@ -216,6 +217,7 @@ impl<R: Read + Debug> Debug for JsonStreamReader<R> {
             )
             .field("line", &self.line)
             .field("column", &self.column)
+            .field("byte_pos", &self.byte_pos)
             .field("json_path", &self.json_path)
             .field("reader_settings", &self.reader_settings)
             .finish()
@@ -378,6 +380,7 @@ impl<R: Read> JsonStreamReader<R> {
             is_string_value_reader_active: false,
             line: 0,
             column: 0,
+            byte_pos: 0,
             json_path: if reader_settings.track_path {
                 Some(Vec::with_capacity(initial_nesting_capacity))
             } else {
@@ -397,8 +400,7 @@ impl<R: Read> JsonStreamReader<R> {
                 line: self.line,
                 column: self.column,
             }),
-            // TODO: Track data pos
-            data_pos: None,
+            data_pos: Some(self.byte_pos),
         }
     }
 
@@ -529,25 +531,29 @@ impl<R: Read> JsonStreamReader<R> {
 
             match byte {
                 b'\n' => {
-                    // Only count \r\n as one line break
+                    // Count \r\n (Windows line break) as only one line break
                     if !has_cr {
                         self.column = 0;
                         self.line += 1;
                     }
+                    self.byte_pos += 1;
                 }
                 b'\r' => {
                     self.column = 0;
                     self.line += 1;
+                    self.byte_pos += 1;
                 }
                 // Skip ASCII character
                 _ if utf8::is_1byte(byte) => {
                     self.column += 1;
+                    self.byte_pos += 1;
                 }
                 _ => {
                     // Validate the UTF-8 data, but ignore it
                     let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
-                    let _ = self.read_utf8_multibyte(byte, &mut buf)?;
+                    let bytes = self.read_utf8_multibyte(byte, &mut buf)?;
                     self.column += 1;
+                    self.byte_pos += bytes.len() as u64;
                 }
             }
             // Set this after each iteration so that "\r   \n" is not considered a single line break
@@ -576,6 +582,7 @@ impl<R: Read> JsonStreamReader<R> {
             )?;
             // Consume the '*'
             self.column += 1;
+            self.byte_pos += 1;
             self.skip_peeked_byte();
 
             let byte = match self.peek_byte()? {
@@ -588,6 +595,7 @@ impl<R: Read> JsonStreamReader<R> {
             if byte == b'/' {
                 self.skip_peeked_byte();
                 self.column += 1;
+                self.byte_pos += 1;
                 return Ok(());
             }
             // Otherwise continue loop searching for next '*', but don't consume the peeked
@@ -628,14 +636,17 @@ impl<R: Read> JsonStreamReader<R> {
                 }
                 self.skip_peeked_byte();
                 self.column += 1;
+                self.byte_pos += 1;
 
                 match self.read_byte(SyntaxErrorKind::IncompleteComment)? {
                     b'*' => {
                         self.column += 1;
+                        self.byte_pos += 1;
                         self.skip_to_block_comment_end()?;
                     }
                     b'/' => {
                         self.column += 1;
+                        self.byte_pos += 1;
                         self.skip_to_line_end(eof_error_kind)?;
                     }
                     _ => {
@@ -688,7 +699,7 @@ impl<R: Read> JsonStreamReader<R> {
             self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterLiteral)?;
         }
 
-        // Note: Don't adjust self.column yet, is done when peeked value is actually consumed
+        // Note: Don't adjust `self.column` yet, is done when peeked value is actually consumed
         Ok(())
     }
 
@@ -716,7 +727,9 @@ impl<R: Read> JsonStreamReader<R> {
         let mut byte = byte.unwrap();
 
         let mut has_trailing_comma = false;
+        let mut comma_line = 0;
         let mut comma_column = 0;
+        let mut comma_byte_pos = 0;
         let can_have_comma = !self.is_empty && (self.is_in_array() || self.expects_member_name);
 
         if byte == b',' {
@@ -724,8 +737,11 @@ impl<R: Read> JsonStreamReader<R> {
                 return self.create_syntax_value_error(SyntaxErrorKind::UnexpectedComma);
             }
             self.skip_peeked_byte();
+            comma_line = self.line;
             comma_column = self.column;
+            comma_byte_pos = self.byte_pos;
             self.column += 1;
+            self.byte_pos += 1;
             has_trailing_comma = true;
 
             byte = self.skip_whitespace_no_eof(SyntaxErrorKind::IncompleteDocument)?;
@@ -793,7 +809,10 @@ impl<R: Read> JsonStreamReader<R> {
 
         if peeked == PeekedValue::ArrayEnd || peeked == PeekedValue::ObjectEnd {
             if has_trailing_comma && !self.reader_settings.allow_trailing_comma {
-                self.column = comma_column; // report location of comma
+                // Report location of comma
+                self.line = comma_line;
+                self.column = comma_column;
+                self.byte_pos = comma_byte_pos;
                 return self.create_syntax_value_error(SyntaxErrorKind::TrailingCommaNotEnabled);
             }
         } else if can_have_comma && !has_trailing_comma {
@@ -862,6 +881,8 @@ impl<R: Read> JsonStreamReader<R> {
             PeekedValue::BooleanFalse => 5,
         };
         self.column += peeked_length;
+        // Peeked value types above consist only of ASCII chars; therefore can treat length as byte count
+        self.byte_pos += peeked_length;
     }
 }
 
@@ -936,8 +957,8 @@ trait Utf8MultibyteReader {
     /// Reads a UTF-8 char consisting of multiple bytes
     ///
     /// `byte0` is the first byte which has already been read by the caller. `destination_buf` is
-    /// used by this method to store all the UTF-8 bytes (including `byte0`). A slice of it containing
-    /// the read bytes is returned as result.
+    /// used by this method to store all the UTF-8 bytes. A slice of it containing the read bytes
+    /// is returned as result; it includes `byte0` as first element.
     fn read_utf8_multibyte<'a>(
         &mut self,
         byte0: u8,
@@ -1481,11 +1502,13 @@ impl<R: Read> JsonStreamReader<R> {
 
         let mut reached_end = false;
         let mut consumed_chars_count = 1;
+        let mut consumed_bytes_count = 1;
         match byte {
             // Read escape sequence
             b'\\' => {
                 let byte = self.read_byte(SyntaxErrorKind::MalformedEscapeSequence)?;
                 consumed_chars_count += 1;
+                consumed_bytes_count += 1;
 
                 match byte {
                     b'"' | b'\\' | b'/' => consumer(byte),
@@ -1497,12 +1520,15 @@ impl<R: Read> JsonStreamReader<R> {
                     b'u' => {
                         let UnicodeEscapeChar {
                             c,
-                            consumed_chars_count,
+                            consumed_chars_count: escape_consumed_chars_count,
                         } = self.read_unicode_escape_char()?;
-                        self.column += consumed_chars_count as u64;
+                        consumed_chars_count += escape_consumed_chars_count as u64;
+                        // Treat as byte count because Unicode escape only uses single byte ASCII chars
+                        consumed_bytes_count += escape_consumed_chars_count as u64;
+
                         let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
-                        let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
-                        for b in &char_encode_buf[..bytes_count] {
+                        let encoded_char = c.encode_utf8(&mut char_encode_buf);
+                        for b in encoded_char.as_bytes() {
                             consumer(*b);
                         }
                     }
@@ -1535,11 +1561,14 @@ impl<R: Read> JsonStreamReader<R> {
                 for b in bytes {
                     consumer(*b);
                 }
+                // - 1 because `byte0` has already been counted at start of `match`
+                consumed_bytes_count += bytes.len() as u64 - 1;
             }
         }
 
-        // Update column afterwards, so in case of error start position of escape sequence or multi-byte UTF-8 char is reported
+        // Update location afterwards, so in case of error, start position of escape sequence or multi-byte UTF-8 char is reported
         self.column += consumed_chars_count;
+        self.byte_pos += consumed_bytes_count;
         Ok(reached_end)
     }
 
@@ -1614,9 +1643,11 @@ impl<R: Read> JsonStreamReader<R> {
                             } = AsUnicodeEscapeReader(&mut bytes_reader)
                                 .read_unicode_escape_char()?;
                             bytes_reader.json_reader.column += consumed_chars_count as u64;
+                            // Treat as byte count because Unicode escape only uses single byte ASCII chars
+                            bytes_reader.json_reader.byte_pos += consumed_chars_count as u64;
                             let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
-                            let bytes_count = c.encode_utf8(&mut char_encode_buf).len();
-                            bytes_reader.push_bytes(&char_encode_buf[..bytes_count]);
+                            let encoded_char = c.encode_utf8(&mut char_encode_buf);
+                            bytes_reader.push_bytes(encoded_char.as_bytes());
                         }
                         _ => {
                             return Err(JsonSyntaxError {
@@ -1628,9 +1659,11 @@ impl<R: Read> JsonStreamReader<R> {
                     // After escape sequence was successfully read, update location information;
                     // otherwise error message would point at the middle of escape sequence
                     bytes_reader.json_reader.column += 2;
+                    bytes_reader.json_reader.byte_pos += 2;
                 }
                 b'"' => {
                     bytes_reader.json_reader.column += 1;
+                    bytes_reader.json_reader.byte_pos += 1;
                     // Don't include the '"' in the value
                     bytes_reader.skip_final_byte();
                     read_bytes = bytes_reader.get_bytes(requires_borrowed);
@@ -1646,6 +1679,7 @@ impl<R: Read> JsonStreamReader<R> {
                 // Non-control ASCII characters
                 0x20..=0x7F => {
                     bytes_reader.json_reader.column += 1;
+                    bytes_reader.json_reader.byte_pos += 1;
                     // Note: bytes_reader will keep the byte in the final value because it is not skipped here
                 }
                 // Read and validate multibyte UTF-8 data
@@ -1656,9 +1690,10 @@ impl<R: Read> JsonStreamReader<R> {
                 _ => {
                     let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                     // Ignore bytes here, bytes_reader will keep the bytes in the final value because they are not skipped here
-                    let _ = AsUtf8MultibyteReader(&mut bytes_reader)
+                    let bytes = AsUtf8MultibyteReader(&mut bytes_reader)
                         .read_utf8_multibyte(byte, &mut buf)?;
                     bytes_reader.json_reader.column += 1;
+                    bytes_reader.json_reader.byte_pos += bytes.len() as u64;
                 }
             }
         }
@@ -1695,6 +1730,7 @@ impl<R: Read> JsonStreamReader<R> {
         return if byte == b':' {
             self.skip_peeked_byte();
             self.column += 1;
+            self.byte_pos += 1;
             Ok(())
         } else {
             self.create_syntax_value_error(SyntaxErrorKind::MissingColon)
@@ -1742,6 +1778,7 @@ macro_rules! collect_next_number_bytes {
 
         let result = reader.get_result();
         $self.column += consumed_bytes as u64;
+        $self.byte_pos += consumed_bytes as u64;
         // Make sure there are no misleading chars directly afterwards, e.g. "123f"
         if let Some(byte) = $self.peek_byte()? {
             $self.verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?
@@ -2457,13 +2494,14 @@ mod tests {
     }
     impl<T: IntoIterator> IterAssert for T where T::Item: Display {}
 
-    fn assert_parse_error_with_path<T>(
+    fn assert_parse_error_with_byte_pos<T>(
         // input is only used for display purposes; enhances error messages for loops testing multiple inputs
         input: Option<&str>,
         result: Result<T, ReaderError>,
         expected_kind: SyntaxErrorKind,
         expected_path: &JsonPath,
         expected_column: u64,
+        expected_byte_pos: u64,
     ) {
         let input_display_str = input.map_or("".to_owned(), |s| format!(" for '{s}'"));
         match result {
@@ -2478,7 +2516,7 @@ mod tests {
                                 line: 0,
                                 column: expected_column
                             }),
-                            data_pos: None,
+                            data_pos: Some(expected_byte_pos),
                         },
                     },
                     e,
@@ -2490,6 +2528,25 @@ mod tests {
                 }
             },
         }
+    }
+
+    fn assert_parse_error_with_path<T>(
+        // input is only used for display purposes; enhances error messages for loops testing multiple inputs
+        input: Option<&str>,
+        result: Result<T, ReaderError>,
+        expected_kind: SyntaxErrorKind,
+        expected_path: &JsonPath,
+        expected_column: u64,
+    ) {
+        assert_parse_error_with_byte_pos(
+            input,
+            result,
+            expected_kind,
+            expected_path,
+            expected_column,
+            // Assume input is ASCII only on single line; treat column as byte pos
+            expected_column,
+        )
     }
 
     fn assert_parse_error<T>(
@@ -2714,7 +2771,7 @@ mod tests {
                         JsonReaderPosition {
                             path: Some(Vec::new()),
                             line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: None
+                            data_pos: Some(0),
                         },
                         location
                     );
@@ -2730,7 +2787,7 @@ mod tests {
                         JsonReaderPosition {
                             path: Some(Vec::new()),
                             line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: None
+                            data_pos: Some(0),
                         },
                         location
                     );
@@ -3047,7 +3104,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error UnknownEscapeSequence at path '$', line 0, column 1",
+                    "JSON syntax error UnknownEscapeSequence at path '$', line 0, column 1 (data pos 1)",
                     e.to_string()
                 );
                 let cause: &JsonSyntaxError = e
@@ -3061,7 +3118,7 @@ mod tests {
                         location: JsonReaderPosition {
                             path: Some(Vec::new()),
                             line_pos: Some(LinePosition { line: 0, column: 1 }),
-                            data_pos: None
+                            data_pos: Some(1),
                         },
                     },
                     cause
@@ -3081,7 +3138,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1",
+                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3100,7 +3157,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1",
+                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1 (data pos 1)",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3112,7 +3169,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1",
+                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1 (data pos 1)",
                     e.get_ref().unwrap().to_string()
                 );
             }
@@ -3203,6 +3260,17 @@ mod tests {
         );
 
         let mut json_reader = new_reader("[1,]");
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::TrailingCommaNotEnabled,
+            &json_path![1],
+            2,
+        );
+
+        let mut json_reader = new_reader("[1,\n]");
         json_reader.begin_array()?;
         assert_eq!("1", json_reader.next_number_as_string()?);
         assert_parse_error_with_path(
@@ -3992,13 +4060,14 @@ mod tests {
             json_reader.transfer_to(&mut json_writer)?;
         }
         // Also check how missing value is handled
-        assert_unexpected_structure(
+        assert_unexpected_structure_with_byte_pos(
             json_reader
                 .transfer_to(&mut json_writer)
                 .map_err(as_transfer_read_error),
             UnexpectedStructureKind::FewerElementsThanExpected,
             &json_path![8],
             99,
+            102,
         );
 
         json_reader.end_array()?;
@@ -4301,7 +4370,39 @@ mod tests {
                                 line: 0,
                                 column: expected_column
                             }),
-                            data_pos: None
+                            // Assume input is ASCII only on single line; treat column as byte pos
+                            data_pos: Some(expected_column),
+                        },
+                        location
+                    );
+                }
+                other => {
+                    panic!("Unexpected error: {other}")
+                }
+            },
+        }
+    }
+
+    fn assert_unexpected_structure_with_byte_pos<T>(
+        result: Result<T, ReaderError>,
+        expected_kind: UnexpectedStructureKind,
+        expected_path: &JsonPath,
+        expected_column: u64,
+        expected_byte_pos: u64,
+    ) {
+        match result {
+            Ok(_) => panic!("Test should have failed"),
+            Err(e) => match e {
+                ReaderError::UnexpectedStructure { kind, location } => {
+                    assert_eq!(expected_kind, kind);
+                    assert_eq!(
+                        JsonReaderPosition {
+                            path: Some(expected_path.to_owned()),
+                            line_pos: Some(LinePosition {
+                                line: 0,
+                                column: expected_column
+                            }),
+                            data_pos: Some(expected_byte_pos),
                         },
                         location
                     );
@@ -4319,28 +4420,14 @@ mod tests {
         expected_path: &JsonPath,
         expected_column: u64,
     ) {
-        match result {
-            Ok(_) => panic!("Test should have failed"),
-            Err(e) => match e {
-                ReaderError::UnexpectedStructure { kind, location } => {
-                    assert_eq!(expected_kind, kind);
-                    assert_eq!(
-                        JsonReaderPosition {
-                            path: Some(expected_path.to_owned()),
-                            line_pos: Some(LinePosition {
-                                line: 0,
-                                column: expected_column
-                            }),
-                            data_pos: None
-                        },
-                        location
-                    );
-                }
-                other => {
-                    panic!("Unexpected error: {other}")
-                }
-            },
-        }
+        assert_unexpected_structure_with_byte_pos(
+            result,
+            expected_kind,
+            expected_path,
+            expected_column,
+            // Assume input is ASCII only on single line; treat column as byte pos
+            expected_column,
+        )
     }
 
     #[test]
@@ -4824,12 +4911,12 @@ mod tests {
                     &JsonReaderPosition {
                         path: Some(Vec::new()),
                         line_pos: Some(LinePosition { line: 0, column: 2 }),
-                        data_pos: None
+                        data_pos: Some(2),
                     },
                     location
                 );
                 assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 2",
+                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 2 (data pos 2)",
                     e.as_ref().unwrap_err().to_string()
                 );
             }
@@ -4841,7 +4928,12 @@ mod tests {
 
     #[test]
     fn location_whitespace() {
-        fn assert_location(json: &str, expected_line: u64, expected_column: u64) {
+        fn assert_location(
+            json: &str,
+            expected_line: u64,
+            expected_column: u64,
+            expected_byte_pos: u64,
+        ) {
             let mut json_reader = new_reader_with_comments(json);
             match json_reader.peek() {
                 Ok(_) => panic!("Test should have failed"),
@@ -4855,7 +4947,7 @@ mod tests {
                                     line: expected_line,
                                     column: expected_column
                                 }),
-                                data_pos: None
+                                data_pos: Some(expected_byte_pos),
                             },
                         },
                         e
@@ -4867,62 +4959,63 @@ mod tests {
             }
         }
 
-        assert_location("", 0, 0);
-        assert_location(" ", 0, 1);
-        assert_location("\t", 0, 1);
-        assert_location("\n", 1, 0);
-        assert_location("\r", 1, 0);
-        assert_location("\r\n", 1, 0);
-        assert_location("\r \n", 2, 0);
-        assert_location("\n\r", 2, 0);
-        assert_location("\r\n\n", 2, 0);
-        assert_location("\r\r", 2, 0);
-        assert_location("\r\r\n", 2, 0);
-        assert_location("\n  \r \t \r\n    \t\t ", 3, 7);
+        assert_location("", 0, 0, 0);
+        assert_location(" ", 0, 1, 1);
+        assert_location("\t", 0, 1, 1);
+        assert_location("\n", 1, 0, 1);
+        assert_location("\r", 1, 0, 1);
+        assert_location("\r\n", 1, 0, 2);
+        assert_location("\r \n", 2, 0, 3);
+        assert_location("\n\r", 2, 0, 2);
+        assert_location("\r\n\n", 2, 0, 3);
+        assert_location("\r\r", 2, 0, 2);
+        assert_location("\r\r\n", 2, 0, 3);
+        assert_location("\n  \r \t \r\n    \t\t ", 3, 7, 16);
 
-        assert_location("//\n", 1, 0);
-        assert_location("//\n  ", 1, 2);
-        assert_location("//\n  //\r  // a", 2, 6);
+        assert_location("//\n", 1, 0, 3);
+        assert_location("//\n  ", 1, 2, 5);
+        assert_location("//\n  //\r  // a", 2, 6, 14);
 
-        assert_location("/* */", 0, 5);
-        assert_location("/* */\n ", 1, 1);
-        assert_location("/* \n \r */  ", 2, 5);
+        assert_location("/* */", 0, 5, 5);
+        assert_location("/* */\n ", 1, 1, 7);
+        assert_location("/* \n \r */  ", 2, 5, 11);
         // Multi-byte UTF-8 encoded char should be considered only 1 column
-        assert_location("/*\u{10FFFF}*/", 0, 5);
+        assert_location("/*\u{10FFFF}*/", 0, 5, 8);
     }
 
     #[test]
     fn location_value() {
-        fn assert_location(json: &str, expected_column: u64) {
+        fn assert_location(json: &str, expected_column: u64, expected_byte_pos: u64) {
             let mut json_reader = new_reader(json);
             json_reader.begin_array().unwrap();
             json_reader.skip_value().unwrap();
-            assert_parse_error_with_path(
+            assert_parse_error_with_byte_pos(
                 Some(json),
                 json_reader.peek(),
                 SyntaxErrorKind::IncompleteDocument,
                 &json_path![1],
                 expected_column,
+                expected_byte_pos,
             );
         }
 
-        assert_location("[true,", 6);
-        assert_location("[false,", 7);
-        assert_location("[null,", 6);
-        assert_location("[123e1,", 7);
-        assert_location(r#"["","#, 4);
-        assert_location(r#"["\"\\\/\b\f\n\r\t\u1234","#, 26);
+        assert_location("[true,", 6, 6);
+        assert_location("[false,", 7, 7);
+        assert_location("[null,", 6, 6);
+        assert_location("[123e1,", 7, 7);
+        assert_location(r#"["","#, 4, 4);
+        assert_location(r#"["\"\\\/\b\f\n\r\t\u1234","#, 26, 26);
         // Escaped line breaks should not be considered line breaks
-        assert_location(r#"["\n \r","#, 9);
-        assert_location(r#"["\u000A \u000D","#, 17);
+        assert_location(r#"["\n \r","#, 9, 9);
+        assert_location(r#"["\u000A \u000D","#, 17, 17);
         // Multi-byte UTF-8 encoded character should be considered single character
-        assert_location("[\"\u{10FFFF}\",", 5);
+        assert_location("[\"\u{10FFFF}\",", 5, 8);
         // Line separator and line paragraph should not be considered line breaks
-        assert_location("[\"\u{2028}\u{2029}\",", 6);
-        assert_location("[[],", 4);
-        assert_location("[[1, 2],", 8);
-        assert_location("[{},", 4);
-        assert_location(r#"[{"a": 1},"#, 10);
+        assert_location("[\"\u{2028}\u{2029}\",", 6, 10);
+        assert_location("[[],", 4, 4);
+        assert_location("[[1, 2],", 8, 8);
+        assert_location("[{},", 4, 4);
+        assert_location(r#"[{"a": 1},"#, 10, 10);
     }
 
     #[test]
@@ -5108,7 +5201,7 @@ mod tests {
                                 line: 0,
                                 column: 51,
                             }),
-                        data_pos: None,
+                        data_pos: Some(51),
                     },
             })) => {}
             r => panic!("Unexpected result: {r:?}"),
@@ -5248,13 +5341,13 @@ mod tests {
         let json_number = "123";
         let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
@@ -5276,7 +5369,7 @@ mod tests {
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: false } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: false } }",
             format!("{json_reader:?}")
         );
 
@@ -5292,7 +5385,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5305,7 +5398,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5321,7 +5414,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json.as_slice());
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5407,7 +5500,7 @@ mod tests {
                         JsonReaderPosition {
                             path: Some(Vec::new()),
                             line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: None
+                            data_pos: Some(0),
                         },
                         location
                     );

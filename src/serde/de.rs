@@ -1817,7 +1817,7 @@ mod tests {
                         JsonReaderPosition {
                             path: Some(Vec::new()),
                             line_pos: Some(LinePosition { line: 0, column: 1 }),
-                            data_pos: None,
+                            data_pos: Some(1),
                         },
                         location
                     );
