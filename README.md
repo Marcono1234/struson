@@ -6,14 +6,14 @@ Its main purpose is to allow writing JSON documents in a memory efficient way wi
 
 The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
-**Note:** This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/), breaking changes may occur.  
+**Note:** This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/), breaking changes may occur.\
 Feedback and suggestions for improvements are welcome!
 
 ## Why?
 
 The most popular JSON Rust crates [Serde JSON (`serde_json`)](https://github.com/serde-rs/json) and [json-rust (`json`)](https://github.com/maciejhirsz/json-rust) mainly provide high level APIs for working with JSON.
 
-- Serde JSON provides an API for converting JSON into DOM like structures (module `serde_json::value`) and object mapper functionality by converting structs to JSON and vice versa. Both requires the complete value to be present in memory. The trait `serde_json::ser::Formatter` actually allows writing JSON in a streaming way, but its API is arguably too low level and inconvenient to use: You have to handle string escaping yourself, and you always have to provide the writer as argument for every method call.  
+- Serde JSON provides an API for converting JSON into DOM like structures (module `serde_json::value`) and object mapper functionality by converting structs to JSON and vice versa. Both requires the complete value to be present in memory. The trait `serde_json::ser::Formatter` actually allows writing JSON in a streaming way, but its API is arguably too low level and inconvenient to use: You have to handle string escaping yourself, and you always have to provide the writer as argument for every method call.\
   Note however, that Serde JSON's [`StreamDeserializer`](https://docs.rs/serde_json/latest/serde_json/struct.StreamDeserializer.html) allows reading multiple top-level values in a streaming way, and that certain streaming use cases can be solved with custom `Visitor` implementations, see the documentation for examples of [streaming an array](https://serde.rs/stream-array.html) and [discarding data](https://serde.rs/ignored-any.html).
 
 - json-rust provides an API for converting JSON into DOM like structures (enum `json::JsonValue`), this requires the complete value to be present in memory. The trait `json::codegen::Generator` offers a partial API for writing JSON in a streaming way, however it misses methods for writing JSON arrays and objects in a streaming way.
@@ -24,15 +24,15 @@ If you need to process JSON in a DOM like way or want object mapper functionalit
 
 - Low level streaming API, no implicit value conversion
 - Strong enforcement of correct API usage
-- Panics only for incorrect API usage  
+- Panics only for incorrect API usage\
   Malformed JSON and unexpected JSON structure only causes errors
-- API does not require recursion for JSON arrays and objects  
+- API does not require recursion for JSON arrays and objects\
   Can theoretically read and write arbitrarily deeply nested JSON data
-- Read and write arbitrarily precise JSON numbers as string  
+- Read and write arbitrarily precise JSON numbers as string\
   ([`JsonReader::next_number_as_str`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.next_number_as_str) and [`JsonWriter::number_value_from_string`](https://docs.rs/struson/latest/struson/writer/trait.JsonWriter.html#tymethod.number_value_from_string))
 - Seek to specific location in JSON data ([`JsonReader::seek_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.seek_to))
 - Transfer JSON data from a reader to a writer ([`JsonReader::transfer_to`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.transfer_to))
-- Read and write arbitrarily large JSON string values  
+- Read and write arbitrarily large JSON string values\
   ([`JsonReader::next_string_reader`](https://docs.rs/struson/latest/struson/reader/trait.JsonReader.html#tymethod.next_string_reader) and [`JsonWriter::string_value_writer`](https://docs.rs/struson/latest/struson/writer/trait.JsonWriter.html#tymethod.string_value_writer))
 - Optional [Serde integration](#serde-integration)
 
@@ -104,13 +104,13 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 
 ## Similar projects
 
-- <https://github.com/alexmaco/json_stream>  
+- <https://github.com/alexmaco/json_stream>\
   > A streaming JSON parser/emitter library for rust
-- <https://github.com/sarum90/qjsonrs>  
+- <https://github.com/sarum90/qjsonrs>\
   > JSON Tokenizer written in Rust
-- <https://github.com/jeremiah-shaulov/nop-json>  
+- <https://github.com/jeremiah-shaulov/nop-json>\
   > JSON serialization/deserialization (full-featured, modern, streaming, direct into struct/enum)
-- <https://github.com/isagalaev/ijson-rust>  
+- <https://github.com/isagalaev/ijson-rust>\
   <!-- Note: Project itself has no README or description -->
   > Rust re-implementation of the Python streaming JSON parser [ijson](https://github.com/isagalaev/ijson)
 - <https://github.com/byron/json-tools>

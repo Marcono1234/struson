@@ -27,7 +27,7 @@
 /// ```
 /// It means: Within a JSON object the member with name "a", and assuming the value of that member is
 /// a JSON array, of that array the item at index 2 (starting at 0). The string representation of the
-/// path in dot-notation would be `a[2]`.  
+/// path in dot-notation would be `a[2]`.\
 /// For example in the JSON string `{"a": [0.5, 1.5, 2.5]}` it would point to the value `2.5`.
 #[allow(deprecated)] // TODO: Only for JsonPathParseError, remove this allow(deprecated) attribute once JsonPathParseError was removed
 pub mod json_path {
@@ -470,9 +470,9 @@ pub enum ValueType {
 /// }
 /// ```
 /// The position of `null` is:
-/// - line: 1  
+/// - line: 1\
 ///   Line numbering starts at 0 and it is in the second line
-/// - column: 7  
+/// - column: 7\
 ///   Column numbering starts at 0 and the `n` of `null` is the 8th character in that line,
 ///   respectively there are 7 characters in front of it
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
@@ -506,7 +506,7 @@ impl Display for LinePosition {
 pub struct JsonReaderPosition {
     /// JSON path of the position
     ///
-    /// The path describes which JSON array items and JSON object members to traverse to reach this position.  
+    /// The path describes which JSON array items and JSON object members to traverse to reach this position.\
     /// The last piece of the path cannot accurately point to the position in all cases because the position can be
     /// anywhere in the JSON document and in some cases this cannot be accurately or unambiguously described using
     /// a JSON path. The last path piece has the following meaning:
@@ -524,7 +524,7 @@ pub struct JsonReaderPosition {
     ///
     ///   For example the path `[..., ObjectMember("a")]` means that either the position is at the start or within
     ///   the value of the member with name "a" or before the end of the potential next member name (including the
-    ///   case where there are no subsequent members).  
+    ///   case where there are no subsequent members).\
     ///   The special name `<?>` is used to indicate that a JSON object was started, but the name of the first member
     ///   has not been consumed yet.
     ///
@@ -1506,7 +1506,7 @@ pub trait JsonReader {
     /// Skips the next value
     ///
     /// This method can be used to skip top-level values, JSON array items and JSON object member
-    /// values. To skip an object member name, the method [`skip_name`](Self::skip_name) has to be used.  
+    /// values. To skip an object member name, the method [`skip_name`](Self::skip_name) has to be used.\
     /// Skipping a JSON array or object skips the complete value including all nested ones, if any.
     ///
     /// Skipping values can be useful when parts of the processed JSON document are not relevant

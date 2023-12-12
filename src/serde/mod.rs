@@ -20,7 +20,7 @@
 //! ```
 //!
 //! The most convenient way to use the Serde integration is by using [`JsonWriter::serialize_value`](crate::writer::JsonWriter::serialize_value)
-//! and [`JsonReader::deserialize_next`](crate::reader::JsonReader::deserialize_next).  
+//! and [`JsonReader::deserialize_next`](crate::reader::JsonReader::deserialize_next).\
 //! Alternatively [`JsonWriterSerializer`] and [`JsonReaderDeserializer`]
 //! can be used directly, but that is rarely necessary.
 //!

@@ -1189,9 +1189,9 @@ mod tests {
 
     /// Asserts that serializing too few (`F1`) or too many (`F2`) elements causes an error
     ///
-    /// `F1` should claim to serialize 1 element but try to call `end()` without having written
-    /// anything yet.  
-    /// `F2` should claim to serialize 0 elements but actually try to serialize an element.
+    /// - `F1` should claim to serialize 1 element but try to call `end()` without having written
+    ///   anything yet.
+    /// - `F2` should claim to serialize 0 elements but actually try to serialize an element.
     fn assert_elements_count_error<
         F1: Fn(
             &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,

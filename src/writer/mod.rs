@@ -545,7 +545,7 @@ pub trait StringValueWriter: Write {
     /// This method behaves the same way as if the string bytes were written using
     /// the `write` method, however `JsonWriter` implementations might implement
     /// `write_str` more efficiently. For example, they can omit UTF-8 validation
-    /// because the data of a `str` already represents valid UTF-8 data.  
+    /// because the data of a `str` already represents valid UTF-8 data.\
     /// Therefore if a value already exists as string, using `write_str` is likely
     /// at least as efficient as using the `write` method.
     ///
@@ -661,7 +661,7 @@ mod private {
     // Sealed trait, see https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
     pub trait Sealed {}
 
-    // Use `duplicate` create to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
+    // Use `duplicate` crate to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
     #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize]; [f32]; [f64])]
     impl Sealed for type_template {}
 }
@@ -679,7 +679,7 @@ pub enum JsonNumberError {
     IoError(#[from] IoError),
 }
 
-// Use `duplicate` create to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
+// Use `duplicate` crate to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
 #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
 impl FiniteNumber for type_template {
     #[inline(always)]

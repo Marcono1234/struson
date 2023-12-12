@@ -247,9 +247,9 @@ pub struct ReaderSettings {
     ///
     /// When enabled the following two comment variants can be used where the JSON
     /// specification allows whitespace:
-    /// - end of line comments: `// ...`  
+    /// - end of line comments: `// ...`\
     ///   The comment spans to the end of the line (next `\r\n`, `\r` or `\n`)
-    /// - block comments: `/* ... */`  
+    /// - block comments: `/* ... */`\
     ///   The comment ends at the next `*/` and can include line breaks
     ///
     /// Note that unlike for member names and string values, control characters in the range
