@@ -1275,6 +1275,9 @@ pub trait JsonReader {
     /*
      * TODO: Maybe restrict FromStr somehow to numbers?
      * TODO: Solve this in a cleaner way than Result<Result<...>, ...>?
+     * TODO: If FromStr returns an error, should include JsonReaderPosition for easier troubleshooting?
+     *       Callers (such as Serde Deserializer number parsing implementation) would then not have to
+     *       do this themselves
      */
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
         // Default implementation which should be suitable for most JsonReader implementations
@@ -1583,7 +1586,58 @@ pub trait JsonReader {
      * TODO: Rename this method? Name is based on file IO function `seek`, but not sure if "seek to"
      *   is a proper phrase in this context
      */
-    fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError>;
+    fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+        // peek here to fail if reader is currently not expecting a value, even if `rel_json_path` is empty
+        // and it would otherwise not be detected
+        self.peek()?;
+
+        for path_piece in rel_json_path {
+            match path_piece {
+                JsonPathPiece::ArrayItem(index) => {
+                    self.begin_array()?;
+                    for i in 0..=*index {
+                        if !self.has_next()? {
+                            return Err(ReaderError::UnexpectedStructure {
+                                kind: UnexpectedStructureKind::TooShortArray {
+                                    expected_index: *index,
+                                },
+                                location: self.current_position(true),
+                            });
+                        }
+
+                        // Last iteration only makes sure has_next() succeeds; don't have to skip value
+                        if i < *index {
+                            self.skip_value()?;
+                        }
+                    }
+                }
+                JsonPathPiece::ObjectMember(name) => {
+                    self.begin_object()?;
+
+                    let mut found_member = false;
+                    while self.has_next()? {
+                        if self.next_name()? == name {
+                            found_member = true;
+                            break;
+                        } else {
+                            self.skip_value()?;
+                        }
+                    }
+
+                    if !found_member {
+                        return Err(ReaderError::UnexpectedStructure {
+                            kind: UnexpectedStructureKind::MissingObjectMember {
+                                member_name: name.clone(),
+                            },
+                            location: self.current_position(true),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 
     /// Skips the remaining elements of all currently enclosing JSON arrays and objects
     ///
@@ -1734,6 +1788,53 @@ pub trait JsonReader {
     /// indicate incorrect usage by the user and are unrelated to the JSON data.
     /* Consumes 'self' */
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
+
+    /// Gets the current position of this JSON reader within the JSON data
+    ///
+    /// The position can be used to enhance custom errors when building a parser on top
+    /// of this JSON reader. `include_path` determines whether the [JSON path](JsonReaderPosition::path)
+    /// should be included, assuming the JSON reader implementation supports providing
+    /// this information (if it doesn't the path will be `None` regardless of `include_path`
+    /// value). Including the JSON path can make the position information more useful
+    /// for troubleshooting. However, if a caller frequently requests the position,
+    /// for example to have it providently in case subsequent parsing fails, then it
+    /// might improve performance to not include the path information.
+    ///
+    /// [Line](JsonReaderPosition::line_pos) and [data position](JsonReaderPosition::data_pos)
+    /// are only specified if [`has_next`](Self::has_next) or [`peek`](Self::peek) have just
+    /// been called, in which case their values point at the start of the next token. Otherwise
+    /// their values can be anywhere between the previous token and the next token (if any).
+    ///
+    /// The position information makes no guarantee about the amount of data (e.g. number of
+    /// bytes) consumed from the underlying data source. JSON reader implementations might
+    /// buffer data which has not been processed yet.
+    ///
+    /// # Examples
+    /// Let's assume an array of points encoded as JSON string in the format `x|y` should
+    /// be parsed:
+    ///
+    /// ```
+    /// # use struson::reader::*;
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"["1|2", "3|2", "8"]"#.as_bytes()
+    /// );
+    /// json_reader.begin_array()?;
+    ///
+    /// while json_reader.has_next()? {
+    ///     let pos = json_reader.current_position(true);
+    ///     let encoded_point = json_reader.next_str()?;
+    ///
+    /// #   #[allow(unused_variables)]
+    ///     if let Some((x, y)) = encoded_point.split_once('|') {
+    ///         // ...
+    ///     } else {
+    ///         // Includes the JSON reader position for easier troubleshooting
+    ///         println!("Malformed point '{encoded_point}', at {pos}");
+    ///     }
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn current_position(&self, include_path: bool) -> JsonReaderPosition;
 }
 
 #[cfg(test)]

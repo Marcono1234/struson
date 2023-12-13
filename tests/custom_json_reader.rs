@@ -22,9 +22,8 @@ mod custom_reader {
     use std::{io::Read, iter::Peekable};
     use struson::{
         reader::{
-            json_path::{JsonPath, JsonPathPiece},
-            JsonReader, JsonReaderPosition, ReaderError, TransferError, UnexpectedStructureKind,
-            ValueType,
+            json_path::JsonPathPiece, JsonReader, JsonReaderPosition, ReaderError, TransferError,
+            UnexpectedStructureKind, ValueType,
         },
         writer::{JsonNumberError, JsonWriter},
     };
@@ -69,11 +68,7 @@ mod custom_reader {
         }
 
         fn create_error_location(&self) -> JsonReaderPosition {
-            JsonReaderPosition {
-                path: Some(self.json_path.clone()),
-                line_pos: None,
-                data_pos: None,
-            }
+            self.current_position(true)
         }
 
         fn begin_value(&mut self, expected: ValueType) -> Result<(), ReaderError> {
@@ -358,59 +353,6 @@ mod custom_reader {
             Ok(())
         }
 
-        fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
-            // peek here to fail if reader is currently not expecting a value, even if `rel_json_path` is empty
-            // and it would otherwise not be detected
-            self.peek()?;
-
-            for path_piece in rel_json_path {
-                match path_piece {
-                    JsonPathPiece::ArrayItem(index) => {
-                        self.begin_array()?;
-                        for i in 0..=*index {
-                            if !self.has_next()? {
-                                return Err(ReaderError::UnexpectedStructure {
-                                    kind: UnexpectedStructureKind::TooShortArray {
-                                        expected_index: *index,
-                                    },
-                                    location: self.create_error_location(),
-                                });
-                            }
-
-                            // Last iteration only makes sure has_next() succeeds; don't have to skip value
-                            if i < *index {
-                                self.skip_value()?;
-                            }
-                        }
-                    }
-                    JsonPathPiece::ObjectMember(name) => {
-                        self.begin_object()?;
-
-                        let mut found_member = false;
-                        while self.has_next()? {
-                            if self.next_name()? == name {
-                                found_member = true;
-                                break;
-                            } else {
-                                self.skip_value()?;
-                            }
-                        }
-
-                        if !found_member {
-                            return Err(ReaderError::UnexpectedStructure {
-                                kind: UnexpectedStructureKind::MissingObjectMember {
-                                    member_name: name.clone(),
-                                },
-                                location: self.create_error_location(),
-                            });
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
         fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
             self.verify_string_reader_inactive();
 
@@ -515,6 +457,18 @@ mod custom_reader {
                 panic!("Incorrect reader usage: Value has not been fully consumed")
             }
             Ok(())
+        }
+
+        fn current_position(&self, include_path: bool) -> JsonReaderPosition {
+            JsonReaderPosition {
+                path: if include_path {
+                    Some(self.json_path.clone())
+                } else {
+                    None
+                },
+                line_pos: None,
+                data_pos: None,
+            }
         }
     }
 

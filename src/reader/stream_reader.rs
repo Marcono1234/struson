@@ -394,14 +394,7 @@ impl<R: Read> JsonStreamReader<R> {
 // Implementation with error utility methods, and methods for inspecting JSON structure state
 impl<R: Read> JsonStreamReader<R> {
     fn create_error_location(&self) -> JsonReaderPosition {
-        JsonReaderPosition {
-            path: self.json_path.clone(),
-            line_pos: Some(LinePosition {
-                line: self.line,
-                column: self.column,
-            }),
-            data_pos: Some(self.byte_pos),
-        }
+        self.current_position(true)
     }
 
     fn create_syntax_value_error<T>(
@@ -2161,62 +2154,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         //       JsonReaderDeserializer makes sure JSON arrays and objects are read completely
     }
 
-    fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
-        // TODO: Provide this as default implementation? Remove implementation in custom_json_reader test then;
-        // currently not possible because this uses private method `create_error_location`
-
-        // peek here to fail if reader is currently not expecting a value, even if `rel_json_path` is empty
-        // and it would otherwise not be detected
-        self.peek()?;
-
-        for path_piece in rel_json_path {
-            match path_piece {
-                JsonPathPiece::ArrayItem(index) => {
-                    self.begin_array()?;
-                    for i in 0..=*index {
-                        if !self.has_next()? {
-                            return Err(ReaderError::UnexpectedStructure {
-                                kind: UnexpectedStructureKind::TooShortArray {
-                                    expected_index: *index,
-                                },
-                                location: self.create_error_location(),
-                            });
-                        }
-
-                        // Last iteration only makes sure has_next() succeeds; don't have to skip value
-                        if i < *index {
-                            self.skip_value()?;
-                        }
-                    }
-                }
-                JsonPathPiece::ObjectMember(name) => {
-                    self.begin_object()?;
-
-                    let mut found_member = false;
-                    while self.has_next()? {
-                        if self.next_name()? == name {
-                            found_member = true;
-                            break;
-                        } else {
-                            self.skip_value()?;
-                        }
-                    }
-
-                    if !found_member {
-                        return Err(ReaderError::UnexpectedStructure {
-                            kind: UnexpectedStructureKind::MissingObjectMember {
-                                member_name: name.clone(),
-                            },
-                            location: self.create_error_location(),
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
             panic!("Incorrect reader usage: Cannot skip to top level when string value reader is active");
@@ -2357,6 +2294,21 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         } else {
             Ok(())
         };
+    }
+
+    fn current_position(&self, include_path: bool) -> JsonReaderPosition {
+        JsonReaderPosition {
+            path: if include_path {
+                self.json_path.clone()
+            } else {
+                None
+            },
+            line_pos: Some(LinePosition {
+                line: self.line,
+                column: self.column,
+            }),
+            data_pos: Some(self.byte_pos),
+        }
     }
 }
 
@@ -2511,7 +2463,7 @@ mod tests {
                     JsonSyntaxError {
                         kind: expected_kind,
                         location: JsonReaderPosition {
-                            path: Some(expected_path.to_owned()),
+                            path: Some(expected_path.to_vec()),
                             line_pos: Some(LinePosition {
                                 line: 0,
                                 column: expected_column
@@ -3281,6 +3233,19 @@ mod tests {
             2,
         );
 
+        let mut json_reader = new_reader("[1,]");
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        // Arguably `has_next()` could also return true and only next value consuming call would fail,
+        // but in that case `current_position()` method contract might be violated
+        assert_parse_error_with_path(
+            None,
+            json_reader.has_next(),
+            SyntaxErrorKind::TrailingCommaNotEnabled,
+            &json_path![1],
+            2,
+        );
+
         let mut json_reader = new_reader_with_trailing_comma("[1,]");
         json_reader.begin_array()?;
         assert_eq!("1", json_reader.next_number_as_string()?);
@@ -3411,6 +3376,8 @@ mod tests {
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name_owned()?);
         assert_eq!("1", json_reader.next_number_as_string()?);
+        // Arguably `has_next()` could also return true and only next name consuming call would fail,
+        // but in that case `current_position()` method contract might be violated
         assert_parse_error_with_path(
             None,
             json_reader.has_next(),
@@ -4365,7 +4332,7 @@ mod tests {
                     assert_eq!(expected_actual, actual);
                     assert_eq!(
                         JsonReaderPosition {
-                            path: Some(expected_path.to_owned()),
+                            path: Some(expected_path.to_vec()),
                             line_pos: Some(LinePosition {
                                 line: 0,
                                 column: expected_column
@@ -4397,7 +4364,7 @@ mod tests {
                     assert_eq!(expected_kind, kind);
                     assert_eq!(
                         JsonReaderPosition {
-                            path: Some(expected_path.to_owned()),
+                            path: Some(expected_path.to_vec()),
                             line_pos: Some(LinePosition {
                                 line: 0,
                                 column: expected_column
@@ -4922,6 +4889,97 @@ mod tests {
             }
             result => panic!("Unexpected result: {result:?}"),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn current_position() -> TestResult {
+        let mut json_reader = JsonStreamReader::new_custom(
+            r#"  [  1  , {  "a"  : true  }  ]  "#.as_bytes(),
+            ReaderSettings {
+                allow_multiple_top_level: true,
+                ..Default::default()
+            },
+        );
+
+        // Test `include_path=true`
+        let position = json_reader.current_position(true);
+        assert_eq!(
+            JsonReaderPosition {
+                path: Some(Vec::new()),
+                line_pos: Some(LinePosition { line: 0, column: 0 }),
+                data_pos: Some(0)
+            },
+            position
+        );
+
+        // Test `include_path=false`
+        let position = json_reader.current_position(false);
+        assert_eq!(
+            JsonReaderPosition {
+                path: None,
+                line_pos: Some(LinePosition { line: 0, column: 0 }),
+                data_pos: Some(0)
+            },
+            position
+        );
+
+        fn assert_pos(
+            json_reader: &JsonStreamReader<impl Read>,
+            expected_path: &JsonPath,
+            expected_column: u64,
+        ) {
+            let position = json_reader.current_position(true);
+            assert_eq!(
+                JsonReaderPosition {
+                    path: Some(expected_path.to_vec()),
+                    line_pos: Some(LinePosition {
+                        line: 0,
+                        column: expected_column,
+                    }),
+                    // Assume input is ASCII only on single line; treat column as byte pos
+                    data_pos: Some(expected_column)
+                },
+                position
+            );
+        }
+
+        // Note: The expected column position before `has_next()` and `peek()` calls below just
+        // represents the value returned by the current implementation; the `current_position()`
+        // doc says the value is unspecified unless `has_next()` or `peek()` has been called
+        assert_pos(&json_reader, &json_path![], 0);
+        assert_eq!(ValueType::Array, json_reader.peek()?);
+        assert_pos(&json_reader, &json_path![], 2);
+        json_reader.begin_array()?;
+        assert_pos(&json_reader, &json_path![0], 3);
+        assert!(json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![0], 5);
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        assert_pos(&json_reader, &json_path![1], 6);
+        assert!(json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![1], 10);
+        json_reader.begin_object()?;
+        assert_pos(&json_reader, &json_path![1, "<?>"], 11);
+        assert!(json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![1, "<?>"], 13);
+        assert_eq!("a", json_reader.next_name()?);
+        assert_pos(&json_reader, &json_path![1, "a"], 16);
+        assert_eq!(ValueType::Boolean, json_reader.peek()?);
+        assert_pos(&json_reader, &json_path![1, "a"], 20);
+        assert_eq!(true, json_reader.next_bool()?);
+        assert_pos(&json_reader, &json_path![1, "a"], 24);
+        assert!(!json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![1, "a"], 26);
+        json_reader.end_object()?;
+        assert_pos(&json_reader, &json_path![2], 27);
+        assert!(!json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![2], 29);
+        json_reader.end_array()?;
+        assert_pos(&json_reader, &json_path![], 30);
+        // Check for another top-level value
+        assert!(!json_reader.has_next()?);
+        assert_pos(&json_reader, &json_path![], 32);
 
         Ok(())
     }

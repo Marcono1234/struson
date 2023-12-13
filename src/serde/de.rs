@@ -23,10 +23,11 @@ use crate::{
 /// Error which occurred while deserializing a value
 /*
  * TODO: For the non-ReaderError variants, should include location?
- *   Would require new methods on JsonReader; one to get peeked location, one to get
- *   location of last value, e.g. when number string was read successfully from JsonReader
- *   but then parsing number fails
- *   Should mention here then how to interpret location information, or refer to `JsonReaderPosition`
+ *   Can use `JsonReader::current_position` for this, but for `DeserializerError::Custom`
+ *   including location would be tedious since it is called by other Serde Error factory functions
+ *   Should mention here then that location is relative to underlying JsonReader and not
+ *   to where the deserializer started (in case it is only processing a subsection of the
+ *   complete JSON data)
  */
 #[non_exhaustive]
 #[derive(Error, Debug)]
@@ -830,21 +831,19 @@ struct MapKeyDeserializer<'a> {
 macro_rules! deserialize_number_key {
     ($deserialize:ident => $visit:ident) => {
         fn $deserialize<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-            if is_valid_json_number(self.key) {
+            let key = self.key;
+            if is_valid_json_number(key) {
                 // serde_json calls method on underlying Deserializer; not possible here because only the
                 // key as str is available here
-                if let Ok(number) = self.key.parse() {
-                    visitor.$visit(number)
-                } else {
-                    Err(DeserializerError::InvalidNumber(format!(
-                        "number {} cannot be parsed as desired type",
-                        self.key
-                    )))
+                match key.parse() {
+                    Ok(number) => visitor.$visit(number),
+                    Err(e) => Err(DeserializerError::InvalidNumber(format!(
+                        "number {key} cannot be parsed as desired type: {e}"
+                    ))),
                 }
             } else {
                 Err(DeserializerError::InvalidNumber(format!(
-                    "invalid number: {}",
-                    self.key
+                    "invalid number: {key}"
                 )))
             }
         }
@@ -2400,7 +2399,10 @@ mod tests {
             assert_deserialized_key_error!(
                 "-5",
                 |d, v| { d.deserialize_u128(v) },
-                DeserializerError::InvalidNumber(message) => assert_eq!("number -5 cannot be parsed as desired type", message)
+                DeserializerError::InvalidNumber(message) => {
+                    // Only check prefix because suffix of message comes from Rust standard library
+                    assert!(message.starts_with("number -5 cannot be parsed as desired type: "))
+                }
             );
 
             // Should validate that number is valid JSON number, even if normal parsing functions can parse it
