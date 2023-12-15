@@ -320,6 +320,14 @@ pub trait JsonWriter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
+    /// # Writer errors
+    /// The error behavior of the string writer differs from the guarantees made by [`Write`]:
+    /// - if an error is returned there are no guarantees about if or how many bytes have been
+    ///   written
+    /// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+    ///   trying to use the string writer or the underlying JSON writer afterwards will lead
+    ///   to unspecified behavior
+    ///
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
@@ -538,6 +546,13 @@ pub trait JsonWriter {
 /// Otherwise the string value writer will still be considered 'active' and all
 /// methods of the original JSON writer will panic. Dropping the writer will not
 /// automatically finish the value.
+///
+/// # Errors
+/// The error behavior of the string writer differs from the guarantees made by [`Write`]:
+/// - if an error is returned there are no guarantees about if or how many bytes have been written
+/// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+///   trying to use the string writer or the underlying JSON writer afterwards will lead
+///   to unspecified behavior
 /* Note: Dropping writer will not automatically finish value since that would silently discard errors which might occur */
 pub trait StringValueWriter: Write {
     /// Writes a string value piece

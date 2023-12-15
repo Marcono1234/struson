@@ -2393,22 +2393,26 @@ impl<R: Read> StringValueReader<'_, R> {
         }
         Ok(pos)
     }
+
+    fn check_previous_error(&self) -> std::io::Result<()> {
+        match &self.error {
+            None => Ok(()),
+            // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+            // because it considers the original error kind as safe to retry
+            Some(e) => Err(IoError::other(format!(
+                "previous error '{}': {}",
+                e.0,
+                e.1.clone()
+            ))),
+        }
+    }
 }
 impl<R: Read> Read for StringValueReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(e) = &self.error {
-            return Err(IoError::new(e.0, e.1.clone()));
-        }
+        self.check_previous_error()?;
 
         let result = self.read_impl(buf);
         if let Err(e) = &result {
-            // Must not store `Interrupted` error as `self.error` and return the error again
-            // for subsequent calls because that could lead to infinite loops since `Interrupted`
-            // normally allows retrying
-            // However, JsonStreamReader implementation is not propagating `Interrupted` error anyway
-            if e.kind() == ErrorKind::Interrupted {
-                panic!("Unexpected Interrupted error: {e:?}");
-            }
             self.error = Some((e.kind(), e.to_string()));
         }
         result
@@ -3100,32 +3104,70 @@ mod tests {
 
     #[test]
     fn string_reader_repeats_error() -> TestResult {
-        let mut json_reader = new_reader("\"\\uINVALID\"");
+        struct BlockingReader<'a> {
+            remaining_data: &'a [u8],
+        }
+        /// Custom implementation which returns `WouldBlock` on end of data
+        impl Read for BlockingReader<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if buf.is_empty() {
+                    return Ok(0);
+                }
+                if self.remaining_data.is_empty() {
+                    return Err(IoError::new(ErrorKind::WouldBlock, "custom message"));
+                }
+
+                let copy_count = buf.len().min(self.remaining_data.len());
+                buf[..copy_count].copy_from_slice(&self.remaining_data[..copy_count]);
+                self.remaining_data = &self.remaining_data[copy_count..];
+                Ok(copy_count)
+            }
+        }
+
+        let mut json_reader = JsonStreamReader::new(BlockingReader {
+            remaining_data: "\"test".as_bytes(),
+        });
         let mut reader = json_reader.next_string_reader()?;
+
+        let expected_original_message =
+            "IO error 'custom message' at (roughly) path '$', line 0, column 5 (data pos 5)";
 
         let mut buf = [0_u8; 10];
         match reader.read(&mut buf) {
             Ok(_) => panic!("Should have failed"),
             Err(e) => {
+                // The kind here is `Other` instead of `WouldBlock` used above because JsonStreamReader
+                // wraps underlying IoError as ReaderError, and current StringValueReader implementation
+                // does not unwrap it, to keep the location information
                 assert_eq!(ErrorKind::Other, e.kind());
-                assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1 (data pos 1)",
-                    e.get_ref().unwrap().to_string()
-                );
+                let wrapped_error = e.get_ref().unwrap();
+                assert_eq!(expected_original_message, wrapped_error.to_string());
             }
         }
 
-        // Subsequent read attemps should fail with the same error
+        // Subsequent read attemps should fail with same error, but use custom message and kind `Other`
         match reader.read(&mut buf) {
             Ok(_) => panic!("Should have failed"),
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
+                // The wrapped error is actually the String message converted using `impl From<String> for Box<dyn Error>`
+                let wrapped_error = e.get_ref().unwrap();
                 assert_eq!(
-                    "JSON syntax error MalformedEscapeSequence at path '$', line 0, column 1 (data pos 1)",
-                    e.get_ref().unwrap().to_string()
+                    format!(
+                        "previous error '{}': {}",
+                        ErrorKind::Other,
+                        expected_original_message
+                    ),
+                    wrapped_error.to_string()
                 );
             }
         }
+
+        // Should still consider string value reader as active because value was not
+        // successfully consumed
+        drop(reader);
+        assert!(json_reader.is_string_value_reader_active);
+
         Ok(())
     }
 

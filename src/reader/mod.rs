@@ -1238,6 +1238,14 @@ pub trait JsonReader {
     /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
+    /// # Reader errors
+    /// The error behavior of the string reader differs from the guarantees made by [`Read`]:
+    /// - if an error is returned there are no guarantees about if or how many data has been
+    ///   consumed from the underlying data source and been stored in the provided `buf`
+    /// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+    ///   trying to use the string reader or the underlying JSON reader afterwards will lead
+    ///   to unspecified behavior
+    ///
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
