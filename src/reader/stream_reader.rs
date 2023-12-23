@@ -352,7 +352,7 @@ impl Default for ReaderSettings {
     }
 }
 
-// Implementation with public constructor methods
+// Implementation with public methods
 impl<R: Read> JsonStreamReader<R> {
     /// Creates a JSON reader with [default settings](ReaderSettings::default)
     pub fn new(reader: R) -> Self {
@@ -388,6 +388,22 @@ impl<R: Read> JsonStreamReader<R> {
             },
             reader_settings,
         }
+    }
+
+    /// Gets a mutable reference to the underlying reader
+    ///
+    /// This should only be needed rarely, for advanced use cases only. The reader should not
+    /// be used for determining the byte position of the JSON reader, since it might buffer
+    /// not yet processed data internally. Instead the [`JsonReaderPosition::data_pos`] of the
+    /// [`current_position`](Self::current_position) should be used for that.
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental, please provide feedback about how you are using it
+    /// [here](https://github.com/Marcono1234/struson/issues/25).
+    pub fn reader_mut(&mut self) -> &mut R {
+        &mut self.reader
     }
 }
 
