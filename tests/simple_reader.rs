@@ -11,7 +11,7 @@ use struson::{
     },
 };
 
-fn new_reader(json: &str) -> SimpleJsonReader<JsonStreamReader<&'_ [u8]>> {
+fn new_reader(json: &str) -> SimpleJsonReader<JsonStreamReader<&[u8]>> {
     SimpleJsonReader::new(json.as_bytes())
 }
 

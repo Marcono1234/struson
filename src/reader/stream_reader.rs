@@ -1262,7 +1262,7 @@ mod bytes_value_reader {
         ///
         /// Must only be called if the `BytesValue` was obtained from [`BytesValueReader::get_bytes`] being
         /// called with `requires_borrow=true`.
-        pub(super) fn get_str<R: Read>(self, json_reader: &'_ mut JsonStreamReader<R>) -> &'_ str {
+        pub(super) fn get_str<R: Read>(self, json_reader: &mut JsonStreamReader<R>) -> &str {
             // `get_str` consumes `self` so afterwards value cannot be obtained from `buf` anymore
             json_reader.buf_used_for_bytes_value = false;
             self.get_str_peek(json_reader)
@@ -1951,7 +1951,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         // Consuming `:` after name is delayed until member value is consumed
     }
 
-    fn next_name(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_name(&mut self) -> Result<&str, ReaderError> {
         self.before_name()?;
 
         let name_bytes = self.read_string(true)?;
@@ -2125,7 +2125,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(result)
     }
 
-    fn next_str(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_str(&mut self) -> Result<&str, ReaderError> {
         self.start_expected_value_type(ValueType::String)?;
         let str_bytes = self.read_string(true)?;
         self.on_value_end();
@@ -2149,7 +2149,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         self.read_number_bytes(false).map(|b| b.get_string(self))
     }
 
-    fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
         self.read_number_bytes(true).map(|b| b.get_str(self))
     }
 

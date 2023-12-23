@@ -1129,7 +1129,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This
     /// indicates incorrect usage by the user and is unrelated to the JSON data.
-    fn next_name(&mut self) -> Result<&'_ str, ReaderError>;
+    fn next_name(&mut self) -> Result<&str, ReaderError>;
 
     /// Consumes and returns the name of the next JSON object member as `String`
     ///
@@ -1179,7 +1179,7 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
-    fn next_str(&mut self) -> Result<&'_ str, ReaderError>;
+    fn next_str(&mut self) -> Result<&str, ReaderError>;
 
     /// Consumes and returns a JSON string value as `String`
     ///
@@ -1344,7 +1344,7 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
-    fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError>;
+    fn next_number_as_str(&mut self) -> Result<&str, ReaderError>;
 
     /// Consumes and returns the string representation of a JSON number value as `String`
     ///

@@ -242,7 +242,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
     }
 
-    fn next_name(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_name(&mut self) -> Result<&str, ReaderError> {
         self.string_buf = self.next_name_owned()?;
         Ok(&self.string_buf)
     }
@@ -255,7 +255,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
     }
 
-    fn next_str(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_str(&mut self) -> Result<&str, ReaderError> {
         self.string_buf = self.next_string()?;
         Ok(&self.string_buf)
     }
@@ -280,7 +280,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         unimplemented!()
     }
 
-    fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError> {
+    fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
         self.string_buf = self.next_number_as_string()?;
         Ok(&self.string_buf)
     }

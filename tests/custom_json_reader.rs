@@ -223,7 +223,7 @@ mod custom_reader {
             }
         }
 
-        fn next_name(&mut self) -> Result<&'_ str, ReaderError> {
+        fn next_name(&mut self) -> Result<&str, ReaderError> {
             if self.expects_name {
                 let name;
                 match self.stack.last_mut().unwrap() {
@@ -257,7 +257,7 @@ mod custom_reader {
             self.next_name().map(str::to_owned)
         }
 
-        fn next_str(&mut self) -> Result<&'_ str, ReaderError> {
+        fn next_str(&mut self) -> Result<&str, ReaderError> {
             self.begin_value(ValueType::String)?;
             if let Some(Value::String(s)) = self.next_value.take() {
                 self.end_value();
@@ -285,7 +285,7 @@ mod custom_reader {
             }
         }
 
-        fn next_number_as_str(&mut self) -> Result<&'_ str, ReaderError> {
+        fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
             self.begin_value(ValueType::Number)?;
             if let Some(Value::Number(n)) = self.next_value.take() {
                 self.end_value();

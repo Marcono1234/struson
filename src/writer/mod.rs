@@ -633,7 +633,7 @@ pub trait FiniteNumber: private::Sealed {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
-    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
     ) -> Result<(), IoError>;
@@ -668,7 +668,7 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The JSON number string is passed to the given `consumer`.
     /// Returns an error if this number is not a valid JSON number, for example
     /// because it is NaN or Infinity.
-    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
     ) -> Result<(), JsonNumberError>;
@@ -714,7 +714,7 @@ pub enum JsonNumberError {
 #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
 impl FiniteNumber for type_template {
     #[inline(always)]
-    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
         &self,
         mut consumer: C,
     ) -> Result<(), IoError> {
@@ -743,7 +743,7 @@ impl FiniteNumber for type_template {
 #[duplicate_item(type_template; [f32]; [f64])]
 impl FloatingPointNumber for type_template {
     #[inline(always)]
-    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
         &self,
         mut consumer: C,
     ) -> Result<(), JsonNumberError> {
@@ -776,7 +776,7 @@ impl FloatingPointNumber for type_template {
 pub(crate) struct TransferredNumber<'a>(pub &'a str);
 impl private::Sealed for TransferredNumber<'_> {}
 impl FiniteNumber for TransferredNumber<'_> {
-    fn use_json_number<C: FnMut(&'_ str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
         &self,
         mut consumer: C,
     ) -> Result<(), IoError> {
