@@ -36,7 +36,65 @@
 //!
 //! # Usage examples
 //!
-//! ## Reading
+//! Two variants of the API are provided:
+//! - simple: ensures correct API usage at compile-time
+//! - advanced: ensures correct API usage only at runtime (by panicking); more flexible and
+//!   provides more functionality
+//!
+//! ## Simple API
+//!
+//! **🔬 Experimental**\
+//! The simple API and its naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
+//! Any feedback is appreciated!
+//!
+//! ### Reading
+//! See [`SimpleJsonReader`](crate::reader::simple::SimpleJsonReader).
+//!
+//! ```
+//! # #[cfg(feature = "experimental")]
+//! # {
+//! # use struson::reader::simple::*;
+//! // In this example JSON data comes from a string;
+//! // normally it would come from a file or a network connection
+//! let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
+//! let mut words = Vec::<String>::new();
+//! json_reader.next_array_items(|item_reader| {
+//!     let word = item_reader.next_string()?;
+//!     words.push(word);
+//!     Ok(())
+//! })?;
+//! assert_eq!(words, vec!["a", "short", "example"]);
+//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ### Writing
+//! See [`SimpleJsonWriter`](crate::writer::simple::SimpleJsonWriter).
+//!
+//! ```
+//! # #[cfg(feature = "experimental")]
+//! # {
+//! # use struson::writer::simple::*;
+//! // In this example JSON bytes are stored in a Vec;
+//! // normally they would be written to a file or network connection
+//! let mut writer = Vec::<u8>::new();
+//! let json_writer = SimpleJsonWriter::new(&mut writer);
+//! json_writer.object_value(|object_writer| {
+//!     object_writer.number_member("a", 1)?;
+//!     object_writer.bool_member("b", true)?;
+//!     Ok(())
+//! })?;
+//!
+//! let json = String::from_utf8(writer)?;
+//! assert_eq!(json, r#"{"a":1,"b":true}"#);
+//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Advanced API
+//!
+//! ### Reading
+//! See [`JsonStreamReader`](crate::reader::JsonStreamReader).
 //!
 //! ```
 //! # use struson::reader::*;
@@ -59,7 +117,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! ## Writing
+//! ### Writing
+//! See [`JsonStreamWriter`](crate::writer::JsonStreamWriter).
+//!
 //! ```
 //! # use struson::writer::*;
 //! // In this example JSON bytes are stored in a Vec;

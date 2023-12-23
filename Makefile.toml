@@ -38,23 +38,38 @@ args = ["test", "--features", "serde"]
 dependencies = ["build-serde-interop"]
 
 
+# All features
+[tasks.build-all-features]
+command = "cargo"
+args = ["build", "--all-targets", "--all-features"]
+
+[tasks.test-all-features]
+command = "cargo"
+# Important: Don't use `--all-targets` here; that would exclude doc tests (see https://github.com/rust-lang/cargo/issues/6669)
+# Benchmark tests are performed further below; could include them here for this execution in the future though
+args = ["test", "--all-features"]
+dependencies = ["build-all-features"]
+
+
 [tasks.test-benches]
 command = "cargo"
 # Run all benchmarks as tests to make sure they don't encounter any errors, e.g. due to malformed JSON
 # Unfortunately this seems to rerun library tests, see https://github.com/rust-lang/cargo/issues/6454
 args = ["test", "--benches", "--all-features"]
-dependencies = ["test-default", "test-serde-interop"]
+dependencies = ["test-default", "test-serde-interop", "test-all-features"]
 
 [tasks.build]
 dependencies = [
     "build-default",
     "build-serde-interop",
+    "build-all-features",
 ]
 
 [tasks.test]
 dependencies = [
     "test-default",
     "test-serde-interop",
+    "test-all-features",
     "test-benches",
 ]
 

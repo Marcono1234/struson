@@ -13,6 +13,8 @@ use crate::json_number::is_valid_json_number;
 mod stream_writer;
 // Re-export streaming implementation under `writer` module
 pub use stream_writer::*;
+#[cfg(feature = "experimental")]
+pub mod simple;
 
 // TODO (custom JSON writer support): Remove this type alias? rust-analyzer otherwise uses that in generated
 // code, even though this type alias is inaccessible, see https://github.com/rust-lang/rust-analyzer/issues/15550
@@ -382,9 +384,10 @@ pub trait JsonWriter {
     /// usage by the user.
     /*
      * TODO (custom JSON writer support): Maybe either publicly expose function for validating
-     * that string is valid JSON number, or use wrapping struct whose constructor ensures that
-     * string is valid JSON number.
-     * Though that might make usage of the writer more cumbersome.
+     *   that string is valid JSON number, or use wrapping struct whose constructor ensures that
+     *   string is valid JSON number.
+     *   Though that might make usage of the writer more cumbersome.
+     * TODO: Rename to `number_string_value`?
      */
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError>;
 
