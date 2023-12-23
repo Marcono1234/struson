@@ -145,8 +145,8 @@ impl From<ParseFloatError> for DeserializerError {
 /// json_reader.consume_trailing_whitespace()?;
 ///
 /// assert_eq!(
-///     MyStruct { text: "some text".to_owned(), number: 5 },
-///     value
+///     value,
+///     MyStruct { text: "some text".to_owned(), number: 5 }
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

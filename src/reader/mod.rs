@@ -845,9 +845,9 @@ pub enum TransferError {
 /// assert_eq!(json_reader.next_name()?, "a");
 ///
 /// json_reader.begin_array()?;
-/// assert_eq!(1_u32, json_reader.next_number()??);
+/// assert_eq!(json_reader.next_number::<u32>()??, 1);
 /// json_reader.skip_value()?;
-/// assert_eq!(true, json_reader.next_bool()?);
+/// assert_eq!(json_reader.next_bool()?, true);
 /// json_reader.end_array()?;
 ///
 /// json_reader.end_object()?;
@@ -1078,7 +1078,7 @@ pub trait JsonReader {
     ///
     /// json_reader.skip_value()?;
     /// // Array does not have a next item anymore
-    /// assert_eq!(false, json_reader.has_next()?);
+    /// assert_eq!(json_reader.has_next()?, false);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1114,7 +1114,7 @@ pub trait JsonReader {
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
-    /// assert_eq!("a", json_reader.next_name()?);
+    /// assert_eq!(json_reader.next_name()?, "a");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1158,7 +1158,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new(r#""text with \"quotes\"""#.as_bytes());
-    /// assert_eq!("text with \"quotes\"", json_reader.next_str()?);
+    /// assert_eq!(json_reader.next_str()?, "text with \"quotes\"");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1267,7 +1267,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12".as_bytes());
-    /// assert_eq!(12_u32, json_reader.next_number()??);
+    /// assert_eq!(json_reader.next_number::<u32>()??, 12);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1320,7 +1320,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("12.0e5".as_bytes());
-    /// assert_eq!("12.0e5", json_reader.next_number_as_str()?);
+    /// assert_eq!(json_reader.next_number_as_str()?, "12.0e5");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1360,7 +1360,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// let mut json_reader = JsonStreamReader::new("true".as_bytes());
-    /// assert_eq!(true, json_reader.next_bool()?);
+    /// assert_eq!(json_reader.next_bool()?, true);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1450,8 +1450,8 @@ pub trait JsonReader {
     /// json_reader.consume_trailing_whitespace()?;
     ///
     /// assert_eq!(
-    ///     MyStruct { text: "some text".to_owned(), number: 5 },
-    ///     value
+    ///     value,
+    ///     MyStruct { text: "some text".to_owned(), number: 5 }
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -1497,7 +1497,7 @@ pub trait JsonReader {
     /// // Skip member name "a"
     /// json_reader.skip_name()?;
     ///
-    /// assert_eq!("1", json_reader.next_number_as_str()?);
+    /// assert_eq!(json_reader.next_number_as_str()?, "1");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1530,12 +1530,12 @@ pub trait JsonReader {
     /// let mut json_reader = JsonStreamReader::new(r#"{"a": [{}], "b": 1}"#.as_bytes());
     /// json_reader.begin_object()?;
     ///
-    /// assert_eq!("a", json_reader.next_name()?);
+    /// assert_eq!(json_reader.next_name()?, "a");
     ///
     /// // Skip member value [{}]
     /// json_reader.skip_value()?;
     ///
-    /// assert_eq!("b", json_reader.next_name()?);
+    /// assert_eq!(json_reader.next_name()?, "b");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1561,11 +1561,11 @@ pub trait JsonReader {
     /// in the path. Once this method returns successfully the reader will be positioned
     /// before the last element specified by the path.
     ///
-    /// For example for the JSON path `foo[2]` it will start consuming a JSON object, skipping members
-    /// until it finds one with name "foo". Then it starts consuming the member value, expecting that
-    /// it is a JSON array, until right before the array item with (starting at 0) index 2.
-    /// If multiple members in a JSON object have the same name (for example `{"a": 1, "a": 2}`)
-    /// this method will seek to the first occurrence.
+    /// For example for the JSON path `json_path!["foo", 2]` it will start consuming a JSON object,
+    /// skipping members until it finds one with name "foo". Then it starts consuming the member
+    /// value, expecting that it is a JSON array, until right before the array item with (starting
+    /// at 0) index 2. If multiple members in a JSON object have the same name (for example
+    /// `{"a": 1, "a": 2}`) this method will seek to the first occurrence.
     ///
     /// Seeking to a specific location can be useful when parts of the processed JSON document
     /// are not relevant for the application processing it.
@@ -1580,7 +1580,7 @@ pub trait JsonReader {
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Can now consume the value to which the call seeked to
-    /// assert_eq!("c", json_reader.next_str()?);
+    /// assert_eq!(json_reader.next_str()?, "c");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -1682,7 +1682,7 @@ pub trait JsonReader {
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Consume the value to which the call seeked to
-    /// assert_eq!("c", json_reader.next_str()?);
+    /// assert_eq!(json_reader.next_str()?, "c");
     ///
     /// // Skip the remainder of the document
     /// json_reader.skip_to_top_level()?;
@@ -1731,7 +1731,8 @@ pub trait JsonReader {
     /// json_writer.end_object()?;
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"embedded":[1,2]}"#, String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#"{"embedded":[1,2]}"#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///

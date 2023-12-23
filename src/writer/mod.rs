@@ -66,7 +66,8 @@ type IoError = std::io::Error;
 /// // Ensures that the JSON document is complete and flushes the buffer
 /// json_writer.finish_document()?;
 ///
-/// assert_eq!(r#"{"a":[1,true]}"#, String::from_utf8(writer)?);
+/// let json = String::from_utf8(writer)?;
+/// assert_eq!(json, r#"{"a":[1,true]}"#);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -107,7 +108,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"a":1}"#, String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#"{"a":1}"#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -148,7 +150,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("[1]", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "[1]");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -194,7 +197,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#"{"a":1}"#, String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#"{"a":1}"#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -218,7 +222,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("null", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "null");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -241,7 +246,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("true", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "true");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -274,7 +280,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#""text with \"quotes\"""#, String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#""text with \"quotes\"""#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -316,7 +323,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!(r#""text with \"quotes\"""#, String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#""text with \"quotes\"""#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -357,7 +365,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("123.0e10", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "123.0e10");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -395,7 +404,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("123", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "123");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -424,7 +434,8 @@ pub trait JsonWriter {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("4.5", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "4.5");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -440,7 +451,7 @@ pub trait JsonWriter {
     /// usage by the user.
     /*
      * TODO: Maybe give this method a better name?
-     * TODO: Maybe also support writing in scientific notation, e.g. `4.1e20`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
+     * TODO: Maybe also support writing in scientific notation? e.g. `4.1e20`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
      */
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError>;
 
@@ -486,9 +497,10 @@ pub trait JsonWriter {
     /// // Ensures that the JSON document is complete and flushes the buffer
     /// json_writer.finish_document()?;
     ///
+    /// let json = String::from_utf8(writer)?;
     /// assert_eq!(
-    ///     r#"{"outer":{"text":"some text","number":5}}"#,
-    ///     String::from_utf8(writer)?
+    ///     json,
+    ///     r#"{"outer":{"text":"some text","number":5}}"#
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -587,7 +599,8 @@ pub trait StringValueWriter: Write {
     ///
     /// json_writer.finish_document()?;
     ///
-    /// assert_eq!("\"one, two, three and four\"", String::from_utf8(writer)?);
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, "\"one, two, three and four\"");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {

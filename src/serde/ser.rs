@@ -99,9 +99,10 @@ impl serde::ser::Error for SerializerError {
 /// // Ensures that the JSON document is complete and flushes the buffer
 /// json_writer.finish_document()?;
 ///
+/// let json = String::from_utf8(writer)?;
 /// assert_eq!(
-///     r#"{"text":"some text","number":5}"#,
-///     String::from_utf8(writer)?
+///     json,
+///     r#"{"text":"some text","number":5}"#
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

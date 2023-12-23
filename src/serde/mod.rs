@@ -58,9 +58,10 @@
 //! // Ensures that the JSON document is complete and flushes the buffer
 //! json_writer.finish_document()?;
 //!
+//! let json = String::from_utf8(writer)?;
 //! assert_eq!(
-//!     r#"{"outer":{"text":"some text","number":5}}"#,
-//!     String::from_utf8(writer)?
+//!     json,
+//!     r#"{"outer":{"text":"some text","number":5}}"#
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -93,8 +94,8 @@
 //! json_reader.consume_trailing_whitespace()?;
 //!
 //! assert_eq!(
-//!     MyStruct { text: "some text".to_owned(), number: 5 },
-//!     value
+//!     value,
+//!     MyStruct { text: "some text".to_owned(), number: 5 }
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

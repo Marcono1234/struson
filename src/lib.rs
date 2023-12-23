@@ -46,11 +46,11 @@
 //! let mut json_reader = JsonStreamReader::new(json.as_bytes());
 //!
 //! json_reader.begin_object()?;
-//! assert_eq!("a", json_reader.next_name()?);
+//! assert_eq!(json_reader.next_name()?, "a");
 //!
 //! json_reader.begin_array()?;
-//! assert_eq!(1_u32, json_reader.next_number()??);
-//! assert_eq!(true, json_reader.next_bool()?);
+//! assert_eq!(json_reader.next_number::<u32>()??, 1);
+//! assert_eq!(json_reader.next_bool()?, true);
 //! json_reader.end_array()?;
 //!
 //! json_reader.end_object()?;
@@ -79,7 +79,8 @@
 //! // Ensures that the JSON document is complete and flushes the buffer
 //! json_writer.finish_document()?;
 //!
-//! assert_eq!(r#"{"a":[1,true]}"#, String::from_utf8(writer)?);
+//! let json = String::from_utf8(writer)?;
+//! assert_eq!(json, r#"{"a":[1,true]}"#);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
