@@ -60,6 +60,7 @@ fn read_array() -> Result<(), Box<dyn Error>> {
         "#,
     );
 
+    // Verify that result of closure is returned by method (value is arbitrary)
     let expected_return_value = 3;
     let return_value = json_reader.next_array(|mut array_reader| {
         assert!(array_reader.has_next()?);
@@ -98,6 +99,24 @@ fn read_array_all() -> Result<(), Box<dyn Error>> {
     let mut values = Vec::<u64>::new();
     json_reader.next_array_items(|item_reader| {
         values.push(item_reader.next_number()??);
+        Ok(())
+    })?;
+    assert_eq!(vec![1, 2, 3], values);
+    Ok(())
+}
+
+/// Tests the behavior when an array item is not explicitly consumed
+#[test]
+fn array_item_not_consumed() -> Result<(), Box<dyn Error>> {
+    let json_reader = new_reader("[true, 1, 2, null, [], 3]");
+    let mut values = Vec::<u64>::new();
+    json_reader.next_array_items(|mut item_reader| {
+        if item_reader.peek()? == ValueType::Number {
+            let value = item_reader.next_number()??;
+            values.push(value);
+        }
+        // Ignore other value types; don't consume the value
+
         Ok(())
     })?;
     assert_eq!(vec![1, 2, 3], values);
