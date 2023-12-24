@@ -163,13 +163,13 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 
 ## Similar projects
 
-- <https://github.com/alexmaco/json_stream>\
+- <https://github.com/alexmaco/json_stream>
   > A streaming JSON parser/emitter library for rust
-- <https://github.com/sarum90/qjsonrs>\
+- <https://github.com/sarum90/qjsonrs>
   > JSON Tokenizer written in Rust
-- <https://github.com/jeremiah-shaulov/nop-json>\
+- <https://github.com/jeremiah-shaulov/nop-json>
   > JSON serialization/deserialization (full-featured, modern, streaming, direct into struct/enum)
-- <https://github.com/isagalaev/ijson-rust>\
+- <https://github.com/isagalaev/ijson-rust>
   <!-- Note: Project itself has no README or description -->
   > Rust re-implementation of the Python streaming JSON parser [ijson](https://github.com/isagalaev/ijson)
 - <https://github.com/byron/json-tools>
