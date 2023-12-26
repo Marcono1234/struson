@@ -84,7 +84,7 @@ impl From<ParseFloatError> for DeserializerError {
 /// information on its security.
 ///
 /// This deserializer performs UTF-8 validation (implicitly through its usage of `JsonReader`)
-/// and implements a [maximum nesting depth](JsonReaderDeserializer::new_with_custom_nesting_limit),
+/// and implements a [nesting depth limit](JsonReaderDeserializer::new_with_custom_nesting_limit),
 /// but besides that no additional security measures are implemented.
 /// In particular it does **not**:
 ///
@@ -110,6 +110,9 @@ impl From<ParseFloatError> for DeserializerError {
 ///   impose any restrictions on the precision or size of the number values. Care must be taken when
 ///   using the parsed numbers, especially `i128`, `u128`, `f32` and `f64` values, since they might be
 ///   extremely large.
+///
+///   When using [`JsonStreamReader`](crate::reader::JsonStreamReader) as underlying reader, JSON numbers
+///   can be restricted using [`ReaderSettings::restrict_number_values`](crate::reader::ReaderSettings::restrict_number_values).
 ///
 /// - Impose restrictions on content of member names and string values
 ///
@@ -177,7 +180,7 @@ pub struct JsonReaderDeserializer<'a, R: JsonReader> {
     depth: u32,
 }
 
-const DEFAULT_MAX_NESTING_DEPTH: u32 = 128;
+const DEFAULT_MAX_NESTING_DEPTH: u32 = 128; // update documentation when changing this value
 
 impl<'a, R: JsonReader> JsonReaderDeserializer<'a, R> {
     /// Creates a deserializer wrapping a [`JsonReader`]
@@ -206,12 +209,19 @@ impl<'a, R: JsonReader> JsonReaderDeserializer<'a, R> {
     /// deserializer is allowed to start before returning [`DeserializerError::MaxNestingDepthExceeded`].
     /// For example a maximum nesting depth of 2 allows the deserializer to start one JSON
     /// array or object and within that another nested array or object, such as `{"outer": {"inner": 1}}`.
-    /// Trying to deserialize any further nested JSON array or object will return an error.
+    /// Trying to deserialize any further nested JSON array or object inside that will return
+    /// an error.
+    ///
     /// The maximum depth does not consider how many JSON arrays or objects the provided
-    /// [`JsonReader`] has already started before being using by this deserializer.
+    /// [`JsonReader`] has already started before being using by this deserializer. It is
+    /// also independent from [`ReaderSettings::max_nesting_depth`](crate::reader::ReaderSettings::max_nesting_depth)
+    /// of the `JsonReader`. This allows for example to disable the limit on the `JsonReader`
+    /// to seek to a deeply nested value, and then use this deserializer (with a nesting limit)
+    /// for deserializing the value.
     ///
     /// The maximum nesting depth tries to protect against deeply nested JSON data which
-    /// could lead to a stack overflow, so high maximum depth values should be used with care.
+    /// could lead to a stack overflow during deserialization, so high maximum depth values
+    /// should be used with care.\
     /// However, the maximum depth cannot protect against a stack overflow caused by an
     /// error-prone [`Deserialize`] or [`Visitor`] implementation which recursively calls
     /// deserializer methods without actually consuming any value, for example continuously

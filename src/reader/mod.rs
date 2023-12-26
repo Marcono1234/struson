@@ -692,17 +692,20 @@ pub enum UnexpectedStructureKind {
         /// Index (starting at 0) of the expected item
         expected_index: u32,
     },
+
     /// A JSON object does not have a member with a certain name
     MissingObjectMember {
         /// Name of the expected member
         member_name: String,
     },
+
     /// A JSON array or object has fewer elements than expected
     ///
     /// This is a more general version than [`TooShortArray`](UnexpectedStructureKind::TooShortArray)
     /// and [`MissingObjectMember`](UnexpectedStructureKind::MissingObjectMember) where it is only known
     /// that more elements are expected without knowing the expected index or member name.
     FewerElementsThanExpected,
+
     /// A JSON array or object has more elements than expected
     MoreElementsThanExpected,
 }
@@ -715,6 +718,7 @@ pub enum ReaderError {
     /// A syntax error was encountered
     #[error("syntax error: {0}")]
     SyntaxError(#[from] JsonSyntaxError),
+
     /// The next JSON value had an unexpected type
     ///
     /// This error can occur for example when trying to read a JSON number when the next value is actually
@@ -728,6 +732,7 @@ pub enum ReaderError {
         /// Location where the error occurred in the JSON document
         location: JsonReaderPosition,
     },
+
     /// The JSON document had an unexpected structure
     ///
     /// This error occurs when trying to consume more elements than a JSON array or object has, or
@@ -751,6 +756,18 @@ pub enum ReaderError {
         /// Location where the error occurred in the JSON document
         location: JsonReaderPosition,
     },
+
+    /// The maximum nesting depth was exceeded while reading
+    ///
+    /// See [`ReaderSettings::max_nesting_depth`] for more information.
+    #[error("maximum nesting depth {max_nesting_depth} exceeded at {location}")]
+    MaxNestingDepthExceeded {
+        /// The maximum nesting depth
+        max_nesting_depth: u32,
+        /// Location within the JSON document
+        location: JsonReaderPosition,
+    },
+
     /// An unsupported JSON number value was encountered
     ///
     /// See [`ReaderSettings::restrict_number_values`] for more information.
@@ -761,6 +778,7 @@ pub enum ReaderError {
         /// Location of the number value within the JSON document
         location: JsonReaderPosition,
     },
+
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
     #[error("IO error '{error}' at (roughly) {location}")]

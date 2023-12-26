@@ -90,21 +90,16 @@ const INITIAL_VALUE_BYTES_BUF_CAPACITY: usize = 128;
 /// JSON reader will keep retrying to read data.
 ///
 /// # Security
-/// Besides UTF-8 validation this JSON reader only implements a basic restriction on JSON numbers,
-/// see [`ReaderSettings::restrict_number_values`], but does not implement any other security
-/// related measures. In particular it does **not**:
+/// Besides UTF-8 validation this JSON reader only implements the following basic security features:
+/// - restriction on JSON numbers, see [`ReaderSettings::restrict_number_values`]
+/// - nesting depth limit, see [`ReaderSettings::max_nesting_depth`]
+///
+/// But it does not implement any other security related measures. In particular it does **not**:
 ///
 /// - Impose a limit on the length of the document
 ///
 ///   Especially when the JSON data comes from a compressed data stream (such as gzip) large JSON documents
 ///   could be used for denial of service attacks.
-///
-/// - Impose a limit on the nesting depth
-///
-///   JSON arrays and objects might be arbitrary deeply nested. Trying to process such JSON documents
-///   in a recursive way could therefore lead to a stack overflow. While this JSON reader implementation
-///   does not use recursive calls, users of this reader must make sure to not use recursive calls
-///   either or track and limit the nesting depth.
 ///
 /// - Detect duplicate member names
 ///
@@ -312,6 +307,22 @@ pub struct ReaderSettings {
     /// for errors.
     pub track_path: bool,
 
+    /// Maximum nesting depth
+    ///
+    /// The maximum nesting depth specifies how many nested JSON arrays or objects may
+    /// be started before returning [`ReaderError::MaxNestingDepthExceeded`].
+    /// For example a maximum nesting depth of 2 allows to start one JSON array or object
+    /// and within that another nested array or object, such as `{"outer": {"inner": 1}}`.
+    /// Trying to read any further nested JSON array or object inside that will return an error.\
+    /// The value `None` means there is no limit.
+    ///
+    /// The maximum nesting depth tries to protect against deeply nested JSON data which
+    /// could lead to a stack overflow during reading, so setting this to `None` or high
+    /// values should be done with care. While the implementation of [`JsonStreamReader`]
+    /// does not use recursion and will therefore likely not encounter a stack overflow,
+    /// users of it are probably going to use recursion in some form.
+    pub max_nesting_depth: Option<u32>,
+
     /// Whether to restrict which JSON number values are supported
     ///
     /// The JSON specification does not impose any restrictions on the size or precision of JSON numbers.
@@ -320,8 +331,8 @@ pub struct ReaderSettings {
     /// be exploited for denial of service attacks, especially when they are parsed as arbitrary-precision
     /// "big integer" / "big decimal".
     ///
-    /// When enabled exponent values smaller than -99, larger than 99 (e.g. `5e100`) and numbers whose
-    /// string representation has more than 100 characters will be rejected and a
+    /// When this setting is enabled, exponent values smaller than -99, larger than 99 (e.g. `5e100`)
+    /// and numbers whose string representation has more than 100 characters will be rejected and a
     /// [`ReaderError::UnsupportedNumberValue`] is returned. Otherwise, when disabled, all JSON
     /// number values are allowed.
     ///
@@ -331,14 +342,17 @@ pub struct ReaderSettings {
     pub restrict_number_values: bool,
 }
 
+const DEFAULT_MAX_NESTING_DEPTH: u32 = 128; // update documentation when changing this value
+
 impl Default for ReaderSettings {
     /// Creates the default JSON reader settings
     ///
-    /// - comments: disallowed
-    /// - trailing comma: disallowed
-    /// - multiple top-level values: disallowed
-    /// - track JSON path: enabled
-    /// - restrict number values: enabled
+    /// - [comments](Self::allow_comments): disallowed
+    /// - [trailing comma](Self::allow_trailing_comma): disallowed
+    /// - [multiple top-level values](Self::allow_multiple_top_level): disallowed
+    /// - [track JSON path](Self::track_path): enabled
+    /// - [max nesting depth](Self::max_nesting_depth): 128
+    /// - [restrict number values](Self::restrict_number_values): enabled
     ///
     /// These defaults are compliant with the JSON specification.
     fn default() -> Self {
@@ -347,6 +361,7 @@ impl Default for ReaderSettings {
             allow_trailing_comma: false,
             allow_multiple_top_level: false,
             track_path: true,
+            max_nesting_depth: Some(DEFAULT_MAX_NESTING_DEPTH),
             restrict_number_values: true,
         }
     }
@@ -900,6 +915,7 @@ impl<R: Read> JsonStreamReader<R> {
     fn start_expected_value_type(
         &mut self,
         expected: ValueType,
+        check_depth: bool,
     ) -> Result<PeekedValue, ReaderError> {
         if self.expects_member_name {
             panic!("Incorrect reader usage: Cannot read value when expecting member name");
@@ -909,6 +925,19 @@ impl<R: Read> JsonStreamReader<R> {
         let peeked = self.map_peeked(peeked_internal)?;
 
         return if peeked == expected {
+            if check_depth {
+                // Check nesting depth before consuming token, so that error location points
+                // at token instead of behind it
+                if let Some(max_nesting_depth) = self.reader_settings.max_nesting_depth {
+                    if self.stack.len() as u32 >= max_nesting_depth {
+                        return Err(ReaderError::MaxNestingDepthExceeded {
+                            max_nesting_depth,
+                            location: self.create_error_location(),
+                        });
+                    }
+                }
+            }
+
             self.consume_peeked();
             Ok(peeked_internal)
         } else {
@@ -918,6 +947,19 @@ impl<R: Read> JsonStreamReader<R> {
                 location: self.create_error_location(),
             })
         };
+    }
+
+    fn on_container_start(
+        &mut self,
+        expected_value_type: ValueType,
+        stack_value: StackValue,
+    ) -> Result<(), ReaderError> {
+        self.start_expected_value_type(expected_value_type, true)?;
+
+        self.stack.push(stack_value);
+        // The new container is initially empty
+        self.is_empty = true;
+        Ok(())
     }
 
     fn on_container_end(&mut self) {
@@ -1763,7 +1805,7 @@ trait NumberBytesReader<T, E>: NumberBytesProvider<E> {
 // TODO: Try to find a cleaner solution without using macro?
 macro_rules! collect_next_number_bytes {
     ( |$self:ident| $reader_creator:expr ) => {{
-        $self.start_expected_value_type(ValueType::Number)?;
+        $self.start_expected_value_type(ValueType::Number, false)?;
 
         // unwrap() is safe because start_expected_value_type already peeked at first number byte
         let first_byte = $self.peek_byte()?.unwrap();
@@ -1892,8 +1934,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn begin_array(&mut self) -> Result<(), ReaderError> {
-        self.start_expected_value_type(ValueType::Array)?;
-        self.stack.push(StackValue::Array);
+        self.on_container_start(ValueType::Array, StackValue::Array)?;
 
         if let Some(ref mut json_path) = self.json_path {
             json_path.push(JsonPathPiece::ArrayItem(0));
@@ -1901,7 +1942,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
         // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
         self.expects_member_name = false;
-        self.is_empty = true;
         Ok(())
     }
 
@@ -1922,8 +1962,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn begin_object(&mut self) -> Result<(), ReaderError> {
-        self.start_expected_value_type(ValueType::Object)?;
-        self.stack.push(StackValue::Object);
+        self.on_container_start(ValueType::Object, StackValue::Object)?;
 
         if let Some(ref mut json_path) = self.json_path {
             // Push a placeholder which is replaced once the name of the first member is read
@@ -1931,7 +1970,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             json_path.push(JsonPathPiece::ObjectMember("<?>".to_owned()));
         }
 
-        self.is_empty = true;
         self.expects_member_name = true;
         Ok(())
     }
@@ -1996,18 +2034,18 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_bool(&mut self) -> Result<bool, ReaderError> {
-        let result = Ok(match self.start_expected_value_type(ValueType::Boolean)? {
+        let value = match self.start_expected_value_type(ValueType::Boolean, false)? {
             PeekedValue::BooleanTrue => true,
             PeekedValue::BooleanFalse => false,
             // Call to start_expected_value_type should have verified type
             _ => unreachable!("Peeked value is not a boolean"),
-        });
+        };
         self.on_value_end();
-        result
+        Ok(value)
     }
 
     fn next_null(&mut self) -> Result<(), ReaderError> {
-        self.start_expected_value_type(ValueType::Null)?;
+        self.start_expected_value_type(ValueType::Null, false)?;
         self.on_value_end();
         Ok(())
     }
@@ -2091,7 +2129,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         depth += 1;
                     }
                     ValueType::String => {
-                        self.start_expected_value_type(ValueType::String)?;
+                        self.start_expected_value_type(ValueType::String, false)?;
                         self.skip_all_string_bytes()?;
                         self.on_value_end();
                     }
@@ -2119,21 +2157,21 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_string(&mut self) -> Result<String, ReaderError> {
-        self.start_expected_value_type(ValueType::String)?;
+        self.start_expected_value_type(ValueType::String, false)?;
         let result = self.read_string(false)?.get_string(self);
         self.on_value_end();
         Ok(result)
     }
 
     fn next_str(&mut self) -> Result<&str, ReaderError> {
-        self.start_expected_value_type(ValueType::String)?;
+        self.start_expected_value_type(ValueType::String, false)?;
         let str_bytes = self.read_string(true)?;
         self.on_value_end();
         Ok(str_bytes.get_str(self))
     }
 
     fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError> {
-        self.start_expected_value_type(ValueType::String)?;
+        self.start_expected_value_type(ValueType::String, false)?;
         self.is_string_value_reader_active = true;
         Ok(Box::new(StringValueReader {
             json_reader: self,
@@ -2235,7 +2273,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                         depth += 1;
                     }
                     ValueType::String => {
-                        self.start_expected_value_type(ValueType::String)?;
+                        self.start_expected_value_type(ValueType::String, false)?;
                         // Write value in a streaming way using value writer
                         let mut string_writer = json_writer.string_value_writer()?;
 
@@ -3828,6 +3866,130 @@ mod tests {
         json_reader.end_object().unwrap();
     }
 
+    fn new_reader_with_limit(json: &str, limit: Option<u32>) -> JsonStreamReader<&[u8]> {
+        JsonStreamReader::new_custom(
+            json.as_bytes(),
+            ReaderSettings {
+                max_nesting_depth: limit,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn nesting_limit() -> TestResult {
+        fn assert_limit_reached<T: Debug>(
+            result: Result<T, ReaderError>,
+            expected_limit: u32,
+            expected_column: u64,
+            expected_path: &JsonPath,
+        ) {
+            match result {
+                Err(ReaderError::MaxNestingDepthExceeded {
+                    max_nesting_depth,
+                    location,
+                }) => {
+                    assert_eq!(expected_limit, max_nesting_depth);
+                    assert_eq!(
+                        JsonReaderPosition {
+                            path: Some(expected_path.to_vec()),
+                            line_pos: Some(LinePosition {
+                                line: 0,
+                                column: expected_column
+                            }),
+                            // Assume input is ASCII only on single line; treat column as byte pos
+                            data_pos: Some(expected_column),
+                        },
+                        location
+                    )
+                }
+                r => panic!("unexpected result: {r:?}"),
+            }
+        }
+
+        // Test default limit
+        let depth = DEFAULT_MAX_NESTING_DEPTH;
+        let json = "[".repeat(depth as usize) + "true]";
+        let mut json_reader = new_reader(&json);
+        for _ in 0..depth {
+            json_reader.begin_array()?;
+        }
+        assert_eq!(true, json_reader.next_bool()?);
+
+        // Test default limit reached
+        let depth = DEFAULT_MAX_NESTING_DEPTH + 1;
+        let json = "[".repeat(depth as usize) + "true]";
+        let mut json_reader = new_reader(&json);
+        for _ in 0..DEFAULT_MAX_NESTING_DEPTH {
+            json_reader.begin_array()?;
+        }
+        assert_limit_reached(
+            json_reader.begin_array(),
+            DEFAULT_MAX_NESTING_DEPTH,
+            DEFAULT_MAX_NESTING_DEPTH as u64,
+            &vec![JsonPathPiece::ArrayItem(0); DEFAULT_MAX_NESTING_DEPTH as usize],
+        );
+
+        // Test no limit
+        let depth = DEFAULT_MAX_NESTING_DEPTH + 10;
+        let json = "[".repeat(depth as usize) + "true]";
+        let mut json_reader = new_reader_with_limit(&json, None);
+        for _ in 0..depth {
+            json_reader.begin_array()?;
+        }
+        assert_eq!(true, json_reader.next_bool()?);
+
+        let mut json_reader = new_reader_with_limit("[", Some(0));
+        assert_limit_reached(json_reader.begin_array(), 0, 0, &json_path![]);
+
+        let mut json_reader = new_reader_with_limit("{", Some(0));
+        assert_limit_reached(json_reader.begin_object(), 0, 0, &json_path![]);
+
+        // No limit error should returned on value type mismatch
+        let mut json_reader = new_reader_with_limit("true", Some(0));
+        match json_reader.begin_array() {
+            Err(ReaderError::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean,
+                ..
+            }) => {}
+            r => panic!("unexpected result: {r:?}"),
+        }
+        assert_eq!(true, json_reader.next_bool()?);
+
+        // Mixed array and object
+        let mut json_reader = new_reader_with_limit("[{", Some(1));
+        json_reader.begin_array()?;
+        assert_limit_reached(json_reader.begin_object(), 1, 1, &json_path![0]);
+
+        let mut json_reader = new_reader_with_limit("{\"a\": [", Some(1));
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_limit_reached(json_reader.begin_array(), 1, 6, &json_path!["a"]);
+
+        // Verify that closing arrays and objects properly decreases the depth again
+        let mut json_reader = new_reader_with_limit("[[{}], {\"a\": [{}]}", Some(3));
+        json_reader.begin_array()?;
+        json_reader.begin_array()?;
+        json_reader.begin_object()?;
+        json_reader.end_object()?;
+        json_reader.end_array()?;
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        json_reader.begin_array()?;
+        assert_limit_reached(json_reader.begin_object(), 3, 14, &json_path![1, "a", 0]);
+
+        // Currently also affects skipping values
+        let mut json_reader = new_reader_with_limit("[[", Some(1));
+        assert_limit_reached(json_reader.skip_value(), 1, 1, &json_path![0]);
+
+        // Currently also affects `seek_to`
+        let mut json_reader = new_reader_with_limit("[[", Some(1));
+        assert_limit_reached(json_reader.seek_to(&json_path![0, 0]), 1, 1, &json_path![0]);
+
+        Ok(())
+    }
+
     #[test]
     fn skip_array() -> TestResult {
         let mut json_reader = new_reader(
@@ -3858,14 +4020,14 @@ mod tests {
     fn skip_array_deeply_nested() -> TestResult {
         let nesting_depth = 20_000;
         let json = "[".repeat(nesting_depth) + "true" + "]".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(&json);
+        let mut json_reader = new_reader_with_limit(&json, None);
 
         json_reader.skip_value()?;
         json_reader.consume_trailing_whitespace()?;
 
         // Also test with malformed JSON to verify that deeply nested value is actually reached
         let json = "[".repeat(nesting_depth) + "@" + "]".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(&json);
+        let mut json_reader = new_reader_with_limit(&json, None);
         assert_parse_error_with_path(
             None,
             json_reader.skip_value(),
@@ -3903,14 +4065,14 @@ mod tests {
         let nesting_depth = 20_000;
         let json_start = r#"{"a":"#;
         let json = json_start.repeat(nesting_depth) + "true" + "}".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(&json);
+        let mut json_reader = new_reader_with_limit(&json, None);
 
         json_reader.skip_value()?;
         json_reader.consume_trailing_whitespace()?;
 
         // Also test with malformed JSON to verify that deeply nested value is actually reached
         let json = json_start.repeat(nesting_depth) + "@" + "}".repeat(nesting_depth).as_str();
-        let mut json_reader = new_reader(&json);
+        let mut json_reader = new_reader_with_limit(&json, None);
         assert_parse_error_with_path(
             None,
             json_reader.skip_value(),
@@ -5457,13 +5619,13 @@ mod tests {
         let json_number = "123";
         let mut json_reader = new_with_debuggable_reader(json_number.as_bytes());
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 0, buf_str: \"\", peeked: None, is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 3, buf_str: \"123\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
 
@@ -5485,7 +5647,7 @@ mod tests {
 
         assert_eq!(ValueType::Number, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: false } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 600, buf_str: \"123456123456123456123456123456123456123456123...\", peeked: Some(NumberStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: false } }",
             format!("{json_reader:?}")
         );
 
@@ -5501,7 +5663,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 15, buf_str: \"this is a test...\", ...buf...: [195], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5514,7 +5676,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json);
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 2, buf_str: \"a...\", ...buf...: [255], peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())
@@ -5530,7 +5692,7 @@ mod tests {
         let mut json_reader = new_with_debuggable_reader(json.as_slice());
         assert_eq!(ValueType::String, json_reader.peek()?);
         assert_eq!(
-            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, restrict_number_values: true } }",
+            "JsonStreamReader { reader: debuggable-reader, buf_count: 121, buf_str: \"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabc...\", peeked: Some(StringStart), is_empty: true, expects_member_name: false, stack: [], is_string_value_reader_active: false, line: 0, column: 0, byte_pos: 0, json_path: Some([]), reader_settings: ReaderSettings { allow_comments: false, allow_trailing_comma: false, allow_multiple_top_level: false, track_path: true, max_nesting_depth: Some(128), restrict_number_values: true } }",
             format!("{json_reader:?}")
         );
         Ok(())

@@ -14,7 +14,13 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
     group.bench_with_input("struson-skip", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
-                let mut json_reader = JsonStreamReader::new(json.as_bytes());
+                let mut json_reader = JsonStreamReader::new_custom(
+                    json.as_bytes(),
+                    ReaderSettings {
+                        max_nesting_depth: None,
+                        ..Default::default()
+                    },
+                );
                 json_reader.skip_value()?;
                 json_reader.consume_trailing_whitespace()?;
                 Ok(())
@@ -28,6 +34,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
                     json.as_bytes(),
                     ReaderSettings {
                         track_path: false,
+                        max_nesting_depth: None,
                         ..Default::default()
                     },
                 );
@@ -112,7 +119,13 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
     group.bench_with_input("struson-read", json, |b, json| {
         b.iter(|| {
             call_unwrap(|| {
-                let json_reader = JsonStreamReader::new(json.as_bytes());
+                let json_reader = JsonStreamReader::new_custom(
+                    json.as_bytes(),
+                    ReaderSettings {
+                        max_nesting_depth: None,
+                        ..Default::default()
+                    },
+                );
                 struson_read(json_reader)
             });
         })
@@ -125,6 +138,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
                     json.as_bytes(),
                     ReaderSettings {
                         track_path: false,
+                        max_nesting_depth: None,
                         ..Default::default()
                     },
                 );
