@@ -9,7 +9,7 @@
 //! This API and the naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
 //! Any feedback is appreciated!
 
-use std::{cell::RefCell, error::Error, io::Read, rc::Rc, str::FromStr};
+use std::{cell::Cell, error::Error, io::Read, rc::Rc, str::FromStr};
 
 use crate::reader::{json_path::JsonPath, JsonReader, JsonStreamReader, ReaderError, ValueType};
 
@@ -165,14 +165,14 @@ pub trait ValueReader<J: JsonReader> {
     {
         self.next_array(|array_reader| {
             while array_reader.has_next()? {
-                let consumed_item = Rc::new(RefCell::new(false));
+                let consumed_item = Rc::new(Cell::new(false));
                 let item_reader = ArrayItemReader {
                     json_reader: array_reader.json_reader,
                     consumed_item: Rc::clone(&consumed_item),
                 };
                 f(item_reader)?;
                 // If the function did not consume the item, skip it
-                if !*consumed_item.borrow() {
+                if !consumed_item.get() {
                     array_reader.json_reader.skip_value()?;
                 }
             }
@@ -235,14 +235,14 @@ fn read_object<J: JsonReader>(
     json_reader.begin_object()?;
     while json_reader.has_next()? {
         let name = json_reader.next_name_owned()?;
-        let consumed_value = Rc::new(RefCell::new(false));
+        let consumed_value = Rc::new(Cell::new(false));
         let member_value_reader = MemberValueReader {
             json_reader,
             consumed_value: Rc::clone(&consumed_value),
         };
         f(name, member_value_reader)?;
         // If the function did not consume the value, skip it
-        if !*consumed_value.borrow() {
+        if !consumed_value.get() {
             json_reader.skip_value()?;
         }
     }
@@ -528,7 +528,7 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
 /// Reader for a single JSON array item
 pub struct ArrayItemReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
-    consumed_item: Rc<RefCell<bool>>,
+    consumed_item: Rc<Cell<bool>>,
 }
 impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
     fn peek(&mut self) -> Result<ValueType, ReaderError> {
@@ -536,27 +536,27 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
     }
 
     fn next_null(self) -> Result<(), ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.next_null()
     }
 
     fn next_bool(self) -> Result<bool, ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.next_bool()
     }
 
     fn next_string(self) -> Result<String, ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.next_string()
     }
 
     fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.next_number()
     }
 
     fn next_number_as_string(self) -> Result<String, ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.next_number_as_string()
     }
 
@@ -564,12 +564,12 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
     fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.deserialize_next()
     }
 
     fn skip_next(self) -> Result<(), ReaderError> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         self.json_reader.skip_value()
     }
 
@@ -577,7 +577,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         read_array(self.json_reader, f)
     }
 
@@ -585,7 +585,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        *self.consumed_item.borrow_mut() = true;
+        self.consumed_item.set(true);
         read_object(self.json_reader, f)
     }
 }
@@ -595,7 +595,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
 /// That is, for a JSON object `{"a": 1}`, this reader can be used to read the value `1`.
 pub struct MemberValueReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
-    consumed_value: Rc<RefCell<bool>>,
+    consumed_value: Rc<Cell<bool>>,
 }
 impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
     fn peek(&mut self) -> Result<ValueType, ReaderError> {
@@ -603,27 +603,27 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
     }
 
     fn next_null(self) -> Result<(), ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.next_null()
     }
 
     fn next_bool(self) -> Result<bool, ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.next_bool()
     }
 
     fn next_string(self) -> Result<String, ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.next_string()
     }
 
     fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.next_number()
     }
 
     fn next_number_as_string(self) -> Result<String, ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.next_number_as_string()
     }
 
@@ -631,12 +631,12 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
     fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.deserialize_next()
     }
 
     fn skip_next(self) -> Result<(), ReaderError> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         self.json_reader.skip_value()
     }
 
@@ -644,7 +644,7 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         read_array(self.json_reader, f)
     }
 
@@ -652,7 +652,7 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        *self.consumed_value.borrow_mut() = true;
+        self.consumed_value.set(true);
         read_object(self.json_reader, f)
     }
 }
