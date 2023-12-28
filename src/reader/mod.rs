@@ -1230,6 +1230,7 @@ pub trait JsonReader {
     /// # Examples
     /// ```
     /// # use struson::reader::*;
+    /// # use std::io::Read;
     /// let mut json_reader = JsonStreamReader::new(r#"["hello"]"#.as_bytes());
     /// json_reader.begin_array()?;
     ///
@@ -1271,7 +1272,7 @@ pub trait JsonReader {
     /// when called after the top-level value has already been consumed and multiple top-level
     /// values are not enabled in the [`ReaderSettings`]. Both cases indicate incorrect
     /// usage by the user and are unrelated to the JSON data.
-    fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError>;
+    fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError>;
 
     /// Consumes and returns a JSON number value
     ///

@@ -1,10 +1,10 @@
-use std::error::Error;
+use std::{error::Error, io::Write};
 
 use assert_no_alloc::permit_alloc;
 // Only use import when creating debug builds, see also configuration below
 #[cfg(debug_assertions)]
 use assert_no_alloc::AllocDisabler;
-use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{JsonStreamWriter, JsonWriter, StringValueWriter, WriterSettings};
 
 // Only enable when creating debug builds
 #[cfg(debug_assertions)]
@@ -13,6 +13,11 @@ static A: AllocDisabler = AllocDisabler;
 
 fn assert_no_alloc<F: FnOnce() -> Result<(), Box<dyn Error>>>(func: F) {
     assert_no_alloc::assert_no_alloc(func).unwrap()
+}
+
+fn permit_dealloc<T, F: FnOnce() -> T>(func: F) -> T {
+    // TODO: Permitting only dealloc is not possible yet, see https://github.com/Windfisch/rust-assert-no-alloc/issues/15
+    permit_alloc(func)
 }
 
 fn new_byte_writer() -> Vec<u8> {
@@ -55,8 +60,7 @@ fn write_values() {
 
         json_writer.end_object()?;
 
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_writer.finish_document())?;
+        permit_dealloc(|| json_writer.finish_document())?;
         Ok(())
     });
 
@@ -91,8 +95,7 @@ fn pretty_print() {
         json_writer.end_array()?;
         json_writer.end_object()?;
 
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_writer.finish_document())?;
+        permit_dealloc(|| json_writer.finish_document())?;
         Ok(())
     });
 
@@ -106,22 +109,18 @@ fn string_value_writer() -> Result<(), Box<dyn Error>> {
     let mut json_writer = JsonStreamWriter::new(&mut writer);
     let large_string = "abcd".repeat(500);
 
-    // Obtain this here because return value is `Box<dyn ...>` and therefore performs allocation
-    let mut string_value_writer = json_writer.string_value_writer()?;
     assert_no_alloc(|| {
+        let mut string_value_writer = json_writer.string_value_writer()?;
         string_value_writer.write_all(b"a")?;
         string_value_writer.write_all(b"\0")?;
         string_value_writer.write_all(b"\n\t")?;
         string_value_writer.write_all(large_string.as_bytes())?;
         string_value_writer.write_all(b"test")?;
+        string_value_writer.finish_value()?;
 
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| string_value_writer.finish_value())?;
+        permit_dealloc(|| json_writer.finish_document())?;
         Ok(())
     });
-    // TODO: Ideally would call this inside assert_no_alloc, but is not possible because `string_value_writer`
-    // is currently created outside of it and prevents moving `json_writer` into closure
-    json_writer.finish_document()?;
 
     let expected_json = format!("\"a\\u0000\\n\\t{large_string}test\"");
     assert_eq!(expected_json, String::from_utf8(writer).unwrap());

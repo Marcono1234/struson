@@ -14,7 +14,7 @@ use super::json_path::json_path;
 use crate::{
     json_number::{consume_json_number, NumberBytesProvider},
     utf8,
-    writer::TransferredNumber,
+    writer::{StringValueWriter, TransferredNumber},
 };
 
 #[derive(PartialEq, Clone, Copy, strum::Display, Debug)]
@@ -2170,17 +2170,17 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(str_bytes.get_str(self))
     }
 
-    fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError> {
+    fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError> {
         self.start_expected_value_type(ValueType::String, false)?;
         self.is_string_value_reader_active = true;
-        Ok(Box::new(StringValueReader {
+        Ok(StringValueReader {
             json_reader: self,
             utf8_buf: [0; STRING_VALUE_READER_BUF_SIZE],
             utf8_start_pos: 0,
             utf8_count: 0,
             reached_end: false,
             error: None,
-        }))
+        })
     }
 
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
@@ -2475,6 +2475,8 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
     use crate::writer::{
         FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, StringValueWriter,
@@ -4348,11 +4350,31 @@ mod tests {
 
     #[test]
     fn transfer_to_writer_error() {
-        struct FailingJsonWriter;
-
         fn err() -> IoError {
             IoError::new(ErrorKind::Other, "test error")
         }
+
+        struct UnreachableStringValueWriter;
+        impl Write for UnreachableStringValueWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                unreachable!()
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                unreachable!()
+            }
+        }
+        impl StringValueWriter for UnreachableStringValueWriter {
+            fn write_str(&mut self, _: &str) -> Result<(), IoError> {
+                unreachable!()
+            }
+
+            fn finish_value(self) -> Result<(), IoError> {
+                unreachable!()
+            }
+        }
+
+        struct FailingJsonWriter;
 
         // JsonWriter which always returns Err(...)
         // Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test
@@ -4389,8 +4411,8 @@ mod tests {
                 Err(err())
             }
 
-            fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError> {
-                Err(err())
+            fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
+                Err::<UnreachableStringValueWriter, IoError>(err())
             }
 
             fn number_value_from_string(&mut self, _: &str) -> Result<(), JsonNumberError> {

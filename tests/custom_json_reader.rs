@@ -9,6 +9,7 @@
 
 use crate::custom_reader::JsonValueReader;
 use serde_json::json;
+use std::io::Read;
 use struson::{
     reader::{
         json_path::{json_path, JsonPath},
@@ -271,15 +272,15 @@ mod custom_reader {
             self.next_str().map(str::to_owned)
         }
 
-        fn next_string_reader(&mut self) -> Result<Box<dyn Read + '_>, ReaderError> {
+        fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError> {
             self.begin_value(ValueType::String)?;
             if let Some(Value::String(s)) = self.next_value.take() {
                 self.is_string_value_reader_active = true;
-                Ok(Box::new(StringValueReader {
+                Ok(StringValueReader {
                     delegate: s.as_bytes(),
                     json_reader: self,
                     reached_end: false,
-                }))
+                })
             } else {
                 unreachable!("begin_value should have verified that value is string")
             }

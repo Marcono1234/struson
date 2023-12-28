@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, io::Read};
 
 use assert_no_alloc::permit_alloc;
 // Only use import when creating debug builds, see also configuration below
@@ -17,6 +17,11 @@ static A: AllocDisabler = AllocDisabler;
 
 fn assert_no_alloc<F: FnOnce() -> Result<(), Box<dyn Error>>>(func: F) {
     assert_no_alloc::assert_no_alloc(func).unwrap()
+}
+
+fn permit_dealloc<T, F: FnOnce() -> T>(func: F) -> T {
+    // TODO: Permitting only dealloc is not possible yet, see https://github.com/Windfisch/rust-assert-no-alloc/issues/15
+    permit_alloc(func)
 }
 
 fn new_reader(json: &str) -> JsonStreamReader<&[u8]> {
@@ -39,8 +44,7 @@ fn skip() {
     assert_no_alloc(|| {
         json_reader.skip_value()?;
 
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_reader.consume_trailing_whitespace())?;
+        permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
         Ok(())
     });
 }
@@ -64,8 +68,7 @@ fn read_values() {
 
         json_reader.end_array()?;
         json_reader.end_object()?;
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_reader.consume_trailing_whitespace())?;
+        permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
         Ok(())
     });
 }
@@ -85,8 +88,7 @@ fn read_string_escape_sequences() {
         assert_eq!("a \u{10FFFF} b", json_reader.next_str()?);
 
         json_reader.end_array()?;
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_reader.consume_trailing_whitespace())?;
+        permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
         Ok(())
     });
 }
@@ -102,24 +104,20 @@ fn string_value_reader() -> Result<(), Box<dyn Error>> {
     // Pre-allocate with expected size to avoid allocations during test execution
     let mut string_output = String::with_capacity(expected_string_value.len());
 
-    // Obtain this here because return value is `Box<dyn ...>` and therefore performs allocation
-    let mut string_value_reader = json_reader.next_string_reader()?;
-
     assert_no_alloc(|| {
+        let mut string_value_reader = json_reader.next_string_reader()?;
         string_value_reader.read_to_string(&mut string_output)?;
+        drop(string_value_reader);
+
+        permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
         Ok(())
     });
-    drop(string_value_reader);
-    // TODO: Ideally would call this inside assert_no_alloc, but is not possible because `string_value_reader`
-    // is currently created outside of it and prevents moving `json_reader` into closure
-    json_reader.consume_trailing_whitespace()?;
 
     assert_eq!(expected_string_value, string_output);
     Ok(())
 }
 
 #[test]
-#[ignore = "transfer_to calls JsonWriter.string_value_writer and that returns a `Box<dyn ...>`"]
 fn transfer_to() -> Result<(), Box<dyn Error>> {
     let inner_json = r#"{"a":[{"b":1,"c":[[],[2,{"d":3,"e":"some string value"}]]}],"f":true}"#;
     let json = "{\"outer-ignored\": 1, \"outer\":[\"ignored\", ".to_owned() + inner_json + "]}";
@@ -135,12 +133,10 @@ fn transfer_to() -> Result<(), Box<dyn Error>> {
         json_reader.seek_to(&json_path)?;
 
         json_reader.transfer_to(&mut json_writer)?;
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_writer.finish_document())?;
+        permit_dealloc(|| json_writer.finish_document())?;
 
         json_reader.skip_to_top_level()?;
-        // Use permit_alloc because assert_no_alloc currently also forbids dealloc
-        permit_alloc(|| json_reader.consume_trailing_whitespace())?;
+        permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
         Ok(())
     });
 

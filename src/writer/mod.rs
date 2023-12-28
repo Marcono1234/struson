@@ -313,6 +313,7 @@ pub trait JsonWriter {
     /// # Examples
     /// ```
     /// # use struson::writer::*;
+    /// # use std::io::Write;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -343,13 +344,7 @@ pub trait JsonWriter {
     /// when called after the top-level value has already been written and multiple top-level
     /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
     /// usage by the user.
-    /*
-     * TODO: Instead of Box<dyn ...> should this directly declare struct as return type
-     *   (and not have separate trait StringValueWriter)?
-     *   But then users might not be able to implement JsonWriter themselves anymore easily;
-     *   would also be inconsistent with JsonReader::next_string_reader
-     */
-    fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError>;
+    fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError>;
 
     /// Writes the string representation of a JSON number value
     ///
@@ -588,6 +583,7 @@ pub trait StringValueWriter: Write {
     /// # Examples
     /// ```
     /// # use struson::writer::*;
+    /// # use std::io::Write;
     /// let mut writer = Vec::<u8>::new();
     /// let mut json_writer = JsonStreamWriter::new(&mut writer);
     ///
@@ -618,7 +614,7 @@ pub trait StringValueWriter: Write {
     /// This method must be called when writing the string value is done to allow
     /// using the original JSON writer again.
     /* Consumes 'self' */
-    fn finish_value(self: Box<Self>) -> Result<(), IoError>;
+    fn finish_value(self) -> Result<(), IoError>;
 }
 
 /// Sealed trait for finite number types such as `u32`

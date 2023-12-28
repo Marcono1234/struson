@@ -9,9 +9,10 @@
 
 use custom_writer::JsonValueWriter;
 use serde_json::json;
+use std::io::Write;
 use struson::{
     reader::{JsonReader, JsonStreamReader},
-    writer::{JsonNumberError, JsonWriter},
+    writer::{JsonNumberError, JsonWriter, StringValueWriter},
 };
 
 mod custom_writer {
@@ -164,13 +165,13 @@ mod custom_writer {
             Ok(())
         }
 
-        fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError> {
+        fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
             self.check_before_value();
             self.is_string_value_writer_active = true;
-            Ok(Box::new(StringValueWriterImpl {
+            Ok(StringValueWriterImpl {
                 buf: Vec::new(),
                 json_writer: self,
-            }))
+            })
         }
 
         fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
@@ -279,7 +280,7 @@ mod custom_writer {
         }
     }
     impl StringValueWriter for StringValueWriterImpl<'_, '_> {
-        fn finish_value(self: Box<Self>) -> Result<(), IoError> {
+        fn finish_value(self) -> Result<(), IoError> {
             let string =
                 String::from_utf8(self.buf).map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
             self.json_writer.add_value(Value::String(string));

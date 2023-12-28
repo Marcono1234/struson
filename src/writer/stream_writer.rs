@@ -522,17 +522,17 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         self.flush()
     }
 
-    fn string_value_writer(&mut self) -> Result<Box<dyn StringValueWriter + '_>, IoError> {
+    fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
         self.before_value()?;
         self.write_bytes(b"\"")?;
         self.is_string_value_writer_active = true;
-        Ok(Box::new(StringValueWriterImpl {
+        Ok(StringValueWriterImpl {
             json_writer: self,
             utf8_buf: [0; utf8::MAX_BYTES_PER_CHAR],
             utf8_pos: 0,
             utf8_expected_len: 0,
             error: None,
-        }))
+        })
     }
 }
 
@@ -768,7 +768,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
         Ok(())
     }
 
-    fn finish_value(self: Box<Self>) -> Result<(), IoError> {
+    fn finish_value(self) -> Result<(), IoError> {
         self.check_previous_error()?;
 
         if self.utf8_pos > 0 {
@@ -1092,53 +1092,63 @@ mod tests {
 
     #[test]
     fn string_writer_invalid() {
-        fn assert_invalid_utf8<
-            T,
-            F: FnOnce(Box<dyn StringValueWriter + '_>) -> Result<T, IoError>,
-        >(
-            f: F,
-            expected_custom_message: Option<&str>,
-        ) {
-            let mut writer = Vec::<u8>::new();
-            let mut json_writer = JsonStreamWriter::new(&mut writer);
+        // Uses macro instead of function with FnOnce(Box<...>) as parameter to avoid issues with
+        // calling `StringValueWriter::finish_value` consuming `self`, see https://stackoverflow.com/q/46620790
+        macro_rules! assert_invalid_utf8 {
+            (
+                |$string_value_writer:ident| $writing_expr:expr,
+                $expected_custom_message:expr, // Option<&str>
+            ) => {
+                let mut writer = Vec::<u8>::new();
+                let mut json_writer = JsonStreamWriter::new(&mut writer);
+                let mut $string_value_writer = json_writer.string_value_writer().unwrap();
 
-            match f(json_writer.string_value_writer().unwrap()) {
-                Ok(_) => panic!("Should have failed"),
-                Err(e) => {
-                    assert_eq!(ErrorKind::InvalidData, e.kind());
+                // Use a closure here to allow `$writing_expr` to use the `?` operator for error handling
+                #[allow(unused_mut)] // only for some callers the closure has to be mutable
+                let mut writing_function = || -> Result<(), IoError> {
+                    $writing_expr
+                };
+                // Explicitly specify expression type to avoid callers having to specify it
+                let expected_custom_message: Option<&str> = $expected_custom_message;
 
-                    match expected_custom_message {
-                        // None if error message should not be compared, e.g. because it is created by Rust and might change
-                        None => assert!(
-                            e.get_ref().unwrap().is::<Utf8Error>(),
-                            "Inner error is not Utf8Error"
-                        ),
-                        Some(message) => {
-                            assert_eq!(message, e.to_string(), "Custom message does not match")
+                match writing_function() {
+                    Ok(_) => panic!("Should have failed"),
+                    Err(e) => {
+                        assert_eq!(ErrorKind::InvalidData, e.kind());
+
+                        match expected_custom_message {
+                            // None if error message should not be compared, e.g. because it is created by Rust and might change
+                            None => assert!(
+                                e.get_ref().unwrap().is::<Utf8Error>(),
+                                "Inner error is not Utf8Error"
+                            ),
+                            Some(message) => {
+                                assert_eq!(message, e.to_string(), "Custom message does not match")
+                            }
                         }
                     }
                 }
             }
         }
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Invalid UTF-8 byte 1111_1000
                 w.write_all(b"\xF8")
             },
             Some("invalid UTF-8 data"),
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Malformed UTF-8; high surrogate U+D800 encoded in UTF-8 (= invalid)
                 w.write_all(b"\xED\xA0\x80")
             },
             None,
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Greater than max code point U+10FFFF; split across multiple bytes
                 w.write_all(b"\xF4")?;
                 w.write_all(b"\x90")?;
@@ -1148,16 +1158,16 @@ mod tests {
             None,
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Overlong encoding for two bytes
                 w.write_all(b"\xC1\xBF")
             },
             None,
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Incomplete four bytes
                 w.write_all(b"\xF0")?;
                 w.write_all(b"\x90")?;
@@ -1167,8 +1177,8 @@ mod tests {
             Some("incomplete multi-byte UTF-8 data"),
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Leading continuation byte
                 w.write_all(b"\x80")?;
                 w.finish_value()
@@ -1176,8 +1186,8 @@ mod tests {
             None,
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Too many continuation bytes
                 w.write_all(b"\xC2")?;
                 w.write_all(b"\x80")?;
@@ -1187,8 +1197,8 @@ mod tests {
             None,
         );
 
-        assert_invalid_utf8(
-            |mut w| {
+        assert_invalid_utf8!(
+            |w| {
                 // Incomplete multi-byte followed by `write_str`
                 w.write_all(b"\xF0")?;
                 w.write_str("")?; // even empty string should trigger this error
