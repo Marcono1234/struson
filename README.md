@@ -55,7 +55,8 @@ Any feedback is appreciated!
 See [`SimpleJsonReader`](https://docs.rs/struson/latest/struson/reader/simple/struct.SimpleJsonReader.html).
 
 ```rust
-# use struson::reader::simple::*;
+use struson::reader::simple::*;
+
 // In this example JSON data comes from a string;
 // normally it would come from a file or a network connection
 let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
@@ -66,7 +67,6 @@ json_reader.next_array_items(|item_reader| {
     Ok(())
 })?;
 assert_eq!(words, vec!["a", "short", "example"]);
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 #### Writing
@@ -74,7 +74,8 @@ assert_eq!(words, vec!["a", "short", "example"]);
 See [`SimpleJsonWriter`](https://docs.rs/struson/latest/struson/writer/simple/struct.SimpleJsonWriter.html).
 
 ```rust
-# use struson::writer::simple::*;
+use struson::writer::simple::*;
+
 // In this example JSON bytes are stored in a Vec;
 // normally they would be written to a file or network connection
 let mut writer = Vec::<u8>::new();
@@ -87,7 +88,6 @@ json_writer.object_value(|object_writer| {
 
 let json = String::from_utf8(writer)?;
 assert_eq!(json, r#"{"a":1,"b":true}"#);
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Advanced API
@@ -98,6 +98,7 @@ See [`JsonStreamReader`](https://docs.rs/struson/latest/struson/reader/struct.Js
 
 ```rust
 use struson::reader::*;
+
 // In this example JSON data comes from a string;
 // normally it would come from a file or a network connection
 let json = r#"{"a": [1, true]}"#;
@@ -122,6 +123,7 @@ See [`JsonStreamWriter`](https://docs.rs/struson/latest/struson/writer/struct.Js
 
 ```rust
 use struson::writer::*;
+
 // In this example JSON bytes are stored in a Vec;
 // normally they would be written to a file or network connection
 let mut writer = Vec::<u8>::new();

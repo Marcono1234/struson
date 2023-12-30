@@ -53,7 +53,8 @@
 //! ```
 //! # #[cfg(feature = "experimental")]
 //! # {
-//! # use struson::reader::simple::*;
+//! use struson::reader::simple::*;
+//!
 //! // In this example JSON data comes from a string;
 //! // normally it would come from a file or a network connection
 //! let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
@@ -74,7 +75,8 @@
 //! ```
 //! # #[cfg(feature = "experimental")]
 //! # {
-//! # use struson::writer::simple::*;
+//! use struson::writer::simple::*;
+//!
 //! // In this example JSON bytes are stored in a Vec;
 //! // normally they would be written to a file or network connection
 //! let mut writer = Vec::<u8>::new();
@@ -97,7 +99,8 @@
 //! See [`JsonStreamReader`](crate::reader::JsonStreamReader).
 //!
 //! ```
-//! # use struson::reader::*;
+//! use struson::reader::*;
+//!
 //! // In this example JSON data comes from a string;
 //! // normally it would come from a file or a network connection
 //! let json = r#"{"a": [1, true]}"#;
@@ -121,7 +124,8 @@
 //! See [`JsonStreamWriter`](crate::writer::JsonStreamWriter).
 //!
 //! ```
-//! # use struson::writer::*;
+//! use struson::writer::*;
+//!
 //! // In this example JSON bytes are stored in a Vec;
 //! // normally they would be written to a file or network connection
 //! let mut writer = Vec::<u8>::new();
