@@ -180,7 +180,43 @@ pub trait ValueReader<J: JsonReader> {
         })
     }
 
-    /// Consumes a JSON object and all of its members
+    /// Consumes a JSON object and all of its members, reading names as borrowed `str`
+    ///
+    /// The function `f` is called repeatedly for all members of the JSON object, if any. It
+    /// takes a [`MemberReader`] as argument which allows reading the name and the value of the
+    /// member.
+    ///
+    /// If the function returns `Ok` but did not read the name or the value of the member, then
+    /// name or value will be skipped automatically.
+    ///
+    /// If the name is needed as owned `String`, then [`next_object_owned_names`](Self::next_object_owned_names)
+    /// should be used instead.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::simple::*;
+    /// let json_reader = SimpleJsonReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
+    ///
+    /// let mut a: Option<u32> = None;
+    /// json_reader.next_object_borrowed_names(|mut member_reader| {
+    ///     let name = member_reader.read_name()?;
+    ///     match name {
+    ///         "a" => a = Some(member_reader.next_number()??),
+    ///         _ => {
+    ///             // ignore member value
+    ///         }
+    ///     }
+    ///     Ok(())
+    /// })?;
+    /// println!("a = {a:?}");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn next_object_borrowed_names(
+        self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>>;
+
+    /// Consumes a JSON object and all of its members, reading names as owned `String`
     ///
     /// The function `f` is called repeatedly for all members of the JSON object, if any. It takes
     /// the member name as first argument and a [`MemberValueReader`] for reading the member value
@@ -190,13 +226,16 @@ pub trait ValueReader<J: JsonReader> {
     /// reading it (e.g. using [`next_bool`](Self::next_bool)) or by using [`skip_next`](Self::skip_next),
     /// the value will be skipped automatically.
     ///
+    /// If it suffices to have the name as borrowed `str`, then [`next_object_borrowed_names`](Self::next_object_borrowed_names)
+    /// should be used instead.
+    ///
     /// # Examples
     /// ```
     /// # use std::collections::HashMap;
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
     /// let mut map = HashMap::<String, u64>::new();
-    /// json_reader.next_object(|name, value_reader| {
+    /// json_reader.next_object_owned_names(|name, value_reader| {
     ///     let member_value = value_reader.next_number()??;
     ///     map.insert(name, member_value);
     ///     Ok(())
@@ -211,7 +250,7 @@ pub trait ValueReader<J: JsonReader> {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_object(
+    fn next_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
@@ -228,7 +267,33 @@ fn read_array<J: JsonReader, T>(
     Ok(result)
 }
 
-fn read_object<J: JsonReader>(
+fn read_object_borrowed_names<J: JsonReader>(
+    json_reader: &mut J,
+    mut f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    json_reader.begin_object()?;
+    while json_reader.has_next()? {
+        let consumed_name = Rc::new(Cell::new(false));
+        let consumed_value = Rc::new(Cell::new(false));
+        let member_reader = MemberReader {
+            json_reader,
+            consumed_name: Rc::clone(&consumed_name),
+            consumed_value: Rc::clone(&consumed_value),
+        };
+        f(member_reader)?;
+        // If the function did not consume the member name or value, skip them
+        if !consumed_name.get() {
+            json_reader.skip_name()?;
+        }
+        if !consumed_value.get() {
+            json_reader.skip_value()?;
+        }
+    }
+    json_reader.end_object()?;
+    Ok(())
+}
+
+fn read_object_owned_names<J: JsonReader>(
     json_reader: &mut J,
     mut f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
@@ -435,11 +500,20 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(result)
     }
 
-    fn next_object(
+    fn next_object_borrowed_names(
+        mut self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        read_object_borrowed_names(&mut self.json_reader, f)?;
+        self.finish()?;
+        Ok(())
+    }
+
+    fn next_object_owned_names(
         mut self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        read_object(&mut self.json_reader, f)?;
+        read_object_owned_names(&mut self.json_reader, f)?;
         self.finish()?;
         Ok(())
     }
@@ -517,11 +591,18 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object(
+    fn next_object_borrowed_names(
+        self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        read_object_borrowed_names(self.json_reader, f)
+    }
+
+    fn next_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        read_object(self.json_reader, f)
+        read_object_owned_names(self.json_reader, f)
     }
 }
 
@@ -581,18 +662,161 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object(
+    fn next_object_borrowed_names(
+        self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.consumed_item.set(true);
+        read_object_borrowed_names(self.json_reader, f)
+    }
+
+    fn next_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.consumed_item.set(true);
-        read_object(self.json_reader, f)
+        read_object_owned_names(self.json_reader, f)
+    }
+}
+
+/// Reader for a JSON object member
+///
+/// The member name can be read using [`read_name`](Self::read_name), and the member value
+/// can be read using one of the [`ValueReader`] methods.
+///
+/// This struct is used by [`ValueReader::next_object_borrowed_names`].
+pub struct MemberReader<'a, J: JsonReader> {
+    json_reader: &'a mut J,
+    consumed_name: Rc<Cell<bool>>,
+    consumed_value: Rc<Cell<bool>>,
+}
+impl<J: JsonReader> MemberReader<'_, J> {
+    /// Reads the member name
+    ///
+    /// Panics if called more than once.
+    /*
+     * TODO: Maybe rename this method? `next_name` would be consistent with JsonReader, but
+     * might make it difficult to discover between the other `next_<value>` methods
+     */
+    pub fn read_name(&mut self) -> Result<&str, ReaderError> {
+        /*
+         * Ideally this would not panic but instead keep returning the same reference on
+         * subsequent calls
+         * In theory this should be safe to implement by storing the reference after the first
+         * read in the struct, and due to borrowing rules the member value cannot be consumed
+         * while the name from `read_name` is still referenced. Also when the member value is
+         * read, `self` is consumed so the name cannot be accessed afterwards anymore.
+         *
+         * However, the Rust compiler does not seem to permit this, see also https://stackoverflow.com/q/32300132.
+         * So for now panic, which should be fine assuming that normally users don't call
+         * `read_name` multiple times.
+         */
+        if self.consumed_name.get() {
+            panic!("name has already been consumed");
+        }
+        self.consumed_name.set(true);
+        self.json_reader.next_name()
+    }
+
+    fn check_skip_name(&mut self) -> Result<(), ReaderError> {
+        if !self.consumed_name.get() {
+            self.consumed_name.set(true);
+            self.json_reader.skip_name()?;
+        }
+        Ok(())
+    }
+}
+
+/// The `ValueReader` methods read the member value
+impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
+    /// Peeks at the type of the member value, without consuming it
+    ///
+    /// If [`read_name`](MemberReader::read_name) has not been called yet, the
+    /// member name will be skipped implicitly and calling `read_name` will not
+    /// be possible anymore afterwards.
+    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+        self.check_skip_name()?;
+        self.json_reader.peek()
+    }
+
+    fn next_null(mut self) -> Result<(), ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.next_null()
+    }
+
+    fn next_bool(mut self) -> Result<bool, ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.next_bool()
+    }
+
+    fn next_string(mut self) -> Result<String, ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.next_string()
+    }
+
+    fn next_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.next_number()
+    }
+
+    fn next_number_as_string(mut self) -> Result<String, ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.next_number_as_string()
+    }
+
+    #[cfg(feature = "serde")]
+    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+        mut self,
+    ) -> Result<D, crate::serde::DeserializerError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.deserialize_next()
+    }
+
+    fn skip_next(mut self) -> Result<(), ReaderError> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        self.json_reader.skip_value()
+    }
+
+    fn next_array<T>(
+        mut self,
+        f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        read_array(self.json_reader, f)
+    }
+
+    fn next_object_borrowed_names(
+        mut self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        read_object_borrowed_names(self.json_reader, f)
+    }
+
+    fn next_object_owned_names(
+        mut self,
+        f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        read_object_owned_names(self.json_reader, f)
     }
 }
 
 /// Reader for a JSON object member value
 ///
 /// That is, for a JSON object `{"a": 1}`, this reader can be used to read the value `1`.
+///
+/// This struct is used by [`ValueReader::next_object_owned_names`].
 pub struct MemberValueReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_value: Rc<Cell<bool>>,
@@ -648,11 +872,19 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object(
+    fn next_object_borrowed_names(
+        self,
+        f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.consumed_value.set(true);
+        read_object_borrowed_names(self.json_reader, f)
+    }
+
+    fn next_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.consumed_value.set(true);
-        read_object(self.json_reader, f)
+        read_object_owned_names(self.json_reader, f)
     }
 }

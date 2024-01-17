@@ -55,7 +55,8 @@ fn read_array() -> Result<(), Box<dyn Error>> {
             4.5e6,
             "serde",
             [false],
-            {"nested": true}
+            {"nested1": true},
+            {"nested2": true}
         ]
         "#,
     );
@@ -79,8 +80,14 @@ fn read_array() -> Result<(), Box<dyn Error>> {
             Ok(())
         })?;
 
-        array_reader.next_object(|name, value_reader| {
-            assert_eq!("nested", name);
+        array_reader.next_object_borrowed_names(|mut member_reader| {
+            assert_eq!("nested1", member_reader.read_name()?);
+            assert_eq!(true, member_reader.next_bool()?);
+            Ok(())
+        })?;
+
+        array_reader.next_object_owned_names(|name, value_reader| {
+            assert_eq!("nested2", name);
             assert_eq!(true, value_reader.next_bool()?);
             Ok(())
         })?;
@@ -124,7 +131,7 @@ fn array_item_not_consumed() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn read_object() -> Result<(), Box<dyn Error>> {
+fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader(
         r#"
         {
@@ -136,13 +143,70 @@ fn read_object() -> Result<(), Box<dyn Error>> {
             "f": 4.5e6,
             "g": "serde",
             "h": [false],
-            "i": {"nested": true}
+            "i": {"nested1": true},
+            "j": {"nested2": true}
         }
         "#,
     );
 
     let mut index = 0;
-    json_reader.next_object(|name, value_reader| {
+    json_reader.next_object_borrowed_names(|mut member_reader| {
+        let expected_name = char::from_u32(('a' as u32) + index).unwrap().to_string();
+        let name = member_reader.read_name()?;
+        assert_eq!(expected_name, name);
+
+        match index {
+            0 => member_reader.next_null()?,
+            1 => assert_eq!(true, member_reader.next_bool()?),
+            2 => assert_eq!("test", member_reader.next_string()?),
+            3 => assert_eq!(1_u64, member_reader.next_number()??),
+            4 => assert_eq!(2.3_f64, member_reader.next_number()??),
+            5 => assert_eq!("4.5e6", member_reader.next_number_as_string()?),
+            6 => assert_eq!("serde", member_reader.deserialize_next::<String>()?),
+            7 => member_reader.next_array(|array_reader| {
+                assert_eq!(false, array_reader.next_bool()?);
+                Ok(())
+            })?,
+            8 => member_reader.next_object_borrowed_names(|mut member_reader| {
+                assert_eq!("nested1", member_reader.read_name()?);
+                assert_eq!(true, member_reader.next_bool()?);
+                Ok(())
+            })?,
+            9 => member_reader.next_object_owned_names(|name, value_reader| {
+                assert_eq!("nested2", name);
+                assert_eq!(true, value_reader.next_bool()?);
+                Ok(())
+            })?,
+            _ => panic!("unexpected name '{name}' at index {index}"),
+        };
+        index += 1;
+        Ok(())
+    })?;
+    assert_eq!(10, index);
+    Ok(())
+}
+
+#[test]
+fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
+    let json_reader = new_reader(
+        r#"
+        {
+            "a": null,
+            "b": true,
+            "c": "test",
+            "d": 1,
+            "e": 2.3,
+            "f": 4.5e6,
+            "g": "serde",
+            "h": [false],
+            "i": {"nested1": true},
+            "j": {"nested2": true}
+        }
+        "#,
+    );
+
+    let mut index = 0;
+    json_reader.next_object_owned_names(|name, value_reader| {
         let expected_name = char::from_u32(('a' as u32) + index).unwrap().to_string();
         assert_eq!(expected_name, name);
 
@@ -158,8 +222,13 @@ fn read_object() -> Result<(), Box<dyn Error>> {
                 assert_eq!(false, array_reader.next_bool()?);
                 Ok(())
             })?,
-            8 => value_reader.next_object(|name, value_reader| {
-                assert_eq!("nested", name);
+            8 => value_reader.next_object_borrowed_names(|mut member_reader| {
+                assert_eq!("nested1", member_reader.read_name()?);
+                assert_eq!(true, member_reader.next_bool()?);
+                Ok(())
+            })?,
+            9 => value_reader.next_object_owned_names(|name, value_reader| {
+                assert_eq!("nested2", name);
                 assert_eq!(true, value_reader.next_bool()?);
                 Ok(())
             })?,
@@ -168,25 +237,77 @@ fn read_object() -> Result<(), Box<dyn Error>> {
         index += 1;
         Ok(())
     })?;
-    assert_eq!(9, index);
+    assert_eq!(10, index);
     Ok(())
 }
 
-/// Tests the behavior when an object member value is not explicitly consumed
+/// Tests the behavior when for [`ValueReader::next_object_borrowed_names`] the name or value
+/// of an object member value is not explicitly consumed
 #[test]
-fn object_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
-    let json_reader = new_reader(r#"{"a":1, "b": 2}"#);
+fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
+    let json_reader = new_reader(r#"{"a":1, "b": 2, "c": 3, "d": 4}"#);
+
+    let mut index = 0;
+    json_reader.next_object_borrowed_names(|mut member_reader| {
+        match index {
+            0 => {
+                // Skip both name and value
+            }
+            1 => {
+                // Skip name
+
+                assert_eq!("2", member_reader.next_number_as_string()?);
+            }
+            2 => {
+                // Skip name by peeking at value; and don't consume value
+                assert_eq!(ValueType::Number, member_reader.peek()?);
+            }
+            _ => {
+                assert_eq!("d", member_reader.read_name()?);
+                assert_eq!("4", member_reader.next_number_as_string()?);
+            }
+        }
+
+        index += 1;
+        Ok(())
+    })?;
+    assert_eq!(4, index);
+    Ok(())
+}
+
+#[test]
+#[should_panic(expected = "name has already been consumed")]
+fn object_borrowed_name_read_twice() {
+    let json_reader = new_reader(r#"{"a":1}"#);
+    json_reader
+        .next_object_borrowed_names(|mut member_reader| {
+            member_reader.read_name()?;
+            member_reader.read_name()?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// Tests the behavior when for [`ValueReader::next_object_owned_names`] an object
+/// member value is not explicitly consumed
+#[test]
+fn object_owned_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
+    let json_reader = new_reader(r#"{"a":1, "b": 2, "c": 3}"#);
 
     // Verify that closure was called
-    let mut seen_second_member = false;
-    json_reader.next_object(|name, value_reader| {
+    let mut seen_last_member = false;
+    json_reader.next_object_owned_names(|name, mut value_reader| {
         match name.as_str() {
             "a" => {
                 // Does not consume the value
             }
             "b" => {
-                assert_eq!("2", value_reader.next_number_as_string()?);
-                seen_second_member = true;
+                // Peek at value but don't consume it
+                assert_eq!(ValueType::Number, value_reader.peek()?);
+            }
+            "c" => {
+                assert_eq!("3", value_reader.next_number_as_string()?);
+                seen_last_member = true;
             }
             _ => panic!("unexpected member: {name}"),
         }
@@ -194,7 +315,7 @@ fn object_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
         Ok(())
     })?;
 
-    assert!(seen_second_member);
+    assert!(seen_last_member);
     Ok(())
 }
 
@@ -245,7 +366,7 @@ fn skip() -> Result<(), Box<dyn Error>> {
             Ok(())
         })?;
 
-        array_reader.next_object(|name, value_reader| {
+        array_reader.next_object_owned_names(|name, value_reader| {
             match name.as_str() {
                 "a" => value_reader.skip_next()?,
                 "b" => {
@@ -317,9 +438,14 @@ fn closure_error_propagation() {
     );
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(
-        json_reader.next_array(|array_reader| array_reader.next_object(|_, _| Err(message.into()))),
-    );
+    assert_error(json_reader.next_array(|array_reader| {
+        array_reader.next_object_borrowed_names(|_| Err(message.into()))
+    }));
+
+    let json_reader = new_reader("[{\"a\": 1");
+    assert_error(json_reader.next_array(|array_reader| {
+        array_reader.next_object_owned_names(|_, _| Err(message.into()))
+    }));
 
     // --- next_array_items ---
     let json_reader = new_reader("[1");
@@ -331,25 +457,50 @@ fn closure_error_propagation() {
     );
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(
-        json_reader
-            .next_array_items(|item_reader| item_reader.next_object(|_, _| Err(message.into()))),
-    );
+    assert_error(json_reader.next_array_items(|item_reader| {
+        item_reader.next_object_borrowed_names(|_| Err(message.into()))
+    }));
 
-    // --- next_object ---
+    let json_reader = new_reader("[{\"a\": 1");
+    assert_error(json_reader.next_array_items(|item_reader| {
+        item_reader.next_object_owned_names(|_, _| Err(message.into()))
+    }));
+
+    // --- next_object_borrowed_names ---
     let json_reader = new_reader("{\"a\": 1");
-    assert_error(json_reader.next_object(|_, _| Err(message.into())));
+    assert_error(json_reader.next_object_borrowed_names(|_| Err(message.into())));
 
     let json_reader = new_reader("{\"a\": [");
-    assert_error(
-        json_reader
-            .next_object(|_name, value_reader| value_reader.next_array(|_| Err(message.into()))),
-    );
+    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
+        member_reader.next_array(|_| Err(message.into()))
+    }));
 
     let json_reader = new_reader("{\"a\": {\"b\": 1");
-    assert_error(
-        json_reader.next_object(|_name, value_reader| {
-            value_reader.next_object(|_, _| Err(message.into()))
-        }),
-    );
+    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
+        member_reader.next_object_borrowed_names(|_| Err(message.into()))
+    }));
+
+    let json_reader = new_reader("{\"a\": {\"b\": 1");
+    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
+        member_reader.next_object_owned_names(|_, _| Err(message.into()))
+    }));
+
+    // --- next_object_owned_names ---
+    let json_reader = new_reader("{\"a\": 1");
+    assert_error(json_reader.next_object_owned_names(|_, _| Err(message.into())));
+
+    let json_reader = new_reader("{\"a\": [");
+    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
+        value_reader.next_array(|_| Err(message.into()))
+    }));
+
+    let json_reader = new_reader("{\"a\": {\"b\": 1");
+    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
+        value_reader.next_object_borrowed_names(|_| Err(message.into()))
+    }));
+
+    let json_reader = new_reader("{\"a\": {\"b\": 1");
+    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
+        value_reader.next_object_owned_names(|_, _| Err(message.into()))
+    }));
 }
