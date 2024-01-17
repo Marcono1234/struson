@@ -16,16 +16,16 @@ use crate::reader::{json_path::JsonPath, JsonReader, JsonStreamReader, ReaderErr
 /// Reader for a JSON value
 pub trait ValueReader<J: JsonReader> {
     /// Peeks at the type of the next JSON value, without consuming it
-    fn peek(&mut self) -> Result<ValueType, ReaderError>;
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError>;
 
     /// Consumes a JSON null value
-    fn next_null(self) -> Result<(), ReaderError>;
+    fn read_null(self) -> Result<(), ReaderError>;
 
     /// Consumes and returns a JSON boolean value
-    fn next_bool(self) -> Result<bool, ReaderError>;
+    fn read_bool(self) -> Result<bool, ReaderError>;
 
     /// Consumes and returns a JSON string value
-    fn next_string(self) -> Result<String, ReaderError>;
+    fn read_string(self) -> Result<String, ReaderError>;
 
     /// Consumes and returns a JSON number value
     ///
@@ -37,11 +37,11 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new("12".as_bytes());
-    /// let number: u64 = json_reader.next_number()??;
+    /// let number: u64 = json_reader.read_number()??;
     /// assert_eq!(number, 12);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError>;
+    fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError>;
 
     /// Consumes and returns the string representation of a JSON number value
     ///
@@ -49,16 +49,16 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new("1.2e3".as_bytes());
-    /// let number_string = json_reader.next_number_as_string()?;
+    /// let number_string = json_reader.read_number_as_string()?;
     /// assert_eq!(number_string, "1.2e3");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_number_as_string(self) -> Result<String, ReaderError>;
+    fn read_number_as_string(self) -> Result<String, ReaderError>;
 
     /// Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value
     ///
     /// This method is part of the optional Serde integration feature, see the
-    /// [`serde`](crate::serde) module of this crate for more information.
+    /// [`serde` module](crate::serde) of this crate for more information.
     ///
     /// # Examples
     /// ```
@@ -74,7 +74,7 @@ pub trait ValueReader<J: JsonReader> {
     ///     number: u64,
     /// }
     ///
-    /// let value: MyStruct = json_reader.deserialize_next()?;
+    /// let value: MyStruct = json_reader.read_deserialize()?;
     /// assert_eq!(
     ///     value,
     ///     MyStruct { text: "some text".to_owned(), number: 5 }
@@ -88,7 +88,7 @@ pub trait ValueReader<J: JsonReader> {
     /// of [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer) for
     /// security considerations.
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError>;
 
@@ -97,20 +97,21 @@ pub trait ValueReader<J: JsonReader> {
     /// If the value is a JSON array or object, all the nested values will be skipped as well.
     /// This method is usually more efficient than reading the next JSON value using one of
     /// the other methods, but discarding the read result afterwards.
-    fn skip_next(self) -> Result<(), ReaderError>;
+    fn skip_value(self) -> Result<(), ReaderError>;
 
     /// Consumes a JSON array
     ///
     /// This method is useful when arrays of fixed size or with heterogenous item types are read;
-    /// otherwise prefer [`next_array_items`](Self::next_array_items).
+    /// otherwise prefer [`read_array_items`](Self::read_array_items).
     ///
     /// If the exact size is not known in advance, [`ArrayReader::has_next`] can be used to
     /// check if there are more items in the JSON array. If the value types are not known in
-    /// advance, [`ArrayReader::peek`](ValueReader::peek) can be used to peek at the next item
-    /// (optionally calling `has_next` before to make sure there is actually a next item).
+    /// advance, [`ArrayReader::peek_value`](ValueReader::peek_value) can be used to peek at
+    /// the next item (optionally calling `has_next` before to make sure there is actually a
+    /// next item).
     ///
     /// If the function `f` returns `Ok` it must have consumed all array items, either by
-    /// reading them or by calling [`ArrayReader::skip_next`](ValueReader::skip_next) until
+    /// reading them or by calling [`ArrayReader::skip_value`](ValueReader::skip_value) until
     /// there are no more items (can be checked using [`ArrayReader::has_next`]). Otherwise
     /// an error is returned.
     ///
@@ -118,16 +119,16 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new("[1, 2, 3]".as_bytes());
-    /// let point: (u64, u64, u64) = json_reader.next_array(|array_reader| {
-    ///     let x = array_reader.next_number()??;
-    ///     let y = array_reader.next_number()??;
-    ///     let z = array_reader.next_number()??;
+    /// let point: (u64, u64, u64) = json_reader.read_array(|array_reader| {
+    ///     let x = array_reader.read_number()??;
+    ///     let y = array_reader.read_number()??;
+    ///     let z = array_reader.read_number()??;
     ///     Ok((x, y, z))
     /// })?;
     /// assert_eq!(point, (1, 2, 3));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_array<T>(
+    fn read_array<T>(
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>>;
@@ -135,12 +136,12 @@ pub trait ValueReader<J: JsonReader> {
     /// Consumes a JSON array and all of its items
     ///
     /// This method is useful when arrays with varying size and homogenous item type are read;
-    /// otherwise prefer [`next_array`](Self::next_array).
+    /// otherwise prefer [`read_array`](Self::read_array).
     ///
     /// The function `f` is called repeatedly for all items of the JSON array, if any.
     ///
     /// If the function returns `Ok` but did not consume the array item, either by
-    /// reading it (e.g. using [`next_bool`](Self::next_bool)) or by using [`skip_next`](Self::skip_next),
+    /// reading it (e.g. using [`read_bool`](Self::read_bool)) or by using [`skip_value`](Self::skip_value),
     /// the item will be skipped automatically.
     ///
     /// # Examples
@@ -148,22 +149,22 @@ pub trait ValueReader<J: JsonReader> {
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
     /// let mut words = Vec::<String>::new();
-    /// json_reader.next_array_items(|item_reader| {
-    ///     let word = item_reader.next_string()?;
+    /// json_reader.read_array_items(|item_reader| {
+    ///     let word = item_reader.read_string()?;
     ///     words.push(word);
     ///     Ok(())
     /// })?;
     /// assert_eq!(words, vec!["a", "short", "example"]);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_array_items(
+    fn read_array_items(
         self,
         mut f: impl FnMut(ArrayItemReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>
     where
         Self: Sized,
     {
-        self.next_array(|array_reader| {
+        self.read_array(|array_reader| {
             while array_reader.has_next()? {
                 let consumed_item = Rc::new(Cell::new(false));
                 let item_reader = ArrayItemReader {
@@ -189,7 +190,7 @@ pub trait ValueReader<J: JsonReader> {
     /// If the function returns `Ok` but did not read the name or the value of the member, then
     /// name or value will be skipped automatically.
     ///
-    /// If the name is needed as owned `String`, then [`next_object_owned_names`](Self::next_object_owned_names)
+    /// If the name is needed as owned `String`, then [`read_object_owned_names`](Self::read_object_owned_names)
     /// should be used instead.
     ///
     /// # Examples
@@ -198,10 +199,10 @@ pub trait ValueReader<J: JsonReader> {
     /// let json_reader = SimpleJsonReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
     ///
     /// let mut a: Option<u32> = None;
-    /// json_reader.next_object_borrowed_names(|mut member_reader| {
+    /// json_reader.read_object_borrowed_names(|mut member_reader| {
     ///     let name = member_reader.read_name()?;
     ///     match name {
-    ///         "a" => a = Some(member_reader.next_number()??),
+    ///         "a" => a = Some(member_reader.read_number()??),
     ///         _ => {
     ///             // ignore member value
     ///         }
@@ -211,7 +212,7 @@ pub trait ValueReader<J: JsonReader> {
     /// println!("a = {a:?}");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
@@ -223,10 +224,10 @@ pub trait ValueReader<J: JsonReader> {
     /// as second argument.
     ///
     /// If the function returns `Ok` but did not consume the value of the member, either by
-    /// reading it (e.g. using [`next_bool`](Self::next_bool)) or by using [`skip_next`](Self::skip_next),
+    /// reading it (e.g. using [`read_bool`](Self::read_bool)) or by using [`skip_value`](Self::skip_value),
     /// the value will be skipped automatically.
     ///
-    /// If it suffices to have the name as borrowed `str`, then [`next_object_borrowed_names`](Self::next_object_borrowed_names)
+    /// If it suffices to have the name as borrowed `str`, then [`read_object_borrowed_names`](Self::read_object_borrowed_names)
     /// should be used instead.
     ///
     /// # Examples
@@ -235,8 +236,8 @@ pub trait ValueReader<J: JsonReader> {
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new(r#"{"a": 1, "b": 2}"#.as_bytes());
     /// let mut map = HashMap::<String, u64>::new();
-    /// json_reader.next_object_owned_names(|name, value_reader| {
-    ///     let member_value = value_reader.next_number()??;
+    /// json_reader.read_object_owned_names(|name, value_reader| {
+    ///     let member_value = value_reader.read_number()??;
     ///     map.insert(name, member_value);
     ///     Ok(())
     /// })?;
@@ -250,7 +251,7 @@ pub trait ValueReader<J: JsonReader> {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
@@ -332,8 +333,8 @@ fn read_object_owned_names<J: JsonReader>(
 /// // normally it would come from a file or a network connection
 /// let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
 /// let mut words = Vec::<String>::new();
-/// json_reader.next_array_items(|item_reader| {
-///     let word = item_reader.next_string()?;
+/// json_reader.read_array_items(|item_reader| {
+///     let word = item_reader.read_string()?;
 ///     words.push(word);
 ///     Ok(())
 /// })?;
@@ -407,7 +408,7 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     /// json_reader.seek_to(&json_path!["foo", 2])?;
     ///
     /// // Can now consume the value to which the call seeked to
-    /// let value = json_reader.next_string()?;
+    /// let value = json_reader.read_string()?;
     /// assert_eq!(value, "c");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -444,41 +445,41 @@ impl<R: Read> SimpleJsonReader<JsonStreamReader<R>> {
 // These methods all call `json_reader.consume_trailing_whitespace()` because `SimpleJsonReader`
 // is intended to be used for top-level value
 impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
-    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         self.json_reader.peek()
     }
 
-    fn next_null(mut self) -> Result<(), ReaderError> {
+    fn read_null(mut self) -> Result<(), ReaderError> {
         self.json_reader.next_null()?;
         self.finish()
     }
 
-    fn next_bool(mut self) -> Result<bool, ReaderError> {
+    fn read_bool(mut self) -> Result<bool, ReaderError> {
         let result = self.json_reader.next_bool()?;
         self.finish()?;
         Ok(result)
     }
 
-    fn next_string(mut self) -> Result<String, ReaderError> {
+    fn read_string(mut self) -> Result<String, ReaderError> {
         let result = self.json_reader.next_string()?;
         self.finish()?;
         Ok(result)
     }
 
-    fn next_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
+    fn read_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
         let result = self.json_reader.next_number()?;
         self.finish()?;
         Ok(result)
     }
 
-    fn next_number_as_string(mut self) -> Result<String, ReaderError> {
+    fn read_number_as_string(mut self) -> Result<String, ReaderError> {
         let result = self.json_reader.next_number_as_string()?;
         self.finish()?;
         Ok(result)
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         let result = self.json_reader.deserialize_next()?;
@@ -486,12 +487,12 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(result)
     }
 
-    fn skip_next(mut self) -> Result<(), ReaderError> {
+    fn skip_value(mut self) -> Result<(), ReaderError> {
         self.json_reader.skip_value()?;
         self.finish()
     }
 
-    fn next_array<T>(
+    fn read_array<T>(
         mut self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
@@ -500,7 +501,7 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(result)
     }
 
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         mut self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -509,7 +510,7 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(())
     }
 
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         mut self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -526,16 +527,16 @@ pub struct ArrayReader<'a, J: JsonReader> {
 impl<J: JsonReader> ArrayReader<'_, J> {
     /// Checks if there is a next item in the JSON array, without consuming it
     ///
-    /// Returns `true` if there is a next element, `false` otherwise. This method can be
+    /// Returns `true` if there is a next item, `false` otherwise. This method can be
     /// useful as condition of a `while` loop when processing a JSON array of unknown size.
     ///
     /// # Examples
     /// ```
     /// # use struson::reader::simple::*;
     /// let json_reader = SimpleJsonReader::new("[1, 2]".as_bytes());
-    /// json_reader.next_array(|array_reader| {
+    /// json_reader.read_array(|array_reader| {
     ///     while array_reader.has_next()? {
-    ///         let value = array_reader.next_number_as_string()?;
+    ///         let value = array_reader.read_number_as_string()?;
     ///         println!("{value}");
     ///     }
     ///     Ok(())
@@ -549,56 +550,56 @@ impl<J: JsonReader> ArrayReader<'_, J> {
 
 // Implement for `&mut ArrayReader` to allow reading multiple values instead of just one
 impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
-    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         self.json_reader.peek()
     }
 
-    fn next_null(self) -> Result<(), ReaderError> {
+    fn read_null(self) -> Result<(), ReaderError> {
         self.json_reader.next_null()
     }
 
-    fn next_bool(self) -> Result<bool, ReaderError> {
+    fn read_bool(self) -> Result<bool, ReaderError> {
         self.json_reader.next_bool()
     }
 
-    fn next_string(self) -> Result<String, ReaderError> {
+    fn read_string(self) -> Result<String, ReaderError> {
         self.json_reader.next_string()
     }
 
-    fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
+    fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
         self.json_reader.next_number()
     }
 
-    fn next_number_as_string(self) -> Result<String, ReaderError> {
+    fn read_number_as_string(self) -> Result<String, ReaderError> {
         self.json_reader.next_number_as_string()
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.json_reader.deserialize_next()
     }
 
-    fn skip_next(self) -> Result<(), ReaderError> {
+    fn skip_value(self) -> Result<(), ReaderError> {
         self.json_reader.skip_value()
     }
 
-    fn next_array<T>(
+    fn read_array<T>(
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         read_object_borrowed_names(self.json_reader, f)
     }
 
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -612,49 +613,49 @@ pub struct ArrayItemReader<'a, J: JsonReader> {
     consumed_item: Rc<Cell<bool>>,
 }
 impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
-    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         self.json_reader.peek()
     }
 
-    fn next_null(self) -> Result<(), ReaderError> {
+    fn read_null(self) -> Result<(), ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.next_null()
     }
 
-    fn next_bool(self) -> Result<bool, ReaderError> {
+    fn read_bool(self) -> Result<bool, ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.next_bool()
     }
 
-    fn next_string(self) -> Result<String, ReaderError> {
+    fn read_string(self) -> Result<String, ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.next_string()
     }
 
-    fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
+    fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.next_number()
     }
 
-    fn next_number_as_string(self) -> Result<String, ReaderError> {
+    fn read_number_as_string(self) -> Result<String, ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.next_number_as_string()
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.consumed_item.set(true);
         self.json_reader.deserialize_next()
     }
 
-    fn skip_next(self) -> Result<(), ReaderError> {
+    fn skip_value(self) -> Result<(), ReaderError> {
         self.consumed_item.set(true);
         self.json_reader.skip_value()
     }
 
-    fn next_array<T>(
+    fn read_array<T>(
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
@@ -662,7 +663,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -670,7 +671,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
         read_object_borrowed_names(self.json_reader, f)
     }
 
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -681,10 +682,10 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
 
 /// Reader for a JSON object member
 ///
-/// The member name can be read using [`read_name`](Self::read_name), and the member value
-/// can be read using one of the [`ValueReader`] methods.
+/// The member name can be read using [`read_name`](Self::read_name), and afterwards
+/// the member value can be read using one of the [`ValueReader`] methods.
 ///
-/// This struct is used by [`ValueReader::next_object_borrowed_names`].
+/// This struct is used by [`ValueReader::read_object_borrowed_names`].
 pub struct MemberReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_name: Rc<Cell<bool>>,
@@ -694,10 +695,6 @@ impl<J: JsonReader> MemberReader<'_, J> {
     /// Reads the member name
     ///
     /// Panics if called more than once.
-    /*
-     * TODO: Maybe rename this method? `next_name` would be consistent with JsonReader, but
-     * might make it difficult to discover between the other `next_<value>` methods
-     */
     pub fn read_name(&mut self) -> Result<&str, ReaderError> {
         /*
          * Ideally this would not panic but instead keep returning the same reference on
@@ -710,6 +707,8 @@ impl<J: JsonReader> MemberReader<'_, J> {
          * However, the Rust compiler does not seem to permit this, see also https://stackoverflow.com/q/32300132.
          * So for now panic, which should be fine assuming that normally users don't call
          * `read_name` multiple times.
+         * But also the method name `read_name` suggests that it advances the reader, so it
+         * might be counterintuitive that subsequent calls return a previously read name.
          */
         if self.consumed_name.get() {
             panic!("name has already been consumed");
@@ -734,43 +733,43 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
     /// If [`read_name`](MemberReader::read_name) has not been called yet, the
     /// member name will be skipped implicitly and calling `read_name` will not
     /// be possible anymore afterwards.
-    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         self.check_skip_name()?;
         self.json_reader.peek()
     }
 
-    fn next_null(mut self) -> Result<(), ReaderError> {
+    fn read_null(mut self) -> Result<(), ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_null()
     }
 
-    fn next_bool(mut self) -> Result<bool, ReaderError> {
+    fn read_bool(mut self) -> Result<bool, ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_bool()
     }
 
-    fn next_string(mut self) -> Result<String, ReaderError> {
+    fn read_string(mut self) -> Result<String, ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_string()
     }
 
-    fn next_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
+    fn read_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_number()
     }
 
-    fn next_number_as_string(mut self) -> Result<String, ReaderError> {
+    fn read_number_as_string(mut self) -> Result<String, ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_number_as_string()
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.check_skip_name()?;
@@ -778,13 +777,13 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         self.json_reader.deserialize_next()
     }
 
-    fn skip_next(mut self) -> Result<(), ReaderError> {
+    fn skip_value(mut self) -> Result<(), ReaderError> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.skip_value()
     }
 
-    fn next_array<T>(
+    fn read_array<T>(
         mut self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
@@ -793,7 +792,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         mut self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -802,7 +801,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         read_object_borrowed_names(self.json_reader, f)
     }
 
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         mut self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -816,55 +815,55 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
 ///
 /// That is, for a JSON object `{"a": 1}`, this reader can be used to read the value `1`.
 ///
-/// This struct is used by [`ValueReader::next_object_owned_names`].
+/// This struct is used by [`ValueReader::read_object_owned_names`].
 pub struct MemberValueReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_value: Rc<Cell<bool>>,
 }
 impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
-    fn peek(&mut self) -> Result<ValueType, ReaderError> {
+    fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         self.json_reader.peek()
     }
 
-    fn next_null(self) -> Result<(), ReaderError> {
+    fn read_null(self) -> Result<(), ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_null()
     }
 
-    fn next_bool(self) -> Result<bool, ReaderError> {
+    fn read_bool(self) -> Result<bool, ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_bool()
     }
 
-    fn next_string(self) -> Result<String, ReaderError> {
+    fn read_string(self) -> Result<String, ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_string()
     }
 
-    fn next_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
+    fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_number()
     }
 
-    fn next_number_as_string(self) -> Result<String, ReaderError> {
+    fn read_number_as_string(self) -> Result<String, ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_number_as_string()
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.consumed_value.set(true);
         self.json_reader.deserialize_next()
     }
 
-    fn skip_next(self) -> Result<(), ReaderError> {
+    fn skip_value(self) -> Result<(), ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.skip_value()
     }
 
-    fn next_array<T>(
+    fn read_array<T>(
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
@@ -872,7 +871,7 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
         read_array(self.json_reader, f)
     }
 
-    fn next_object_borrowed_names(
+    fn read_object_borrowed_names(
         self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -880,7 +879,7 @@ impl<J: JsonReader> ValueReader<J> for MemberValueReader<'_, J> {
         read_object_borrowed_names(self.json_reader, f)
     }
 
-    fn next_object_owned_names(
+    fn read_object_owned_names(
         self,
         f: impl FnMut(String, MemberValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {

@@ -456,7 +456,7 @@ pub trait JsonWriter {
     /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
     ///
     /// This method is part of the optional Serde integration feature, see the
-    /// [`serde`](crate::serde) module of this crate for more information.
+    /// [`serde` module](crate::serde) of this crate for more information.
     ///
     /// If it is not possible to directly serialize a value in place, instead of using
     /// this method a [`JsonWriterSerializer`](crate::serde::JsonWriterSerializer)

@@ -59,8 +59,8 @@
 //! // normally it would come from a file or a network connection
 //! let json_reader = SimpleJsonReader::new(r#"["a", "short", "example"]"#.as_bytes());
 //! let mut words = Vec::<String>::new();
-//! json_reader.next_array_items(|item_reader| {
-//!     let word = item_reader.next_string()?;
+//! json_reader.read_array_items(|item_reader| {
+//!     let word = item_reader.read_string()?;
 //!     words.push(word);
 //!     Ok(())
 //! })?;
@@ -81,9 +81,9 @@
 //! // normally they would be written to a file or network connection
 //! let mut writer = Vec::<u8>::new();
 //! let json_writer = SimpleJsonWriter::new(&mut writer);
-//! json_writer.object_value(|object_writer| {
-//!     object_writer.number_member("a", 1)?;
-//!     object_writer.bool_member("b", true)?;
+//! json_writer.write_object(|object_writer| {
+//!     object_writer.write_number_member("a", 1)?;
+//!     object_writer.write_bool_member("b", true)?;
 //!     Ok(())
 //! })?;
 //!
@@ -151,7 +151,7 @@
 //! # Serde integration
 //! Optional integration with [Serde](https://docs.rs/serde/latest/serde/) exists to
 //! allow writing a `Serialize` to a `JsonWriter` and reading a `Deserialize` from
-//! a `JsonReader`. See the [`serde`] module of this crate for more information.
+//! a `JsonReader`. See the [`serde` module](crate::serde) of this crate for more information.
 
 pub mod reader;
 pub mod writer;

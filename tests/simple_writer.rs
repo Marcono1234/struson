@@ -1,3 +1,5 @@
+//! Tests for [`struson::writer::simple`]
+
 #![cfg(feature = "experimental")]
 #![cfg(feature = "serde")]
 
@@ -26,32 +28,32 @@ fn write() {
         assert_eq!(expected_json, json);
     }
 
-    assert_written(|j| j.null_value().map_err(|e| e.into()), "null");
-    assert_written(|j| j.bool_value(true).map_err(|e| e.into()), "true");
-    assert_written(|j| j.string_value("test").map_err(|e| e.into()), "\"test\"");
-    assert_written(|j| j.number_value(1_u64).map_err(|e| e.into()), "1");
-    assert_written(|j| j.fp_number_value(2.3_f64), "2.3");
-    assert_written(|j| j.number_string_value("4.5e6"), "4.5e6");
-    assert_written(|j| j.serialize_value(&"serde"), "\"serde\"");
+    assert_written(|j| j.write_null().map_err(|e| e.into()), "null");
+    assert_written(|j| j.write_bool(true).map_err(|e| e.into()), "true");
+    assert_written(|j| j.write_string("test").map_err(|e| e.into()), "\"test\"");
+    assert_written(|j| j.write_number(1_u64).map_err(|e| e.into()), "1");
+    assert_written(|j| j.write_fp_number(2.3_f64), "2.3");
+    assert_written(|j| j.write_number_string("4.5e6"), "4.5e6");
+    assert_written(|j| j.write_serialize(&"serde"), "\"serde\"");
 
     assert_written(
         |json_writer| {
-            json_writer.array_value(|array_writer| {
-                array_writer.null_value()?;
-                array_writer.bool_value(true)?;
-                array_writer.string_value("test")?;
-                array_writer.number_value(1_u64)?;
-                array_writer.fp_number_value(2.3_f64)?;
-                array_writer.number_string_value("4.5e6")?;
-                array_writer.serialize_value(&"serde")?;
+            json_writer.write_array(|array_writer| {
+                array_writer.write_null()?;
+                array_writer.write_bool(true)?;
+                array_writer.write_string("test")?;
+                array_writer.write_number(1_u64)?;
+                array_writer.write_fp_number(2.3_f64)?;
+                array_writer.write_number_string("4.5e6")?;
+                array_writer.write_serialize(&"serde")?;
 
-                array_writer.array_value(|array_writer| {
-                    array_writer.bool_value(false)?;
+                array_writer.write_array(|array_writer| {
+                    array_writer.write_bool(false)?;
                     Ok(())
                 })?;
 
-                array_writer.object_value(|object_writer| {
-                    object_writer.bool_member("a", false)?;
+                array_writer.write_object(|object_writer| {
+                    object_writer.write_bool_member("a", false)?;
                     Ok(())
                 })?;
 
@@ -64,22 +66,22 @@ fn write() {
 
     assert_written(
         |json_writer| {
-            json_writer.object_value(|object_writer| {
-                object_writer.null_member("a")?;
-                object_writer.bool_member("b", true)?;
-                object_writer.string_member("c", "test")?;
-                object_writer.number_member("d", 1_u64)?;
-                object_writer.fp_number_member("e", 2.3_f64)?;
-                object_writer.number_string_member("f", "4.5e6")?;
-                object_writer.serialized_member("g", &"serde")?;
+            json_writer.write_object(|object_writer| {
+                object_writer.write_null_member("a")?;
+                object_writer.write_bool_member("b", true)?;
+                object_writer.write_string_member("c", "test")?;
+                object_writer.write_number_member("d", 1_u64)?;
+                object_writer.write_fp_number_member("e", 2.3_f64)?;
+                object_writer.write_number_string_member("f", "4.5e6")?;
+                object_writer.write_serialized_member("g", &"serde")?;
 
-                object_writer.array_member("h", |array_writer| {
-                    array_writer.bool_value(false)?;
+                object_writer.write_array_member("h", |array_writer| {
+                    array_writer.write_bool(false)?;
                     Ok(())
                 })?;
 
-                object_writer.object_member("i", |object_writer| {
-                    object_writer.bool_member("nested", true)?;
+                object_writer.write_object_member("i", |object_writer| {
+                    object_writer.write_bool_member("nested", true)?;
                     Ok(())
                 })?;
 
@@ -109,33 +111,31 @@ fn closure_error_propagation() {
         }
     }
 
-    // --- array_value ---
+    // --- write_array ---
     let json_writer = new_writer();
-    assert_error(json_writer.array_value(|_| Err(message.into())));
+    assert_error(json_writer.write_array(|_| Err(message.into())));
 
     let json_writer = new_writer();
     assert_error(
-        json_writer.array_value(|array_writer| array_writer.array_value(|_| Err(message.into()))),
+        json_writer.write_array(|array_writer| array_writer.write_array(|_| Err(message.into()))),
     );
 
     let json_writer = new_writer();
     assert_error(
-        json_writer.array_value(|array_writer| array_writer.object_value(|_| Err(message.into()))),
+        json_writer.write_array(|array_writer| array_writer.write_object(|_| Err(message.into()))),
     );
 
-    // --- object_value ---
+    // --- write_object ---
     let json_writer = new_writer();
-    assert_error(json_writer.object_value(|_| Err(message.into())));
+    assert_error(json_writer.write_object(|_| Err(message.into())));
 
     let json_writer = new_writer();
-    assert_error(
-        json_writer.object_value(|object_writer| {
-            object_writer.array_member("name", |_| Err(message.into()))
-        }),
-    );
+    assert_error(json_writer.write_object(|object_writer| {
+        object_writer.write_array_member("name", |_| Err(message.into()))
+    }));
 
     let json_writer = new_writer();
-    assert_error(json_writer.object_value(|object_writer| {
-        object_writer.object_member("name", |_| Err(message.into()))
+    assert_error(json_writer.write_object(|object_writer| {
+        object_writer.write_object_member("name", |_| Err(message.into()))
     }));
 }

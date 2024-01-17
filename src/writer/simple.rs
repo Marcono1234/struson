@@ -20,32 +20,32 @@ type IoError = std::io::Error;
 /// Writer for a JSON value
 pub trait ValueWriter<J: JsonWriter> {
     /// Writes a JSON null value
-    fn null_value(self) -> Result<(), IoError>;
+    fn write_null(self) -> Result<(), IoError>;
 
     /// Writes a JSON boolean value
-    fn bool_value(self, value: bool) -> Result<(), IoError>;
+    fn write_bool(self, value: bool) -> Result<(), IoError>;
 
     /// Writes a JSON string value
-    fn string_value(self, value: &str) -> Result<(), IoError>;
+    fn write_string(self, value: &str) -> Result<(), IoError>;
 
     /// Writes a JSON number value
-    fn number_value<N: FiniteNumber>(self, value: N) -> Result<(), IoError>;
+    fn write_number<N: FiniteNumber>(self, value: N) -> Result<(), IoError>;
 
     /// Writes a floating point JSON number value
     ///
     /// Returns an error if the number is non-finite and therefore cannot be written
     /// as JSON number value.
-    fn fp_number_value<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>>;
+    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>>;
 
     /// Writes the string representation of a JSON number value
     ///
     /// Returns an error if the string is not a valid JSON number value.
-    fn number_string_value(self, value: &str) -> Result<(), Box<dyn Error>>;
+    fn write_number_string(self, value: &str) -> Result<(), Box<dyn Error>>;
 
     /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
     ///
     /// This method is part of the optional Serde integration feature, see the
-    /// [`serde`](crate::serde) module of this crate for more information.
+    /// [`serde` module](crate::serde) of this crate for more information.
     ///
     /// # Examples
     /// ```
@@ -64,7 +64,7 @@ pub trait ValueWriter<J: JsonWriter> {
     ///     text: "some text".to_owned(),
     ///     number: 5,
     /// };
-    /// json_writer.serialize_value(&value)?;
+    /// json_writer.write_serialize(&value)?;
     ///
     /// let json = String::from_utf8(writer)?;
     /// assert_eq!(
@@ -74,7 +74,7 @@ pub trait ValueWriter<J: JsonWriter> {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[cfg(feature = "serde")]
-    fn serialize_value<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>>;
+    fn write_serialize<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>>;
 
     /// Writes a JSON array
     ///
@@ -83,9 +83,9 @@ pub trait ValueWriter<J: JsonWriter> {
     /// # use struson::writer::simple::*;
     /// let mut writer = Vec::<u8>::new();
     /// let json_writer = SimpleJsonWriter::new(&mut writer);
-    /// json_writer.array_value(|array_writer| {
-    ///     array_writer.number_value(1)?;
-    ///     array_writer.bool_value(true)?;
+    /// json_writer.write_array(|array_writer| {
+    ///     array_writer.write_number(1)?;
+    ///     array_writer.write_bool(true)?;
     ///     Ok(())
     /// })?;
     ///
@@ -93,7 +93,7 @@ pub trait ValueWriter<J: JsonWriter> {
     /// assert_eq!(json, "[1,true]");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn array_value(
+    fn write_array(
         self,
         f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
@@ -105,9 +105,9 @@ pub trait ValueWriter<J: JsonWriter> {
     /// # use struson::writer::simple::*;
     /// let mut writer = Vec::<u8>::new();
     /// let json_writer = SimpleJsonWriter::new(&mut writer);
-    /// json_writer.object_value(|object_writer| {
-    ///     object_writer.number_member("a", 1)?;
-    ///     object_writer.bool_member("b", true)?;
+    /// json_writer.write_object(|object_writer| {
+    ///     object_writer.write_number_member("a", 1)?;
+    ///     object_writer.write_bool_member("b", true)?;
     ///     Ok(())
     /// })?;
     ///
@@ -115,7 +115,7 @@ pub trait ValueWriter<J: JsonWriter> {
     /// assert_eq!(json, r#"{"a":1,"b":true}"#);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn object_value(
+    fn write_object(
         self,
         f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
@@ -160,9 +160,9 @@ fn write_object<J: JsonWriter>(
 /// // normally they would be written to a file or network connection
 /// let mut writer = Vec::<u8>::new();
 /// let json_writer = SimpleJsonWriter::new(&mut writer);
-/// json_writer.object_value(|object_writer| {
-///     object_writer.number_member("a", 1)?;
-///     object_writer.bool_member("b", true)?;
+/// json_writer.write_object(|object_writer| {
+///     object_writer.write_number_member("a", 1)?;
+///     object_writer.write_bool_member("b", true)?;
 ///     Ok(())
 /// })?;
 ///
@@ -214,40 +214,40 @@ impl<W: Write> SimpleJsonWriter<JsonStreamWriter<W>> {
 // These methods all call `json_writer.finish_document()` because `SimpleJsonWriter`
 // is intended to be used for top-level value
 impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
-    fn null_value(mut self) -> Result<(), IoError> {
+    fn write_null(mut self) -> Result<(), IoError> {
         self.json_writer.null_value()?;
         self.json_writer.finish_document()
     }
 
-    fn bool_value(mut self, value: bool) -> Result<(), IoError> {
+    fn write_bool(mut self, value: bool) -> Result<(), IoError> {
         self.json_writer.bool_value(value)?;
         self.json_writer.finish_document()
     }
 
-    fn string_value(mut self, value: &str) -> Result<(), IoError> {
+    fn write_string(mut self, value: &str) -> Result<(), IoError> {
         self.json_writer.string_value(value)?;
         self.json_writer.finish_document()
     }
 
-    fn number_value<N: FiniteNumber>(mut self, value: N) -> Result<(), IoError> {
+    fn write_number<N: FiniteNumber>(mut self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)?;
         self.json_writer.finish_document()
     }
 
-    fn fp_number_value<N: FloatingPointNumber>(mut self, value: N) -> Result<(), Box<dyn Error>> {
+    fn write_fp_number<N: FloatingPointNumber>(mut self, value: N) -> Result<(), Box<dyn Error>> {
         self.json_writer.fp_number_value(value)?;
         self.json_writer.finish_document()?;
         Ok(())
     }
 
-    fn number_string_value(mut self, value: &str) -> Result<(), Box<dyn Error>> {
+    fn write_number_string(mut self, value: &str) -> Result<(), Box<dyn Error>> {
         self.json_writer.number_value_from_string(value)?;
         self.json_writer.finish_document()?;
         Ok(())
     }
 
     #[cfg(feature = "serde")]
-    fn serialize_value<S: serde::ser::Serialize>(
+    fn write_serialize<S: serde::ser::Serialize>(
         mut self,
         value: &S,
     ) -> Result<(), Box<dyn Error>> {
@@ -256,7 +256,7 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
         Ok(())
     }
 
-    fn array_value(
+    fn write_array(
         mut self,
         f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -265,7 +265,7 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
         Ok(())
     }
 
-    fn object_value(
+    fn write_object(
         mut self,
         f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -281,46 +281,46 @@ pub struct ArrayWriter<'a, J: JsonWriter> {
 }
 // Implement for `&mut ArrayWriter` to allow writing multiple values instead of just one
 impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
-    fn null_value(self) -> Result<(), IoError> {
+    fn write_null(self) -> Result<(), IoError> {
         self.json_writer.null_value()
     }
 
-    fn bool_value(self, value: bool) -> Result<(), IoError> {
+    fn write_bool(self, value: bool) -> Result<(), IoError> {
         self.json_writer.bool_value(value)
     }
 
-    fn string_value(self, value: &str) -> Result<(), IoError> {
+    fn write_string(self, value: &str) -> Result<(), IoError> {
         self.json_writer.string_value(value)
     }
 
-    fn number_value<N: FiniteNumber>(self, value: N) -> Result<(), IoError> {
+    fn write_number<N: FiniteNumber>(self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)
     }
 
-    fn fp_number_value<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>> {
+    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>> {
         self.json_writer.fp_number_value(value)?;
         Ok(())
     }
 
-    fn number_string_value(self, value: &str) -> Result<(), Box<dyn Error>> {
+    fn write_number_string(self, value: &str) -> Result<(), Box<dyn Error>> {
         self.json_writer.number_value_from_string(value)?;
         Ok(())
     }
 
     #[cfg(feature = "serde")]
-    fn serialize_value<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>> {
+    fn write_serialize<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>> {
         self.json_writer.serialize_value(value)?;
         Ok(())
     }
 
-    fn array_value(
+    fn write_array(
         self,
         f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         write_array(self.json_writer, f)
     }
 
-    fn object_value(
+    fn write_object(
         self,
         f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
@@ -337,31 +337,38 @@ pub struct ObjectWriter<'a, J: JsonWriter> {
 }
 impl<J: JsonWriter> ObjectWriter<'_, J> {
     /// Writes a member with JSON null as value
-    pub fn null_member(&mut self, name: &str) -> Result<(), IoError> {
+    pub fn write_null_member(&mut self, name: &str) -> Result<(), IoError> {
         self.json_writer.name(name)?;
         self.json_writer.null_value()
     }
 
     /// Writes a member with a JSON boolean as value
-    pub fn bool_member(&mut self, name: &str, value: bool) -> Result<(), IoError> {
+    pub fn write_bool_member(&mut self, name: &str, value: bool) -> Result<(), IoError> {
         self.json_writer.name(name)?;
         self.json_writer.bool_value(value)
     }
 
     /// Writes a member with a JSON string as value
-    pub fn string_member(&mut self, name: &str, value: &str) -> Result<(), IoError> {
+    pub fn write_string_member(&mut self, name: &str, value: &str) -> Result<(), IoError> {
         self.json_writer.name(name)?;
         self.json_writer.string_value(value)
     }
 
     /// Writes a member with a JSON number as value
-    pub fn number_member<N: FiniteNumber>(&mut self, name: &str, value: N) -> Result<(), IoError> {
+    pub fn write_number_member<N: FiniteNumber>(
+        &mut self,
+        name: &str,
+        value: N,
+    ) -> Result<(), IoError> {
         self.json_writer.name(name)?;
         self.json_writer.number_value(value)
     }
 
     /// Writes a member with a floating point JSON number as value
-    pub fn fp_number_member<N: FloatingPointNumber>(
+    ///
+    /// Returns an error if the number is non-finite and therefore cannot be written
+    /// as JSON number value.
+    pub fn write_fp_number_member<N: FloatingPointNumber>(
         &mut self,
         name: &str,
         value: N,
@@ -371,7 +378,13 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     }
 
     /// Writes a member with the string representation of a JSON number as value
-    pub fn number_string_member(&mut self, name: &str, value: &str) -> Result<(), JsonNumberError> {
+    ///
+    /// Returns an error if the string is not a valid JSON number value.
+    pub fn write_number_string_member(
+        &mut self,
+        name: &str,
+        value: &str,
+    ) -> Result<(), JsonNumberError> {
         self.json_writer.name(name)?;
         self.json_writer.number_value_from_string(value)
     }
@@ -379,13 +392,13 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     /// Writes a member with a Serde [`Serialize`](serde::ser::Serialize) as value
     ///
     /// This method is part of the optional Serde integration feature, see the
-    /// [`serde`](crate::serde) module of this crate for more information.
+    /// [`serde` module](crate::serde) of this crate for more information.
     /*
      * This is called 'serialize*d*' because 'serialize_member' might be a bit misleading since
      * it is not serializing the whole member but only the member value
      */
     #[cfg(feature = "serde")]
-    pub fn serialized_member<S: serde::ser::Serialize>(
+    pub fn write_serialized_member<S: serde::ser::Serialize>(
         &mut self,
         name: &str,
         value: &S,
@@ -395,7 +408,7 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     }
 
     /// Writes a member with a JSON array as value
-    pub fn array_member(
+    pub fn write_array_member(
         &mut self,
         name: &str,
         f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
@@ -405,7 +418,7 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     }
 
     /// Writes a member with a JSON object as value
-    pub fn object_member(
+    pub fn write_object_member(
         &mut self,
         name: &str,
         f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,

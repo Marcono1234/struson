@@ -1,3 +1,5 @@
+//! Tests for [`struson::reader::simple`]
+
 #![cfg(feature = "experimental")]
 #![cfg(feature = "serde")]
 
@@ -18,26 +20,26 @@ fn new_reader(json: &str) -> SimpleJsonReader<JsonStreamReader<&[u8]>> {
 #[test]
 fn read() -> Result<(), Box<dyn Error>> {
     let mut json_reader = new_reader("null");
-    assert_eq!(ValueType::Null, json_reader.peek()?);
-    json_reader.next_null()?;
+    assert_eq!(ValueType::Null, json_reader.peek_value()?);
+    json_reader.read_null()?;
 
     let json_reader = new_reader("true");
-    assert_eq!(true, json_reader.next_bool()?);
+    assert_eq!(true, json_reader.read_bool()?);
 
     let json_reader = new_reader("\"test\"");
-    assert_eq!("test", json_reader.next_string()?);
+    assert_eq!("test", json_reader.read_string()?);
 
     let json_reader = new_reader("1");
-    assert_eq!(1_u64, json_reader.next_number()??);
+    assert_eq!(1_u64, json_reader.read_number()??);
 
     let json_reader = new_reader("2.3");
-    assert_eq!(2.3_f64, json_reader.next_number()??);
+    assert_eq!(2.3_f64, json_reader.read_number()??);
 
     let json_reader = new_reader("4.5e6");
-    assert_eq!("4.5e6", json_reader.next_number_as_string()?);
+    assert_eq!("4.5e6", json_reader.read_number_as_string()?);
 
     let json_reader = new_reader("\"serde\"");
-    assert_eq!("serde", json_reader.deserialize_next::<String>()?);
+    assert_eq!("serde", json_reader.read_deserialize::<String>()?);
 
     Ok(())
 }
@@ -63,32 +65,32 @@ fn read_array() -> Result<(), Box<dyn Error>> {
 
     // Verify that result of closure is returned by method (value is arbitrary)
     let expected_return_value = 3;
-    let return_value = json_reader.next_array(|mut array_reader| {
+    let return_value = json_reader.read_array(|mut array_reader| {
         assert!(array_reader.has_next()?);
-        assert_eq!(ValueType::Null, array_reader.peek()?);
+        assert_eq!(ValueType::Null, array_reader.peek_value()?);
 
-        array_reader.next_null()?;
-        assert_eq!(true, array_reader.next_bool()?);
-        assert_eq!("test", array_reader.next_string()?);
-        assert_eq!(1_u64, array_reader.next_number()??);
-        assert_eq!(2.3_f64, array_reader.next_number()??);
-        assert_eq!("4.5e6", array_reader.next_number_as_string()?);
-        assert_eq!("serde", array_reader.deserialize_next::<String>()?);
+        array_reader.read_null()?;
+        assert_eq!(true, array_reader.read_bool()?);
+        assert_eq!("test", array_reader.read_string()?);
+        assert_eq!(1_u64, array_reader.read_number()??);
+        assert_eq!(2.3_f64, array_reader.read_number()??);
+        assert_eq!("4.5e6", array_reader.read_number_as_string()?);
+        assert_eq!("serde", array_reader.read_deserialize::<String>()?);
 
-        array_reader.next_array(|array_reader| {
-            assert_eq!(false, array_reader.next_bool()?);
+        array_reader.read_array(|array_reader| {
+            assert_eq!(false, array_reader.read_bool()?);
             Ok(())
         })?;
 
-        array_reader.next_object_borrowed_names(|mut member_reader| {
+        array_reader.read_object_borrowed_names(|mut member_reader| {
             assert_eq!("nested1", member_reader.read_name()?);
-            assert_eq!(true, member_reader.next_bool()?);
+            assert_eq!(true, member_reader.read_bool()?);
             Ok(())
         })?;
 
-        array_reader.next_object_owned_names(|name, value_reader| {
+        array_reader.read_object_owned_names(|name, value_reader| {
             assert_eq!("nested2", name);
-            assert_eq!(true, value_reader.next_bool()?);
+            assert_eq!(true, value_reader.read_bool()?);
             Ok(())
         })?;
 
@@ -104,8 +106,8 @@ fn read_array() -> Result<(), Box<dyn Error>> {
 fn read_array_all() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("[1, 2, 3]");
     let mut values = Vec::<u64>::new();
-    json_reader.next_array_items(|item_reader| {
-        values.push(item_reader.next_number()??);
+    json_reader.read_array_items(|item_reader| {
+        values.push(item_reader.read_number()??);
         Ok(())
     })?;
     assert_eq!(vec![1, 2, 3], values);
@@ -117,9 +119,9 @@ fn read_array_all() -> Result<(), Box<dyn Error>> {
 fn array_item_not_consumed() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("[true, 1, 2, null, [], 3]");
     let mut values = Vec::<u64>::new();
-    json_reader.next_array_items(|mut item_reader| {
-        if item_reader.peek()? == ValueType::Number {
-            let value = item_reader.next_number()??;
+    json_reader.read_array_items(|mut item_reader| {
+        if item_reader.peek_value()? == ValueType::Number {
+            let value = item_reader.read_number()??;
             values.push(value);
         }
         // Ignore other value types; don't consume the value
@@ -150,31 +152,31 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
     );
 
     let mut index = 0;
-    json_reader.next_object_borrowed_names(|mut member_reader| {
+    json_reader.read_object_borrowed_names(|mut member_reader| {
         let expected_name = char::from_u32(('a' as u32) + index).unwrap().to_string();
         let name = member_reader.read_name()?;
         assert_eq!(expected_name, name);
 
         match index {
-            0 => member_reader.next_null()?,
-            1 => assert_eq!(true, member_reader.next_bool()?),
-            2 => assert_eq!("test", member_reader.next_string()?),
-            3 => assert_eq!(1_u64, member_reader.next_number()??),
-            4 => assert_eq!(2.3_f64, member_reader.next_number()??),
-            5 => assert_eq!("4.5e6", member_reader.next_number_as_string()?),
-            6 => assert_eq!("serde", member_reader.deserialize_next::<String>()?),
-            7 => member_reader.next_array(|array_reader| {
-                assert_eq!(false, array_reader.next_bool()?);
+            0 => member_reader.read_null()?,
+            1 => assert_eq!(true, member_reader.read_bool()?),
+            2 => assert_eq!("test", member_reader.read_string()?),
+            3 => assert_eq!(1_u64, member_reader.read_number()??),
+            4 => assert_eq!(2.3_f64, member_reader.read_number()??),
+            5 => assert_eq!("4.5e6", member_reader.read_number_as_string()?),
+            6 => assert_eq!("serde", member_reader.read_deserialize::<String>()?),
+            7 => member_reader.read_array(|array_reader| {
+                assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            8 => member_reader.next_object_borrowed_names(|mut member_reader| {
+            8 => member_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
-                assert_eq!(true, member_reader.next_bool()?);
+                assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => member_reader.next_object_owned_names(|name, value_reader| {
+            9 => member_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
-                assert_eq!(true, value_reader.next_bool()?);
+                assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
             })?,
             _ => panic!("unexpected name '{name}' at index {index}"),
@@ -206,30 +208,30 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
     );
 
     let mut index = 0;
-    json_reader.next_object_owned_names(|name, value_reader| {
+    json_reader.read_object_owned_names(|name, value_reader| {
         let expected_name = char::from_u32(('a' as u32) + index).unwrap().to_string();
         assert_eq!(expected_name, name);
 
         match index {
-            0 => value_reader.next_null()?,
-            1 => assert_eq!(true, value_reader.next_bool()?),
-            2 => assert_eq!("test", value_reader.next_string()?),
-            3 => assert_eq!(1_u64, value_reader.next_number()??),
-            4 => assert_eq!(2.3_f64, value_reader.next_number()??),
-            5 => assert_eq!("4.5e6", value_reader.next_number_as_string()?),
-            6 => assert_eq!("serde", value_reader.deserialize_next::<String>()?),
-            7 => value_reader.next_array(|array_reader| {
-                assert_eq!(false, array_reader.next_bool()?);
+            0 => value_reader.read_null()?,
+            1 => assert_eq!(true, value_reader.read_bool()?),
+            2 => assert_eq!("test", value_reader.read_string()?),
+            3 => assert_eq!(1_u64, value_reader.read_number()??),
+            4 => assert_eq!(2.3_f64, value_reader.read_number()??),
+            5 => assert_eq!("4.5e6", value_reader.read_number_as_string()?),
+            6 => assert_eq!("serde", value_reader.read_deserialize::<String>()?),
+            7 => value_reader.read_array(|array_reader| {
+                assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            8 => value_reader.next_object_borrowed_names(|mut member_reader| {
+            8 => value_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
-                assert_eq!(true, member_reader.next_bool()?);
+                assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => value_reader.next_object_owned_names(|name, value_reader| {
+            9 => value_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
-                assert_eq!(true, value_reader.next_bool()?);
+                assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
             })?,
             _ => panic!("unexpected name '{name}' at index {index}"),
@@ -241,14 +243,14 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Tests the behavior when for [`ValueReader::next_object_borrowed_names`] the name or value
+/// Tests the behavior when for [`ValueReader::read_object_borrowed_names`] the name or value
 /// of an object member value is not explicitly consumed
 #[test]
 fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader(r#"{"a":1, "b": 2, "c": 3, "d": 4}"#);
 
     let mut index = 0;
-    json_reader.next_object_borrowed_names(|mut member_reader| {
+    json_reader.read_object_borrowed_names(|mut member_reader| {
         match index {
             0 => {
                 // Skip both name and value
@@ -256,15 +258,15 @@ fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
             1 => {
                 // Skip name
 
-                assert_eq!("2", member_reader.next_number_as_string()?);
+                assert_eq!("2", member_reader.read_number_as_string()?);
             }
             2 => {
                 // Skip name by peeking at value; and don't consume value
-                assert_eq!(ValueType::Number, member_reader.peek()?);
+                assert_eq!(ValueType::Number, member_reader.peek_value()?);
             }
             _ => {
                 assert_eq!("d", member_reader.read_name()?);
-                assert_eq!("4", member_reader.next_number_as_string()?);
+                assert_eq!("4", member_reader.read_number_as_string()?);
             }
         }
 
@@ -280,7 +282,7 @@ fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
 fn object_borrowed_name_read_twice() {
     let json_reader = new_reader(r#"{"a":1}"#);
     json_reader
-        .next_object_borrowed_names(|mut member_reader| {
+        .read_object_borrowed_names(|mut member_reader| {
             member_reader.read_name()?;
             member_reader.read_name()?;
             Ok(())
@@ -288,7 +290,7 @@ fn object_borrowed_name_read_twice() {
         .unwrap();
 }
 
-/// Tests the behavior when for [`ValueReader::next_object_owned_names`] an object
+/// Tests the behavior when for [`ValueReader::read_object_owned_names`] an object
 /// member value is not explicitly consumed
 #[test]
 fn object_owned_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
@@ -296,17 +298,17 @@ fn object_owned_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
 
     // Verify that closure was called
     let mut seen_last_member = false;
-    json_reader.next_object_owned_names(|name, mut value_reader| {
+    json_reader.read_object_owned_names(|name, mut value_reader| {
         match name.as_str() {
             "a" => {
                 // Does not consume the value
             }
             "b" => {
                 // Peek at value but don't consume it
-                assert_eq!(ValueType::Number, value_reader.peek()?);
+                assert_eq!(ValueType::Number, value_reader.peek_value()?);
             }
             "c" => {
-                assert_eq!("3", value_reader.next_number_as_string()?);
+                assert_eq!("3", value_reader.read_number_as_string()?);
                 seen_last_member = true;
             }
             _ => panic!("unexpected member: {name}"),
@@ -335,14 +337,14 @@ fn seek_to() -> Result<(), Box<dyn Error>> {
     );
 
     json_reader.seek_to(&json_path![2, "b"])?;
-    assert_eq!("2", json_reader.next_number_as_string()?);
+    assert_eq!("2", json_reader.read_number_as_string()?);
     Ok(())
 }
 
 #[test]
 fn skip() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("true");
-    json_reader.skip_next()?;
+    json_reader.skip_value()?;
 
     let json_reader = new_reader(
         r#"
@@ -359,18 +361,18 @@ fn skip() -> Result<(), Box<dyn Error>> {
 
     // Verify that closure was actually called
     let mut found_value = false;
-    json_reader.next_array(|array_reader| {
-        array_reader.skip_next()?;
-        array_reader.next_array_items(|array_reader| {
-            array_reader.skip_next()?;
+    json_reader.read_array(|array_reader| {
+        array_reader.skip_value()?;
+        array_reader.read_array_items(|array_reader| {
+            array_reader.skip_value()?;
             Ok(())
         })?;
 
-        array_reader.next_object_owned_names(|name, value_reader| {
+        array_reader.read_object_owned_names(|name, value_reader| {
             match name.as_str() {
-                "a" => value_reader.skip_next()?,
+                "a" => value_reader.skip_value()?,
                 "b" => {
-                    assert_eq!("4", value_reader.next_number_as_string()?);
+                    assert_eq!("4", value_reader.read_number_as_string()?);
                     found_value = true;
                 }
                 _ => panic!("unexpected name: {name}"),
@@ -394,20 +396,20 @@ fn errors() {
 
     let json_reader = new_reader("?");
     assert_error(
-        json_reader.next_bool().map_err(|e| e.into()),
+        json_reader.read_bool().map_err(|e| e.into()),
         "syntax error: JSON syntax error MalformedJson at path '$', line 0, column 0 (data pos 0)",
     );
 
     let json_reader = new_reader("1");
     assert_error(
-        json_reader.next_bool().map_err(|e| e.into()),
+        json_reader.read_bool().map_err(|e| e.into()),
         "expected JSON value type Boolean but got Number at path '$', line 0, column 0 (data pos 0)"
     );
 
     let json_reader = new_reader("[]");
     assert_error(
-        json_reader.next_array(|array_reader| {
-            array_reader.next_bool()?;
+        json_reader.read_array(|array_reader| {
+            array_reader.read_bool()?;
             Ok(())
         }),
         "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
@@ -428,79 +430,79 @@ fn closure_error_propagation() {
         }
     }
 
-    // --- next_array ---
+    // --- read_array ---
     let json_reader = new_reader("[");
-    assert_error(json_reader.next_array(|_| Err(message.into())));
+    assert_error(json_reader.read_array(|_| Err(message.into())));
 
     let json_reader = new_reader("[[");
     assert_error(
-        json_reader.next_array(|array_reader| array_reader.next_array(|_| Err(message.into()))),
+        json_reader.read_array(|array_reader| array_reader.read_array(|_| Err(message.into()))),
     );
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(json_reader.next_array(|array_reader| {
-        array_reader.next_object_borrowed_names(|_| Err(message.into()))
+    assert_error(json_reader.read_array(|array_reader| {
+        array_reader.read_object_borrowed_names(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(json_reader.next_array(|array_reader| {
-        array_reader.next_object_owned_names(|_, _| Err(message.into()))
+    assert_error(json_reader.read_array(|array_reader| {
+        array_reader.read_object_owned_names(|_, _| Err(message.into()))
     }));
 
-    // --- next_array_items ---
+    // --- read_array_items ---
     let json_reader = new_reader("[1");
-    assert_error(json_reader.next_array_items(|_| Err(message.into())));
+    assert_error(json_reader.read_array_items(|_| Err(message.into())));
 
     let json_reader = new_reader("[[1");
     assert_error(
-        json_reader.next_array_items(|item_reader| item_reader.next_array(|_| Err(message.into()))),
+        json_reader.read_array_items(|item_reader| item_reader.read_array(|_| Err(message.into()))),
     );
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(json_reader.next_array_items(|item_reader| {
-        item_reader.next_object_borrowed_names(|_| Err(message.into()))
+    assert_error(json_reader.read_array_items(|item_reader| {
+        item_reader.read_object_borrowed_names(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("[{\"a\": 1");
-    assert_error(json_reader.next_array_items(|item_reader| {
-        item_reader.next_object_owned_names(|_, _| Err(message.into()))
+    assert_error(json_reader.read_array_items(|item_reader| {
+        item_reader.read_object_owned_names(|_, _| Err(message.into()))
     }));
 
-    // --- next_object_borrowed_names ---
+    // --- read_object_borrowed_names ---
     let json_reader = new_reader("{\"a\": 1");
-    assert_error(json_reader.next_object_borrowed_names(|_| Err(message.into())));
+    assert_error(json_reader.read_object_borrowed_names(|_| Err(message.into())));
 
     let json_reader = new_reader("{\"a\": [");
-    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
-        member_reader.next_array(|_| Err(message.into()))
+    assert_error(json_reader.read_object_borrowed_names(|member_reader| {
+        member_reader.read_array(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("{\"a\": {\"b\": 1");
-    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
-        member_reader.next_object_borrowed_names(|_| Err(message.into()))
+    assert_error(json_reader.read_object_borrowed_names(|member_reader| {
+        member_reader.read_object_borrowed_names(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("{\"a\": {\"b\": 1");
-    assert_error(json_reader.next_object_borrowed_names(|member_reader| {
-        member_reader.next_object_owned_names(|_, _| Err(message.into()))
+    assert_error(json_reader.read_object_borrowed_names(|member_reader| {
+        member_reader.read_object_owned_names(|_, _| Err(message.into()))
     }));
 
-    // --- next_object_owned_names ---
+    // --- read_object_owned_names ---
     let json_reader = new_reader("{\"a\": 1");
-    assert_error(json_reader.next_object_owned_names(|_, _| Err(message.into())));
+    assert_error(json_reader.read_object_owned_names(|_, _| Err(message.into())));
 
     let json_reader = new_reader("{\"a\": [");
-    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
-        value_reader.next_array(|_| Err(message.into()))
+    assert_error(json_reader.read_object_owned_names(|_name, value_reader| {
+        value_reader.read_array(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("{\"a\": {\"b\": 1");
-    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
-        value_reader.next_object_borrowed_names(|_| Err(message.into()))
+    assert_error(json_reader.read_object_owned_names(|_name, value_reader| {
+        value_reader.read_object_borrowed_names(|_| Err(message.into()))
     }));
 
     let json_reader = new_reader("{\"a\": {\"b\": 1");
-    assert_error(json_reader.next_object_owned_names(|_name, value_reader| {
-        value_reader.next_object_owned_names(|_, _| Err(message.into()))
+    assert_error(json_reader.read_object_owned_names(|_name, value_reader| {
+        value_reader.read_object_owned_names(|_, _| Err(message.into()))
     }));
 }

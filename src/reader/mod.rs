@@ -1436,7 +1436,7 @@ pub trait JsonReader {
     /// Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value
     ///
     /// This method is part of the optional Serde integration feature, see the
-    /// [`serde`](crate::serde) module of this crate for more information.
+    /// [`serde` module](crate::serde) of this crate for more information.
     ///
     /// If it is not possible to directly deserialize a value in place, instead of using
     /// this method a [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer)
