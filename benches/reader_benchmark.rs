@@ -5,7 +5,7 @@ use serde::{de::Visitor, Deserializer};
 use serde_json::de::{IoRead, Read, StrRead};
 use struson::reader::*;
 
-fn call_unwrap<F: Fn() -> Result<(), Box<dyn Error>>>(f: F) {
+fn call_unwrap<F: FnOnce() -> Result<(), Box<dyn Error>>>(f: F) {
     f().unwrap();
 }
 
@@ -255,7 +255,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         }
     }
 
-    fn serde_read<'a, R: Read<'a>, F: Fn(&mut serde_json::de::Deserializer<R>)>(
+    fn serde_read<'a, R: Read<'a>, F: FnOnce(&mut serde_json::de::Deserializer<R>)>(
         read: R,
         read_function: F,
     ) {

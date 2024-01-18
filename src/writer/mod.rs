@@ -629,7 +629,7 @@ pub trait FiniteNumber: private::Sealed {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
-    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
     ) -> Result<(), IoError>;
@@ -664,7 +664,7 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The JSON number string is passed to the given `consumer`.
     /// Returns an error if this number is not a valid JSON number, for example
     /// because it is NaN or Infinity.
-    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
     ) -> Result<(), JsonNumberError>;
@@ -710,9 +710,9 @@ pub enum JsonNumberError {
 #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
 impl FiniteNumber for type_template {
     #[inline(always)]
-    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
-        mut consumer: C,
+        consumer: C,
     ) -> Result<(), IoError> {
         // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
         let string = self.to_string();
@@ -739,9 +739,9 @@ impl FiniteNumber for type_template {
 #[duplicate_item(type_template; [f32]; [f64])]
 impl FloatingPointNumber for type_template {
     #[inline(always)]
-    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
-        mut consumer: C,
+        consumer: C,
     ) -> Result<(), JsonNumberError> {
         if self.is_finite() {
             // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
@@ -772,9 +772,9 @@ impl FloatingPointNumber for type_template {
 pub(crate) struct TransferredNumber<'a>(pub &'a str);
 impl private::Sealed for TransferredNumber<'_> {}
 impl FiniteNumber for TransferredNumber<'_> {
-    fn use_json_number<C: FnMut(&str) -> Result<(), IoError>>(
+    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
-        mut consumer: C,
+        consumer: C,
     ) -> Result<(), IoError> {
         consumer(self.0)
     }

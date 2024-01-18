@@ -1098,7 +1098,7 @@ mod tests {
     use crate::writer::{JsonStreamWriter, JsonWriter};
 
     fn assert_serialized<
-        F: Fn(
+        F: FnOnce(
             &mut JsonWriterSerializer<JsonStreamWriter<&mut Vec<u8>>>,
         ) -> Result<(), SerializerError>,
     >(
@@ -1118,7 +1118,7 @@ mod tests {
     }
 
     fn assert_serialized_serde_json<
-        F: Fn(&mut serde_json::Serializer<&mut Vec<u8>>) -> Result<(), serde_json::Error>,
+        F: FnOnce(&mut serde_json::Serializer<&mut Vec<u8>>) -> Result<(), serde_json::Error>,
     >(
         serializing_function: F,
         expected_json: &str,
@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     fn assert_number_error<
-        F: Fn(
+        F: FnOnce(
             &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
     >(
@@ -1194,10 +1194,10 @@ mod tests {
     ///   anything yet.
     /// - `F2` should claim to serialize 0 elements but actually try to serialize an element.
     fn assert_elements_count_error<
-        F1: Fn(
+        F1: FnOnce(
             &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
-        F2: Fn(
+        F2: FnOnce(
             &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
     >(
@@ -1205,7 +1205,7 @@ mod tests {
         serialize_one: F2,
     ) {
         fn assert_result<
-            F: Fn(
+            F: FnOnce(
                 &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
             ) -> Result<(), SerializerError>,
         >(
@@ -1573,7 +1573,7 @@ mod tests {
         }
 
         fn use_map_serializer<
-            F: Fn(
+            F: FnOnce(
                 crate::serde::ser::SerializeMap<'_, '_, JsonStreamWriter<std::io::Sink>>,
             ) -> Result<(), SerializerError>,
         >(

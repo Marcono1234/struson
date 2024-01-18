@@ -1320,7 +1320,7 @@ mod tests {
     }
 
     fn assert_deserialized_enum<
-        F: Fn(
+        F: FnOnce(
             &mut JsonReaderDeserializer<'_, JsonStreamReader<&[u8]>>,
             &mut TrackingVisitor,
         ) -> Result<(), DeserializerError>,
@@ -1368,7 +1368,7 @@ mod tests {
     }
 
     fn assert_deserialized_enum_serde_json<
-        F: Fn(
+        F: FnOnce(
             &mut serde_json::Deserializer<StrRead<'_>>,
             &mut TrackingVisitor,
         ) -> Result<(), serde_json::Error>,
