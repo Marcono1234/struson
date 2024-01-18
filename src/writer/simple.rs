@@ -276,6 +276,8 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
 }
 
 /// Writer for JSON array items
+///
+/// This struct is used by [`ValueWriter::write_array`].
 pub struct ArrayWriter<'a, J: JsonWriter> {
     json_writer: &'a mut J,
 }
@@ -330,8 +332,11 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
 
 /// Writer for JSON object members
 ///
-/// Each method writes a JSON object member in the form of name-value pair.
-/// For example the member `"a": 1` consists of the name "a" and the value 1.
+/// Each method writes a JSON object member in the form of a name-value pair.
+/// For example the member `"a": 1` consists of the name "a" and the value 1,
+/// which can be written using [`write_number_member`](Self::write_number_member).
+///
+/// This struct is used by [`ValueWriter::write_object`].
 pub struct ObjectWriter<'a, J: JsonWriter> {
     json_writer: &'a mut J,
 }

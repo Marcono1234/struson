@@ -521,6 +521,8 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
 }
 
 /// Reader for an arbitrary amount of JSON array items
+///
+/// This struct is used by [`ValueReader::read_array`].
 pub struct ArrayReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
 }
@@ -608,6 +610,8 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
 }
 
 /// Reader for a single JSON array item
+///
+/// This struct is used by [`ValueReader::read_array_items`].
 pub struct ArrayItemReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_item: Rc<Cell<bool>>,
