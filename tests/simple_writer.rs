@@ -16,8 +16,8 @@ use struson::writer::{
 
 #[test]
 fn write() {
-    fn assert_written(
-        f: impl FnOnce(SimpleJsonWriter<JsonStreamWriter<&mut Vec<u8>>>) -> Result<(), Box<dyn Error>>,
+    fn assert_written<E: Debug>(
+        f: impl FnOnce(SimpleJsonWriter<JsonStreamWriter<&mut Vec<u8>>>) -> Result<(), E>,
         expected_json: &str,
     ) {
         let mut writer = Vec::new();
@@ -28,10 +28,10 @@ fn write() {
         assert_eq!(expected_json, json);
     }
 
-    assert_written(|j| j.write_null().map_err(|e| e.into()), "null");
-    assert_written(|j| j.write_bool(true).map_err(|e| e.into()), "true");
-    assert_written(|j| j.write_string("test").map_err(|e| e.into()), "\"test\"");
-    assert_written(|j| j.write_number(1_u64).map_err(|e| e.into()), "1");
+    assert_written(|j| j.write_null(), "null");
+    assert_written(|j| j.write_bool(true), "true");
+    assert_written(|j| j.write_string("test"), "\"test\"");
+    assert_written(|j| j.write_number(1_u64), "1");
     assert_written(|j| j.write_fp_number(2.3_f64), "2.3");
     assert_written(|j| j.write_number_string("4.5e6"), "4.5e6");
     assert_written(|j| j.write_serialize(&"serde"), "\"serde\"");
@@ -59,7 +59,7 @@ fn write() {
 
                 Ok(())
             })?;
-            Ok(())
+            Ok::<(), Box<dyn Error>>(())
         },
         "[null,true,\"test\",1,2.3,4.5e6,\"serde\",[false],{\"a\":false}]",
     );
@@ -87,7 +87,7 @@ fn write() {
 
                 Ok(())
             })?;
-            Ok(())
+            Ok::<(), Box<dyn Error>>(())
         },
         r#"{"a":null,"b":true,"c":"test","d":1,"e":2.3,"f":4.5e6,"g":"serde","h":[false],"i":{"nested":true}}"#,
     );

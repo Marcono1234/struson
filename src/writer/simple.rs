@@ -35,12 +35,12 @@ pub trait ValueWriter<J: JsonWriter> {
     ///
     /// Returns an error if the number is non-finite and therefore cannot be written
     /// as JSON number value.
-    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>>;
+    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), JsonNumberError>;
 
     /// Writes the string representation of a JSON number value
     ///
     /// Returns an error if the string is not a valid JSON number value.
-    fn write_number_string(self, value: &str) -> Result<(), Box<dyn Error>>;
+    fn write_number_string(self, value: &str) -> Result<(), JsonNumberError>;
 
     /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
     ///
@@ -74,7 +74,10 @@ pub trait ValueWriter<J: JsonWriter> {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>>;
+    fn write_serialize<S: serde::ser::Serialize>(
+        self,
+        value: &S,
+    ) -> Result<(), crate::serde::SerializerError>;
 
     /// Writes a JSON array
     ///
@@ -235,14 +238,18 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
         self.json_writer.finish_document()
     }
 
-    fn write_fp_number<N: FloatingPointNumber>(mut self, value: N) -> Result<(), Box<dyn Error>> {
+    fn write_fp_number<N: FloatingPointNumber>(mut self, value: N) -> Result<(), JsonNumberError> {
         self.json_writer.fp_number_value(value)?;
+        // Using `?` here is a bit misleading since that will wrap an IO error from `finish_document()`
+        // in a `JsonNumberError`, but that is probably acceptable
         self.json_writer.finish_document()?;
         Ok(())
     }
 
-    fn write_number_string(mut self, value: &str) -> Result<(), Box<dyn Error>> {
+    fn write_number_string(mut self, value: &str) -> Result<(), JsonNumberError> {
         self.json_writer.number_value_from_string(value)?;
+        // Using `?` here is a bit misleading since that will wrap an IO error from `finish_document()`
+        // in a `JsonNumberError`, but that is probably acceptable
         self.json_writer.finish_document()?;
         Ok(())
     }
@@ -251,8 +258,10 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
     fn write_serialize<S: serde::ser::Serialize>(
         mut self,
         value: &S,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), crate::serde::SerializerError> {
         self.json_writer.serialize_value(value)?;
+        // Using `?` here is a bit misleading since that will wrap an IO error from `finish_document()`
+        // in a `SerializerError`, but that is probably acceptable
         self.json_writer.finish_document()?;
         Ok(())
     }
@@ -301,18 +310,21 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
         self.json_writer.number_value(value)
     }
 
-    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), Box<dyn Error>> {
+    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), JsonNumberError> {
         self.json_writer.fp_number_value(value)?;
         Ok(())
     }
 
-    fn write_number_string(self, value: &str) -> Result<(), Box<dyn Error>> {
+    fn write_number_string(self, value: &str) -> Result<(), JsonNumberError> {
         self.json_writer.number_value_from_string(value)?;
         Ok(())
     }
 
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(self, value: &S) -> Result<(), Box<dyn Error>> {
+    fn write_serialize<S: serde::ser::Serialize>(
+        self,
+        value: &S,
+    ) -> Result<(), crate::serde::SerializerError> {
         self.json_writer.serialize_value(value)?;
         Ok(())
     }
