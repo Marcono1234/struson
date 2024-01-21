@@ -341,6 +341,7 @@ fn read_object_owned_names<J: JsonReader>(
 /// assert_eq!(words, vec!["a", "short", "example"]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[derive(Debug)]
 pub struct SimpleJsonReader<J: JsonReader> {
     json_reader: J,
     /// Whether [`seek_to`] has been used
@@ -523,6 +524,7 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
 /// Reader for an arbitrary amount of JSON array items
 ///
 /// This struct is used by [`ValueReader::read_array`].
+#[derive(Debug)]
 pub struct ArrayReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
 }
@@ -612,6 +614,7 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
 /// Reader for a single JSON array item
 ///
 /// This struct is used by [`ValueReader::read_array_items`].
+#[derive(Debug)]
 pub struct ArrayItemReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_item: Rc<Cell<bool>>,
@@ -690,6 +693,7 @@ impl<J: JsonReader> ValueReader<J> for ArrayItemReader<'_, J> {
 /// the member value can be read using one of the [`ValueReader`] methods.
 ///
 /// This struct is used by [`ValueReader::read_object_borrowed_names`].
+#[derive(Debug)]
 pub struct MemberReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_name: Rc<Cell<bool>>,
@@ -820,6 +824,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
 /// That is, for a JSON object `{"a": 1}`, this reader can be used to read the value `1`.
 ///
 /// This struct is used by [`ValueReader::read_object_owned_names`].
+#[derive(Debug)]
 pub struct MemberValueReader<'a, J: JsonReader> {
     json_reader: &'a mut J,
     consumed_value: Rc<Cell<bool>>,
