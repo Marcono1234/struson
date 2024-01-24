@@ -9,7 +9,7 @@ use struson::{
     json_path,
     reader::{
         simple::{SimpleJsonReader, ValueReader},
-        JsonStreamReader, ValueType,
+        JsonStreamReader, JsonSyntaxError, ReaderError, SyntaxErrorKind, ValueType,
     },
 };
 
@@ -42,6 +42,19 @@ fn read() -> Result<(), Box<dyn Error>> {
     assert_eq!("serde", json_reader.read_deserialize::<String>()?);
 
     Ok(())
+}
+
+/// Reading top-level value should also verify that there is no trailing data
+#[test]
+fn read_trailing_data() {
+    let json_reader = new_reader("true 1");
+    match json_reader.read_bool() {
+        Err(ReaderError::SyntaxError(JsonSyntaxError {
+            kind: SyntaxErrorKind::TrailingData,
+            ..
+        })) => {}
+        r => panic!("unexpected result: {r:?}"),
+    }
 }
 
 #[test]
@@ -106,8 +119,14 @@ fn read_array() -> Result<(), Box<dyn Error>> {
 fn read_array_all() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("[1, 2, 3]");
     let mut values = Vec::<u64>::new();
-    json_reader.read_array_items(|item_reader| {
+    let mut index = 0;
+    json_reader.read_array_items(|mut item_reader| {
+        if index == 1 {
+            // Should also work properly when peeking before reading
+            assert_eq!(ValueType::Number, item_reader.peek_value()?);
+        }
         values.push(item_reader.read_number()??);
+        index += 1;
         Ok(())
     })?;
     assert_eq!(vec![1, 2, 3], values);
@@ -159,7 +178,10 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
 
         match index {
             0 => member_reader.read_null()?,
-            1 => assert_eq!(true, member_reader.read_bool()?),
+            1 => {
+                assert_eq!(ValueType::Boolean, member_reader.peek_value()?);
+                assert_eq!(true, member_reader.read_bool()?);
+            }
             2 => assert_eq!("test", member_reader.read_string()?),
             3 => assert_eq!(1_u64, member_reader.read_number()??),
             4 => assert_eq!(2.3_f64, member_reader.read_number()??),
@@ -208,13 +230,16 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
     );
 
     let mut index = 0;
-    json_reader.read_object_owned_names(|name, value_reader| {
+    json_reader.read_object_owned_names(|name, mut value_reader| {
         let expected_name = char::from_u32(('a' as u32) + index).unwrap().to_string();
         assert_eq!(expected_name, name);
 
         match index {
             0 => value_reader.read_null()?,
-            1 => assert_eq!(true, value_reader.read_bool()?),
+            1 => {
+                assert_eq!(ValueType::Boolean, value_reader.peek_value()?);
+                assert_eq!(true, value_reader.read_bool()?);
+            }
             2 => assert_eq!("test", value_reader.read_string()?),
             3 => assert_eq!(1_u64, value_reader.read_number()??),
             4 => assert_eq!(2.3_f64, value_reader.read_number()??),
@@ -247,7 +272,7 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
 /// of an object member value is not explicitly consumed
 #[test]
 fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
-    let json_reader = new_reader(r#"{"a":1, "b": 2, "c": 3, "d": 4}"#);
+    let json_reader = new_reader(r#"{"a":1, "b": 2, "c": 3, "d": 4, "e": 5}"#);
 
     let mut index = 0;
     json_reader.read_object_borrowed_names(|mut member_reader| {
@@ -264,16 +289,22 @@ fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
                 // Skip name by peeking at value; and don't consume value
                 assert_eq!(ValueType::Number, member_reader.peek_value()?);
             }
-            _ => {
-                assert_eq!("d", member_reader.read_name()?);
+            3 => {
+                // Peeking twice and then reading should only try to skip name once
+                assert_eq!(ValueType::Number, member_reader.peek_value()?);
+                assert_eq!(ValueType::Number, member_reader.peek_value()?);
                 assert_eq!("4", member_reader.read_number_as_string()?);
+            }
+            _ => {
+                assert_eq!("e", member_reader.read_name()?);
+                assert_eq!("5", member_reader.read_number_as_string()?);
             }
         }
 
         index += 1;
         Ok(())
     })?;
-    assert_eq!(4, index);
+    assert_eq!(5, index);
     Ok(())
 }
 
@@ -337,6 +368,12 @@ fn seek_to() -> Result<(), Box<dyn Error>> {
     );
 
     json_reader.seek_to(&json_path![2, "b"])?;
+    assert_eq!("2", json_reader.read_number_as_string()?);
+
+    let mut json_reader = new_reader("[1, [2, 3]]");
+    json_reader.seek_to(&json_path![1])?;
+    // Should support seeking multiple times
+    json_reader.seek_to(&json_path![0])?;
     assert_eq!("2", json_reader.read_number_as_string()?);
     Ok(())
 }
