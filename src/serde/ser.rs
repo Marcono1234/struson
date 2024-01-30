@@ -796,18 +796,6 @@ impl<W: JsonWriter> serde::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
         value.serialize(&mut *self.ser)
     }
 
-    fn skip_field(&mut self, _key: &'static str) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-        Ok(())
-    }
-
     fn end(self) -> Result<Self::Ok, Self::Error> {
         if self.len < self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
@@ -848,18 +836,6 @@ impl<W: JsonWriter> serde::ser::SerializeStructVariant for SerializeStructVarian
 
         self.ser.json_writer.name(key)?;
         value.serialize(&mut *self.ser)
-    }
-
-    fn skip_field(&mut self, _key: &'static str) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -1739,7 +1715,7 @@ mod tests {
 
         assert_serialized_cmp!(
             |s| {
-                let mut struc = s.serialize_struct("name", 3)?;
+                let mut struc = s.serialize_struct("name", 2)?;
                 struc.serialize_field("key1", &1)?;
                 struc.skip_field("skipped")?;
                 struc.serialize_field("key2", &2)?;
@@ -1781,7 +1757,7 @@ mod tests {
 
         assert_serialized_cmp!(
             |s| {
-                let mut struc = s.serialize_struct_variant("name", 1, "variant", 3)?;
+                let mut struc = s.serialize_struct_variant("name", 1, "variant", 2)?;
                 struc.serialize_field("key1", &1)?;
                 struc.skip_field("skipped")?;
                 struc.serialize_field("key2", &2)?;

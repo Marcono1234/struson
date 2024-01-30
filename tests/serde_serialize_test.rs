@@ -145,3 +145,40 @@ fn serialize_unit_variant() {
 
     assert_serialized(E::A, "\"A\"");
 }
+
+#[test]
+fn serialize_skipped_field() {
+    #[derive(Serialize)]
+    struct S {
+        a: u32,
+        #[allow(dead_code)]
+        #[serde(skip)]
+        b: u32,
+    }
+
+    assert_serialized(S { a: 1, b: 2 }, r#"{"a":1}"#);
+}
+
+#[test]
+fn serialize_conditional_skipped_field() {
+    #[derive(Serialize)]
+    struct S {
+        a: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        b: Option<u32>,
+    }
+
+    assert_serialized(S { a: 1, b: Some(2) }, r#"{"a":1,"b":2}"#);
+    assert_serialized(S { a: 1, b: None }, r#"{"a":1}"#);
+
+    #[derive(Serialize)]
+    enum E {
+        S {
+            a: u32,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            b: Option<u32>,
+        },
+    }
+    assert_serialized(E::S { a: 1, b: Some(2) }, r#"{"S":{"a":1,"b":2}}"#);
+    assert_serialized(E::S { a: 1, b: None }, r#"{"S":{"a":1}}"#);
+}
