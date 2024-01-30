@@ -29,30 +29,6 @@ pub enum SerializerError {
     /// The data of this enum variant is a message explaining why the number is not valid.
     #[error("invalid number: {0}")]
     InvalidNumber(String),
-    /// An incorrect number of elements was serialized
-    ///
-    /// This error is created when the claimed expected number of elements or fields passed
-    /// to compound value serialization methods such as `JsonWriterSerializer::serialize_struct`
-    /// does not match the actual number of serialized elements or fields.
-    /*
-     * Note: Arguably could also panic instead, since this is probably in most cases caused
-     * by incorrect usage, but maybe there are also cases where a (untrusted) user can influence
-     * the element count number, so in that case an error instead of a panic would be safer
-     */
-    #[error("incorrect elements count, expected {expected} but got {actual}")]
-    IncorrectElementsCount {
-        /// The expected number of elements
-        ///
-        /// This value is provided when starting a compound value, for example when calling
-        /// `JsonWriterSerializer::serialize_struct`.
-        expected: usize,
-        /// The actual number of serialized elements
-        ///
-        /// When more elements than expected are encountered serialization fails fast. In that
-        /// case the `actual` value will just be `expected + 1` instead of the actual number
-        /// of elements which would have been serialized in total.
-        actual: usize,
-    },
     /// An error which indicates that an unsupported map key was serialized
     ///
     /// This error is created when `JsonWriterSerializer::serialize_map` is used to serialize
@@ -404,49 +380,40 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     ///
     /// This implementation writes a JSON array, where each element written using
     /// [`SerializeSeq::serialize_element`](serde::ser::SerializeSeq::serialize_element)
-    /// is serialized as array item. If `len` is `Some`, serializing a different number
-    /// of elements than `len` will cause a [`SerializerError::IncorrectElementsCount`].
-    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+    /// is serialized as array item.
+    ///
+    /// The `len` argument is ignored.
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         self.json_writer.begin_array()?;
-        Ok(SerializeSeq {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeSeq { ser: self })
     }
 
     /// Begin to serialize a statically sized sequence
     ///
     /// This implementation writes a JSON array, where each element written using
     /// [`SerializeTuple::serialize_element`](serde::ser::SerializeTuple::serialize_element)
-    /// is serialized as array item. Serializing a different number of elements than `len`
-    /// will cause a [`SerializerError::IncorrectElementsCount`].
-    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+    /// is serialized as array item.
+    ///
+    /// The `len` argument is ignored.
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
         self.json_writer.begin_array()?;
-        Ok(SerializeTuple {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeTuple { ser: self })
     }
 
     /// Begin to serialize a tuple struct like `struct Rgb(u8, u8, u8)`
     ///
     /// This implementation writes a JSON array, where each element written using
     /// [`SerializeTupleStruct::serialize_field`](serde::ser::SerializeTupleStruct::serialize_field)
-    /// is serialized as array item. Serializing a different number of fields than `len`
-    /// will cause a [`SerializerError::IncorrectElementsCount`]. The given name is ignored.
+    /// is serialized as array item.
+    ///
+    /// The `name` and `len` arguments are ignored.
     fn serialize_tuple_struct(
         self,
         _name: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
         self.json_writer.begin_array()?;
-        Ok(SerializeTupleStruct {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeTupleStruct { ser: self })
     }
 
     /// Begin to serialize a tuple variant like `E::T` in `enum E { T(u8, u8) }`
@@ -454,24 +421,20 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// This implementation writes a JSON object consisting of a single member whose
     /// name is `variant` and whose value is a JSON array containing all fields serialized
     /// with [`SerializeTupleVariant::serialize_field`](serde::ser::SerializeTupleVariant::serialize_field).
-    /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
-    /// The given name and variant index are ignored.
+    ///
+    /// The `name`, `variant_index` and `len` arguments are ignored.
     fn serialize_tuple_variant(
         self,
         _name: &'static str,
         _variant_index: u32,
         variant: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         // Writes `{ variant: [`
         self.json_writer.begin_object()?;
         self.json_writer.name(variant)?;
         self.json_writer.begin_array()?;
-        Ok(SerializeTupleVariant {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeTupleVariant { ser: self })
     }
 
     /// Begin to serialize a map
@@ -479,11 +442,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// This implementation writes a JSON object where each member consists of the
     /// key-value entry serialized using [`SerializeMap`](serde::ser::SerializeMap).
     ///
-    /// Duplicate keys are not detected or prevented.
-    ///
-    /// # Errors
-    /// If `len` is `Some`, serializing a different number of entries than `len` will
-    /// cause a [`SerializerError::IncorrectElementsCount`].
+    /// The `len` argument is ignored. Duplicate keys are not detected or prevented.
     ///
     /// # Panics
     /// The same number of [`SerializeMap::serialize_key`](serde::ser::SerializeMap::serialize_key)
@@ -491,12 +450,10 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// calls have to be made and for every `serialize_key` call a `serialize_value` call
     /// has to follow, otherwise a panic will occur.
     /* TODO doc key conversion behavior? */
-    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         self.json_writer.begin_object()?;
         Ok(SerializeMap {
             ser: self,
-            expected_len: len,
-            len: 0,
             // Initially entry key is expected
             expects_entry_value: false,
         })
@@ -506,21 +463,16 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     ///
     /// This implementation writes a JSON object where each member consists of the
     /// field name and value serialized by [`SerializeStruct::serialize_field`](serde::ser::SerializeStruct::serialize_field).
-    /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
-    /// The given struct name is ignored.
     ///
-    /// Duplicate field names are not detected or prevented.
+    /// The `name` and `len` arguments are ignored. Duplicate field names are not detected
+    /// or prevented.
     fn serialize_struct(
         self,
         _name: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         self.json_writer.begin_object()?;
-        Ok(SerializeStruct {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeStruct { ser: self })
     }
 
     /// Begin to serialize a struct variant like `E::S` in `enum E { S { r: u8, g: u8, b: u8 } }`
@@ -529,26 +481,20 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// name is `variant` and whose value is a nested JSON object where each member
     /// consists of the field name and value serialized by [`SerializeStructVariant::serialize_field`](serde::ser::SerializeStructVariant::serialize_field).
     ///
-    /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
-    /// The given struct name and variant index are ignored.
-    ///
-    /// Duplicate field names are not detected or prevented.
+    /// The `name`, `variant_index` and `len` arguments are ignored. Duplicate field names are
+    /// not detected or prevented.
     fn serialize_struct_variant(
         self,
         _name: &'static str,
         _variant_index: u32,
         variant: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         // Writes `{ variant: {`
         self.json_writer.begin_object()?;
         self.json_writer.name(variant)?;
         self.json_writer.begin_object()?;
-        Ok(SerializeStructVariant {
-            ser: self,
-            expected_len: len,
-            len: 0,
-        })
+        Ok(SerializeStructVariant { ser: self })
     }
 }
 
@@ -556,8 +502,6 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
 #[derive(Debug)]
 pub struct SerializeSeq<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: Option<usize>,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
@@ -565,28 +509,10 @@ impl<W: JsonWriter> serde::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
     type Error = SerializerError;
 
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        if let Some(expected_len) = self.expected_len {
-            if self.len >= expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    // + 1 for currently added element
-                    actual: self.len + 1,
-                });
-            }
-            self.len += 1;
-        }
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if let Some(expected_len) = self.expected_len {
-            if self.len < expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    actual: self.len,
-                });
-            }
-        }
         self.ser.json_writer.end_array()?;
         Ok(())
     }
@@ -596,8 +522,6 @@ impl<W: JsonWriter> serde::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
 #[derive(Debug)]
 pub struct SerializeTuple<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: usize,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
@@ -605,25 +529,10 @@ impl<W: JsonWriter> serde::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
     type Error = SerializerError;
 
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added element
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                actual: self.len,
-            });
-        }
         self.ser.json_writer.end_array()?;
         Ok(())
     }
@@ -633,8 +542,6 @@ impl<W: JsonWriter> serde::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
 #[derive(Debug)]
 pub struct SerializeTupleStruct<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: usize,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeTupleStruct for SerializeTupleStruct<'_, '_, W> {
@@ -642,25 +549,10 @@ impl<W: JsonWriter> serde::ser::SerializeTupleStruct for SerializeTupleStruct<'_
     type Error = SerializerError;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                actual: self.len,
-            });
-        }
         self.ser.json_writer.end_array()?;
         Ok(())
     }
@@ -670,8 +562,6 @@ impl<W: JsonWriter> serde::ser::SerializeTupleStruct for SerializeTupleStruct<'_
 #[derive(Debug)]
 pub struct SerializeTupleVariant<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: usize,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeTupleVariant for SerializeTupleVariant<'_, '_, W> {
@@ -679,26 +569,10 @@ impl<W: JsonWriter> serde::ser::SerializeTupleVariant for SerializeTupleVariant<
     type Error = SerializerError;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                actual: self.len,
-            });
-        }
-
         // Matches serialize_tuple_variant
         self.ser.json_writer.end_array()?;
         self.ser.json_writer.end_object()?;
@@ -710,8 +584,6 @@ impl<W: JsonWriter> serde::ser::SerializeTupleVariant for SerializeTupleVariant<
 #[derive(Debug)]
 pub struct SerializeMap<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: Option<usize>,
-    len: usize,
     expects_entry_value: bool,
 }
 
@@ -724,16 +596,6 @@ impl<W: JsonWriter> serde::ser::SerializeMap for SerializeMap<'_, '_, W> {
             panic!("Incorrect usage: Cannot serialize key when value is expected")
         }
 
-        if let Some(expected_len) = self.expected_len {
-            if self.len >= expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    // + 1 for currently added entry
-                    actual: self.len + 1,
-                });
-            }
-            self.len += 1;
-        }
         self.expects_entry_value = true;
         key.serialize(&mut MapKeyStringSerializer {
             json_writer: self.ser.json_writer,
@@ -753,14 +615,6 @@ impl<W: JsonWriter> serde::ser::SerializeMap for SerializeMap<'_, '_, W> {
             panic!("Incorrect usage: Cannot end map when value is expected")
         }
 
-        if let Some(expected_len) = self.expected_len {
-            if self.len < expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    actual: self.len,
-                });
-            }
-        }
         self.ser.json_writer.end_object()?;
         Ok(())
     }
@@ -770,8 +624,6 @@ impl<W: JsonWriter> serde::ser::SerializeMap for SerializeMap<'_, '_, W> {
 #[derive(Debug)]
 pub struct SerializeStruct<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: usize,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
@@ -783,26 +635,11 @@ impl<W: JsonWriter> serde::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-
         self.ser.json_writer.name(key)?;
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                actual: self.len,
-            });
-        }
         self.ser.json_writer.end_object()?;
         Ok(())
     }
@@ -812,8 +649,6 @@ impl<W: JsonWriter> serde::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
 #[derive(Debug)]
 pub struct SerializeStructVariant<'s, 'a, W: JsonWriter> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
-    expected_len: usize,
-    len: usize,
 }
 
 impl<W: JsonWriter> serde::ser::SerializeStructVariant for SerializeStructVariant<'_, '_, W> {
@@ -825,27 +660,11 @@ impl<W: JsonWriter> serde::ser::SerializeStructVariant for SerializeStructVarian
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if self.len >= self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                // + 1 for currently added field
-                actual: self.len + 1,
-            });
-        }
-        self.len += 1;
-
         self.ser.json_writer.name(key)?;
         value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
-            return Err(SerializerError::IncorrectElementsCount {
-                expected: self.expected_len,
-                actual: self.len,
-            });
-        }
-
         // Matches serialize_struct_variant
         self.ser.json_writer.end_object()?;
         self.ser.json_writer.end_object()?;
@@ -1164,12 +983,12 @@ mod tests {
         }
     }
 
-    /// Asserts that serializing too few (`F1`) or too many (`F2`) elements causes an error
+    /// Asserts that serializing too few (`F1`) or too many (`F2`) elements causes no error
     ///
     /// - `F1` should claim to serialize 1 element but try to call `end()` without having written
     ///   anything yet.
     /// - `F2` should claim to serialize 0 elements but actually try to serialize an element.
-    fn assert_elements_count_error<
+    fn assert_elements_count_mismatch<
         F1: FnOnce(
             &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
@@ -1186,25 +1005,14 @@ mod tests {
             ) -> Result<(), SerializerError>,
         >(
             serializing_function: F,
-            expected_expected: usize,
-            expected_actual: usize,
         ) {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             let mut serializer = JsonWriterSerializer::new(&mut json_writer);
-            match serializing_function(&mut serializer) {
-                Ok(_) => panic!("Should have failed with error"),
-                Err(e) => match e {
-                    SerializerError::IncorrectElementsCount { expected, actual } => {
-                        assert_eq!(expected_expected, expected);
-                        assert_eq!(expected_actual, actual);
-                    }
-                    _ => panic!("Unexpected error: {e:?}"),
-                },
-            }
+            serializing_function(&mut serializer).unwrap();
         }
 
-        assert_result(serialize_none, 1, 0);
-        assert_result(serialize_one, 0, 1);
+        assert_result(serialize_none);
+        assert_result(serialize_one);
     }
 
     #[test]
@@ -1423,7 +1231,7 @@ mod tests {
                 r#"{"a":{"b":1}}"#
             );
 
-            assert_elements_count_error(
+            assert_elements_count_mismatch(
                 |s| {
                     let map = s.serialize_map(Some(1))?;
                     map.end()
@@ -1671,7 +1479,7 @@ mod tests {
             "[[1,2]]"
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let seq = s.serialize_seq(Some(1))?;
                 seq.end()
@@ -1724,7 +1532,7 @@ mod tests {
             r#"{"key1":1,"key2":2}"#
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let struc = s.serialize_struct("name", 1)?;
                 struc.end()
@@ -1766,7 +1574,7 @@ mod tests {
             r#"{"variant":{"key1":1,"key2":2}}"#
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let struc = s.serialize_struct_variant("name", 1, "variant", 1)?;
                 struc.end()
@@ -1807,7 +1615,7 @@ mod tests {
             "[1,2]"
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let tuple = s.serialize_tuple(1)?;
                 tuple.end()
@@ -1848,7 +1656,7 @@ mod tests {
             "[1,2]"
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let tuple = s.serialize_tuple(1)?;
                 tuple.end()
@@ -1889,7 +1697,7 @@ mod tests {
             r#"{"variant":[1,2]}"#
         );
 
-        assert_elements_count_error(
+        assert_elements_count_mismatch(
             |s| {
                 let tuple = s.serialize_tuple_variant("name", 0, "variant", 1)?;
                 tuple.end()
