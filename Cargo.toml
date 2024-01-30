@@ -1,6 +1,6 @@
 [package]
 name = "struson"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Marcono1234"]
 edition = "2021"
 description = "A low-level streaming JSON reader and writer"
