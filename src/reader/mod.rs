@@ -276,7 +276,7 @@ pub mod json_path {
             // Specify the type to avoid it being used by accident as an empty array of any type
             [] as [JsonPathPiece; 0]
         };
-        ( $( $piece:expr ),+ ) => {
+        ( $($piece:expr),+ $(,)? ) => {
             {
                 [
                     $(
@@ -404,6 +404,11 @@ pub mod json_path {
             assert_eq!(json_path![3], &[JsonPathPiece::ArrayItem(3)] as &JsonPath);
             assert_eq!(
                 json_path!["a"],
+                [JsonPathPiece::ObjectMember("a".to_owned())]
+            );
+            assert_eq!(
+                // Trailing comma
+                json_path!["a",],
                 [JsonPathPiece::ObjectMember("a".to_owned())]
             );
             assert_eq!(
