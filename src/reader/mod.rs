@@ -274,16 +274,14 @@ pub mod json_path {
     macro_rules! json_path {
         () => {
             // Specify the type to avoid it being used by accident as an empty array of any type
-            [] as [JsonPathPiece; 0]
+            [] as [$crate::reader::json_path::JsonPathPiece; 0]
         };
         ( $($piece:expr),+ $(,)? ) => {
-            {
-                [
-                    $(
-                        $crate::reader::json_path::JsonPathPiece::from($piece),
-                    )*
-                ]
-            }
+            [
+                $(
+                    $crate::reader::json_path::JsonPathPiece::from($piece),
+                )*
+            ]
         };
     }
 
