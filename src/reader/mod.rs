@@ -691,12 +691,16 @@ pub enum SyntaxErrorKind {
 #[derive(PartialEq, Eq, Clone, strum::Display, Debug)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
+    /* include field value; not included by default */
+    #[strum(to_string = "TooShortArray(expected_index = {expected_index})")]
     TooShortArray {
         /// Index (starting at 0) of the expected item
         expected_index: u32,
     },
 
     /// A JSON object does not have a member with a certain name
+    /* include field value; not included by default */
+    #[strum(to_string = "MissingObjectMember(\"{member_name}\")")]
     MissingObjectMember {
         /// Name of the expected member
         member_name: String,
@@ -1881,7 +1885,9 @@ pub trait JsonReader {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_path::JsonPathPiece, JsonReaderPosition, LinePosition};
+    use super::{
+        json_path::JsonPathPiece, JsonReaderPosition, LinePosition, UnexpectedStructureKind,
+    };
 
     #[test]
     fn json_reader_location_display() {
@@ -1926,5 +1932,30 @@ mod tests {
                 "expected display string for {location_data:?}: {expected_display_string}"
             );
         }
+    }
+
+    /// Tests custom `Display` implementation for [`UnexpectedStructureKind`]
+    #[test]
+    fn unexpected_structure_kind_display() {
+        assert_eq!(
+            "TooShortArray(expected_index = 2)",
+            UnexpectedStructureKind::TooShortArray { expected_index: 2 }.to_string()
+        );
+        assert_eq!(
+            "MissingObjectMember(\"custom-name\")",
+            UnexpectedStructureKind::MissingObjectMember {
+                member_name: "custom-name".to_owned()
+            }
+            .to_string()
+        );
+
+        assert_eq!(
+            "FewerElementsThanExpected",
+            UnexpectedStructureKind::FewerElementsThanExpected.to_string()
+        );
+        assert_eq!(
+            "MoreElementsThanExpected",
+            UnexpectedStructureKind::MoreElementsThanExpected.to_string()
+        );
     }
 }
