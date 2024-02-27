@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-make
-        uses: davidB/rust-cargo-make@b23e588bc82d020c75f58c4acbc563fb2cd064fc
+        uses: davidB/rust-cargo-make@b23e588bc82d020c75f58c4acbc563fb2cd064fc  # v1.10.0
         with:
           version: '0.37.2'
 
