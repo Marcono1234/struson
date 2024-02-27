@@ -3,18 +3,19 @@
 //! [`JsonReader`] is the general trait for JSON readers, [`JsonStreamReader`] is an implementation
 //! of it which reads a JSON document from a [`Read`] in a streaming way.
 
-/// Module for JSON path
+/// Module for 'JSON path'
 ///
-/// A JSON path consists of zero or more [`JsonPathPiece`] elements which either represent the index of a
-/// JSON array item or the name of a JSON object member. These elements combined form the _path_ to a value
-/// in a JSON document.
+/// A 'JSON path' points to a single value in a JSON document. It consists of zero or more [`JsonPathPiece`]
+/// elements which either represent the index of a JSON array item or the name of a JSON object member.
+/// These pieces combined form the _path_ to a value in a JSON document.
+///
+/// This is not an implementation of the [JSONPath RFC 9535](https://www.rfc-editor.org/rfc/rfc9535) standard;
+/// the implementation here uses a different syntax and only covers a subset of these features needed for
+/// JSON reader functionality, most notably for reporting the location of errors and for [`JsonReader::seek_to`].
+/// If you need more functionality, prefer a library which fully implements the JSONPath standard.
 ///
 /// The macro [`json_path!`](json_path::json_path) and the function [`parse_json_path`](json_path::parse_json_path)
 /// can be used to create a JSON path in a concise way.
-///
-/// JSON path was originally specified in [this article](https://goessner.net/articles/JsonPath/). However,
-/// this module only supports a small subset needed for JSON reader functionality, most notably for reporting
-/// the location of errors and for [`JsonReader::seek_to`].
 ///
 /// Consider for example the following code:
 /// ```
@@ -39,9 +40,9 @@ pub mod json_path {
     /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
     #[derive(PartialEq, Eq, Clone, Debug)]
     pub enum JsonPathPiece {
-        /// Index (starting at 0) of a JSON array item
+        /// JSON array item at the specified index (starting at 0)
         ArrayItem(u32),
-        /// Name of a JSON object member
+        /// JSON object member with the specified name
         ObjectMember(String),
     }
 
@@ -121,7 +122,7 @@ pub mod json_path {
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    /* TODO: Is there a proper specification (maybe even RFC?) for JSONPath, if so, should this function follow that specification? */
+    /* Note: This might not follow the JSONPath RFC 9535 syntax; but module doc mentions that this is not a JSONPath implementation */
     #[deprecated = "Use json_path! instead"]
     #[allow(deprecated)] // Allow usage of deprecated JsonPathParseError
     pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
@@ -245,7 +246,7 @@ pub mod json_path {
         Ok(parsed_path)
     }
 
-    /// Creates a JSON path from path pieces
+    /// Creates a JSON path from path pieces, separated by commas
     ///
     /// The arguments to this macro represent the path pieces:
     /// - numbers of type `u32` are converted to [`JsonPathPiece::ArrayItem`]
@@ -269,6 +270,8 @@ pub mod json_path {
     /*
      * TODO: Ideally in the future not expose this at the crate root but only from the `json_path` module
      *       however, that is apparently not easily possible yet, see https://users.rust-lang.org/t/how-to-namespace-a-macro-rules-macro-within-a-module-or-macro-export-it-without-polluting-the-top-level-namespace/63779/5
+     * TODO: Prefix this with `__` and use `#[doc(hidden)]` to not expose it at the crate root,
+     *       see https://internals.rust-lang.org/t/pub-on-macro-rules/19358/16
      */
     #[macro_export]
     macro_rules! json_path {

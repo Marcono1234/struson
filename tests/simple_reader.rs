@@ -378,6 +378,665 @@ fn seek_to() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Tests for [`ValueReader::read_seeked_multi`]
+mod read_seeked_multi {
+    use super::*;
+    use struson::reader::simple::multi_json_path::multi_json_path;
+
+    #[test]
+    fn empty_path() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader("true");
+        let mut values = Vec::new();
+        // Seeking empty path
+        json_reader.read_seeked_multi(&multi_json_path![], true, |value_reader| {
+            values.push(value_reader.read_bool()?);
+            Ok(())
+        })?;
+        assert_eq!(vec![true], values);
+
+        // Value not consumed (implicitly skipped)
+        let json_reader = new_reader("true");
+        let mut call_count = 0;
+        // Seeking empty path
+        json_reader.read_seeked_multi(&multi_json_path![], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(1, call_count);
+
+        // Error: Empty JSON document and value not consumed
+        let json_reader = new_reader("");
+        // Seeking empty path
+        let result = json_reader.read_seeked_multi(&multi_json_path![], true, |_| Ok(()));
+        assert_eq!(
+            "syntax error: JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests handling of a 'plain' JSON path without any wildcards
+    #[test]
+    fn plain_path() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"{"a": true, "b": [1, 2, 3], "c": false}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path!["b", 1], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["2"], values);
+
+        let json_reader = new_reader(r#"[true, {"a": 1, "b": 2, "c": 3}, false]"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![1, "b"], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["2"], values);
+
+        // Duplicate member
+        let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path!["a"], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1"], values);
+
+        // Value not consumed (implicitly skipped)
+        let json_reader = new_reader("[true]");
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![0], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(1, call_count);
+
+        // Error: No match (regardless of `at_least_one_match = false`)
+        let json_reader = new_reader(r#"[true]"#);
+        let result = json_reader.read_seeked_multi(&multi_json_path![1], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "unexpected JSON structure TooShortArray(expected_index = 1) at path '$[1]', line 0, column 5 (data pos 5)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: No match (regardless of `at_least_one_match = false`)
+        let json_reader = new_reader(r#"{"a": 1}"#);
+        let result = json_reader.read_seeked_multi(&multi_json_path!["b"], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "unexpected JSON structure MissingObjectMember(\"b\") at path '$.a', line 0, column 7 (data pos 7)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: Wrong JSON value type
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![1], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "expected JSON value type Array but got Object at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: Wrong JSON value type
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path!["a"], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "expected JSON value type Object but got Array at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests usage of `[*]` path
+    #[test]
+    fn all_array() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader("[1, 2, 3]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[*]], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Nested arrays empty; no error despite `at_least_one_match = true`
+        let json_reader = new_reader("[[], [1, 2], [], [3]]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[*], [*]], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Values not consumed (implicitly skipped)
+        let json_reader = new_reader("[true, false, null]");
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![[*]], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(3, call_count);
+
+        // No match
+        let json_reader = new_reader("[]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[*]], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // Error: No match
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path![[*]], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "no matching value found for path '[*]' at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: Wrong JSON value type
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![[*]], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "expected JSON value type Array but got Object at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests usage of `[+]` path
+    #[test]
+    fn all_array_non_empty() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader("[1, 2, 3]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[+]], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Values not consumed (implicitly skipped)
+        let json_reader = new_reader("[true, false, null]");
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![[+]], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(3, call_count);
+
+        // Succeeds if `[+]` is nested and not reached
+        let json_reader = new_reader("[]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[*], [+]], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // Non-trailing `[+]`
+        let json_reader = new_reader("[[1, 2], [3, 4]]");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[+], 0], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "3"], values);
+
+        // Error: Empty nested array
+        let json_reader = new_reader("[[1], []]");
+        let mut values = Vec::new();
+        let result =
+            json_reader.read_seeked_multi(&multi_json_path![[*], [+]], false, |value_reader| {
+                values.push(value_reader.read_number_as_string()?);
+                Ok(())
+            });
+        assert_eq!(
+            "unexpected empty array at path '$[1][0]', line 0, column 7 (data pos 7)",
+            result.unwrap_err().to_string()
+        );
+        // Should have already collected the first value
+        assert_eq!(vec!["1"], values);
+
+        // Error: Empty array (regardless of `at_least_one_match = false`)
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path![[+]], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "unexpected empty array at path '$[0]', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: No match for previous piece, with `at_least_one_match = true`
+        // This is mainly to check the formatted path in the error message
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path![[*], [+]], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "no matching value found for path '[*][+]' at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests usage of `{*}` path
+    #[test]
+    fn all_object() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"{"a": 1, "b": 2, "c": 3}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{*}], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Duplicate member
+        let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{*}], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2"], values);
+
+        // Nested objects empty; no error despite `at_least_one_match = true`
+        let json_reader = new_reader(r#"[{}, {"a": 1, "b": 2}, {}, {"c": 3}]"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![[*], {*}], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Values not consumed (implicitly skipped)
+        let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![{*}], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(2, call_count);
+
+        // No match
+        let json_reader = new_reader("{}");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{*}], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // Error: No match
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![{*}], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "no matching value found for path '.*' at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: Wrong JSON value type
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path![{*}], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "expected JSON value type Object but got Array at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests usage of `{+}` path
+    #[test]
+    fn all_object_non_empty() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"{"a": 1, "b": 2, "c": 3}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{*}], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "2", "3"], values);
+
+        // Values not consumed (implicitly skipped)
+        let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![{+}], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(2, call_count);
+
+        // Succeeds if `{+}` is nested and not reached
+        let json_reader = new_reader(r#"{}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{*}, {+}], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // Non-trailing `{+}`
+        let json_reader = new_reader(r#"{"a": [1, 2], "b": [3, 4]}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![{+}, 0], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1", "3"], values);
+
+        // Error: Empty nested object
+        let json_reader = new_reader(r#"[{"a": 1}, {}]"#);
+        let mut values = Vec::new();
+        let result =
+            json_reader.read_seeked_multi(&multi_json_path![[*], {+}], false, |value_reader| {
+                values.push(value_reader.read_number_as_string()?);
+                Ok(())
+            });
+        assert_eq!(
+            "unexpected empty object at path '$[1].<?>', line 0, column 12 (data pos 12)",
+            result.unwrap_err().to_string()
+        );
+        // Should have already collected the first value
+        assert_eq!(vec!["1"], values);
+
+        // Error: Empty object (regardless of `at_least_one_match = false`)
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![{+}], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "unexpected empty object at path '$.<?>', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: No match for previous piece, with `at_least_one_match = true`
+        // This is mainly to check the formatted path in the error message
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![{*}, {+}], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "no matching value found for path '.*.+' at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    /// Tests usage of `?name` path
+    #[test]
+    fn optional_member() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"{"a": 1, "b": 2, "c": 3}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![?"b"], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["2"], values);
+
+        // Duplicate member
+        let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![?"a"], true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["1"], values);
+
+        // Value not consumed (implicitly skipped)
+        let json_reader = new_reader(r#"{"a": true, "b": false, "c": null}"#);
+        let mut call_count = 0;
+        json_reader.read_seeked_multi(&multi_json_path![?"b"], true, |_| {
+            call_count += 1;
+            Ok(())
+        })?;
+        assert_eq!(1, call_count);
+
+        // No match
+        let json_reader = new_reader("{}");
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![?"b"], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // No match
+        let json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
+        let mut values = Vec::new();
+        json_reader.read_seeked_multi(&multi_json_path![?"x"], false, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(Vec::<String>::new(), values);
+
+        // Error: No match
+        let json_reader = new_reader("{}");
+        let result = json_reader.read_seeked_multi(&multi_json_path![?"x"], true, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "no matching value found for path '.x?' at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        // Error: Wrong JSON value type
+        let json_reader = new_reader("[]");
+        let result = json_reader.read_seeked_multi(&multi_json_path![?"x"], false, |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "expected JSON value type Object but got Array at path '$', line 0, column 0 (data pos 0)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn complex() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(
+            r#"
+            {
+                "a1": [
+                    {
+                        "a": 1,
+                        "b": [
+                            "v1",
+                            "v2",
+                            "v3"
+                        ],
+                        "c": true
+                    },
+                    {
+                        "a": 1,
+                        "b": [
+                            "w1",
+                            "w2",
+                            "w3"
+                        ],
+                        "c": true
+                    }
+                ],
+                "a2": [
+                    {
+                        "a": 1,
+                        "b": [
+                            "x1",
+                            "x2",
+                            "x3"
+                        ]
+                    },
+                    {
+                        "b": [
+                            "y1",
+                            "y2",
+                            "y3"
+                        ]
+                    }
+                ]
+            }
+            "#,
+        );
+        let mut values = Vec::new();
+        let path = &multi_json_path![{*}, [*], "b", 1];
+        json_reader.read_seeked_multi(path, true, |value_reader| {
+            values.push(value_reader.read_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["v2", "w2", "x2", "y2"], values);
+
+        let json_reader = new_reader(
+            r#"
+            {
+                "a": 1,
+                "b": [
+                    {
+                        "x1": {
+                            "z": []
+                        },
+                        "x2": {
+                            "y": true
+                        },
+                        "x3": {
+                            "z": [3]
+                        }
+                    },
+                    {
+                        "x1": {
+                            "y": false,
+                            "z": [4, 5],
+                            "a": 1.2
+                        },
+                        "x2": {
+                        }
+                    }
+                ],
+                "c": true
+            }
+            "#,
+        );
+        let mut values = Vec::new();
+        let path = &multi_json_path!["b", [*], {*}, ?"z", [*]];
+        json_reader.read_seeked_multi(path, true, |value_reader| {
+            values.push(value_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+        assert_eq!(vec!["3", "4", "5"], values);
+
+        Ok(())
+    }
+
+    /// Tests usage of `read_seeked_multi` inside of other reading methods, including nested
+    /// inside another `read_seeked_multi` call
+    #[test]
+    fn nested() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(
+            r#"
+            [
+                "item-1",
+                {
+                    "a": [
+                        "nested-1",
+                        [1, 2]
+                    ],
+                    "b": [
+                        "nested-2",
+                        [3, 4]
+                    ]
+                },
+                "item-3"
+            ]
+            "#,
+        );
+        let mut values = Vec::new();
+        json_reader.read_array(|array_reader| {
+            assert_eq!("item-1", array_reader.read_string()?);
+
+            let mut member_index = 0;
+            array_reader.read_seeked_multi(&multi_json_path![{*}], true, |value_reader| {
+                member_index += 1;
+                value_reader.read_array(|array_reader| {
+                    assert_eq!(
+                        format!("nested-{member_index}"),
+                        array_reader.read_string()?
+                    );
+
+                    array_reader.read_seeked_multi(&multi_json_path![[*]], true, |value_reader| {
+                        values.push(value_reader.read_number_as_string()?);
+                        Ok(())
+                    })
+                })
+            })?;
+
+            assert_eq!("item-3", array_reader.read_string()?);
+            Ok(())
+        })?;
+        // Check this outside of closure to make sure closure was called
+        assert_eq!(vec!["1", "2", "3", "4"], values);
+
+        Ok(())
+    }
+
+    #[test]
+    fn error_propagation() -> Result<(), Box<dyn Error>> {
+        // Should stop after the first seeking error
+        let json_reader = new_reader(r#"[{"a": 1}, {}, {"a": 2}]"#);
+        let mut values = Vec::new();
+        let result =
+            json_reader.read_seeked_multi(&multi_json_path![[*], "a"], true, |value_reader| {
+                values.push(value_reader.read_number_as_string()?);
+                Ok(())
+            });
+        assert_eq!(
+            "unexpected JSON structure MissingObjectMember(\"a\") at path '$[1].<?>', line 0, column 12 (data pos 12)",
+            result.unwrap_err().to_string()
+        );
+        // Should have already collected the first value
+        assert_eq!(vec!["1"], values);
+
+        // Should stop after closure returns error (trailing `[*]`)
+        let json_reader = new_reader(r#"[1, 2, 3]"#);
+        let mut call_count = 0;
+        let result = json_reader.read_seeked_multi(&multi_json_path![[*]], true, |_| {
+            call_count += 1;
+            Err("custom-error".into())
+        });
+        assert_eq!("custom-error", result.unwrap_err().to_string());
+        assert_eq!(1, call_count);
+
+        // Should stop after closure returns error (non-trailing `[*]`)
+        let json_reader = new_reader(r#"[{"a": 1}, {"a": 2}, {"a": 3}]"#);
+        let mut call_count = 0;
+        let result = json_reader.read_seeked_multi(&multi_json_path![[*], "a"], true, |_| {
+            call_count += 1;
+            Err("custom-error".into())
+        });
+        assert_eq!("custom-error", result.unwrap_err().to_string());
+        assert_eq!(1, call_count);
+
+        Ok(())
+    }
+}
+
 #[test]
 fn skip() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("true");
