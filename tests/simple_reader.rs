@@ -378,6 +378,111 @@ fn seek_to() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn read_seeked() -> Result<(), Box<dyn Error>> {
+    // Empty path
+    let json_reader = new_reader("true");
+    let mut values = Vec::new();
+    // Seeking empty path
+    json_reader.read_seeked(&json_path![], |value_reader| {
+        values.push(value_reader.read_bool()?);
+        Ok(())
+    })?;
+    assert_eq!(vec![true], values);
+
+    // Value not consumed (implicitly skipped)
+    let json_reader = new_reader("true");
+    let mut call_count = 0;
+    // Seeking empty path
+    json_reader.read_seeked(&json_path![], |_| {
+        call_count += 1;
+        Ok(())
+    })?;
+    assert_eq!(1, call_count);
+
+    // Error: Empty JSON document and value not consumed
+    let json_reader = new_reader("");
+    // Seeking empty path
+    let result = json_reader.read_seeked(&json_path![], |_| Ok(()));
+    assert_eq!(
+        "syntax error: JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
+        result.unwrap_err().to_string()
+    );
+
+    // Duplicate member
+    let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+    let mut values = Vec::new();
+    json_reader.read_seeked(&json_path!["a"], |value_reader| {
+        values.push(value_reader.read_number_as_string()?);
+        Ok(())
+    })?;
+    assert_eq!(vec!["1"], values);
+
+    // Error: Wrong JSON value type
+    let json_reader = new_reader("[1]");
+    // Seeking empty path
+    let result = json_reader.read_seeked(&json_path!["a"], |_| {
+        panic!("should not have been called");
+    });
+    assert_eq!(
+        "expected JSON value type Object but got Array at path '$', line 0, column 0 (data pos 0)",
+        result.unwrap_err().to_string()
+    );
+
+    // Mixed with `seek_to`
+    let mut json_reader = new_reader(r#"{"a": 1, "b": [{"c": 2, "d": 3}]}"#);
+    let mut values = Vec::new();
+    json_reader.seek_to(&json_path!["b"])?;
+    json_reader.read_seeked(&json_path![0, "c"], |value_reader| {
+        values.push(value_reader.read_number_as_string()?);
+        Ok(())
+    })?;
+    assert_eq!(vec!["2"], values);
+
+    // Error propagation
+    let json_reader = new_reader("[1]");
+    let result = json_reader.read_seeked(&json_path![0], |_| Err("custom-error".into()));
+    assert_eq!("custom-error", result.unwrap_err().to_string());
+
+    // Nested usage inside of other reading methods, including nested inside another `read_seeked` call
+    let json_reader = new_reader(
+        r#"
+        [
+            "item-1",
+            {
+                "a": [
+                    "nested",
+                    [1, 2]
+                ]
+            },
+            "item-3"
+        ]
+        "#,
+    );
+    let mut values = Vec::new();
+    json_reader.read_array(|array_reader| {
+        assert_eq!("item-1", array_reader.read_string()?);
+
+        array_reader.read_seeked(&json_path!["a"], |value_reader| {
+            value_reader.read_array(|array_reader| {
+                assert_eq!("nested", array_reader.read_string()?);
+
+                array_reader.read_seeked(&json_path![1], |value_reader| {
+                    values.push(value_reader.read_number_as_string()?);
+                    Ok(())
+                })
+            })
+        })?;
+
+        assert_eq!("item-3", array_reader.read_string()?);
+        Ok(())
+    })?;
+    // Check this outside of closure to make sure closure was called
+    assert_eq!(vec!["2"], values);
+
+    Ok(())
+}
+
 /// Tests for [`ValueReader::read_seeked_multi`]
 mod read_seeked_multi {
     use super::*;

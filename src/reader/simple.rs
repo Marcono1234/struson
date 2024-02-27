@@ -602,16 +602,7 @@ pub trait ValueReader<J: JsonReader> {
     {
         self.read_array(|array_reader| {
             while array_reader.has_next()? {
-                let consumed_item = Rc::new(Cell::new(false));
-                let item_reader = SingleValueReader {
-                    json_reader: array_reader.json_reader,
-                    consumed_value: Rc::clone(&consumed_item),
-                };
-                f(item_reader)?;
-                // If the function did not consume the item, skip it
-                if !consumed_item.get() {
-                    array_reader.json_reader.skip_value()?;
-                }
+                read_value(array_reader.json_reader, &mut f)?;
             }
             Ok(())
         })
@@ -692,6 +683,59 @@ pub trait ValueReader<J: JsonReader> {
         f: impl FnMut(String, SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
 
+    /// Seeks to a value and consumes it
+    ///
+    /// This method first seeks to the location specified by `path` as described by
+    /// [`SimpleJsonReader::seek_to`], then calls the function `f` to consume the value.
+    ///
+    /// If the path matches a value, the function `f` will be called exactly once.
+    /// Otherwise, if the structure of the JSON data does not match the path, for example
+    /// when the JSON data contains an array but the path expects an object, an error
+    /// is returned and `f` is not called.
+    ///
+    /// If the function `f` returns `Ok` but did not consume the value, it will be skipped
+    /// automatically. After the function has been called this method traverses back to
+    /// the original nesting level, therefore acting as if it only consumed one value
+    /// (and its nested values) at that level.
+    ///
+    /// For seeking to and reading multiple values use [`ValueReader::read_seeked_multi`].
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::simple::*;
+    /// # use struson::reader::json_path::*;
+    /// let json_reader = SimpleJsonReader::new(
+    ///     r#"[{"bar": true, "foo": ["a", "b", "c"]}, "next"]"#.as_bytes()
+    /// );
+    ///
+    /// json_reader.read_array(|array_reader| {
+    ///     // First seek to the "foo" member, then within its value seek to the item at index 1
+    ///     array_reader.read_seeked(&json_path!["foo", 1], |value_reader| {
+    ///         // Read the value where the reader seeked to
+    ///         assert_eq!(value_reader.read_string()?, "b");
+    ///         Ok(())
+    ///     })?;
+    ///     
+    ///     // Afterwards can continue reading at original nesting level
+    ///     assert_eq!(array_reader.read_string()?, "next");
+    ///     Ok(())
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    /*
+     * Note: Functionality-wise `read_seeked` might not be needed and a user could instead call
+     * `read_seeked_multi` with a plain path without any wildcards. However, `read_seeked` has
+     * these advantages:
+     * - It guarantees that it either calls `f` or returns an error; for `read_seeked_multi` you
+     *   would have to deduce that from the given path or use `at_least_one_match = true`
+     * - It supports an `FnOnce` (instead of just an `FnMut`)
+     */
+    fn read_seeked(
+        self,
+        path: &JsonPath,
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>>;
+
     /// Seeks to multiple values and consumes them
     ///
     /// Based on the given `path` this method seeks to all matching values, if any, and calls the
@@ -711,8 +755,14 @@ pub trait ValueReader<J: JsonReader> {
     /// if multiple members in a JSON object have the same name (for example `{"a": 1, "a": 2}`)
     /// this method will only seek to the first occurrence in that object ignoring the others.
     ///
+    /// Once this method returns, the reader is at the original nesting level again and can continue
+    /// consuming values there, if any. Calling this method therefore acts as if it only consumed
+    /// one value (and its nested values) at the current level.
+    ///
     /// If the structure of the JSON data does not match the path, for example the JSON data contains
     /// an array but the path expects an object, an error is returned.
+    ///
+    /// For seeking to and reading a single value at a fixed path prefer [`ValueReader::read_seeked`].
     ///
     /// # Examples
     /// ```
@@ -821,31 +871,68 @@ fn read_object_owned_names<J: JsonReader>(
     Ok(())
 }
 
+/// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
+fn read_value<J: JsonReader>(
+    json_reader: &mut J,
+    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    let consumed_value = Rc::new(Cell::new(false));
+    let value_reader = SingleValueReader {
+        json_reader,
+        consumed_value: Rc::clone(&consumed_value),
+    };
+
+    f(value_reader)?;
+    // If the function did not consume the value, skip it
+    if !consumed_value.get() {
+        json_reader.skip_value()?;
+    }
+    Ok(())
+}
+
+/// 'Undoes' a `seek_to` call by consuming remaining array items and
+/// object members and closing arrays and objects in reverse order
+fn undo_seek<J: JsonReader>(json_reader: &mut J, path: &JsonPath) -> Result<(), ReaderError> {
+    // Undo seek piece by piece in reverse order
+    for piece in path.iter().rev() {
+        match piece {
+            JsonPathPiece::ArrayItem(_) => {
+                // Skip remaining items
+                while json_reader.has_next()? {
+                    json_reader.skip_value()?;
+                }
+                json_reader.end_array()?;
+            }
+            JsonPathPiece::ObjectMember(_) => {
+                // Skip remaining members
+                while json_reader.has_next()? {
+                    json_reader.skip_name()?;
+                    json_reader.skip_value()?;
+                }
+                json_reader.end_object()?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_seeked<J: JsonReader>(
+    json_reader: &mut J,
+    path: &JsonPath,
+    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    json_reader.seek_to(path)?;
+    read_value(json_reader, f)?;
+    undo_seek(json_reader, path)?;
+    Ok(())
+}
+
 fn read_seeked_multi<J: JsonReader>(
     json_reader: &mut J,
     original_path: &MultiJsonPath,
     require_at_least_one_match: bool,
     mut f: impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
-    /// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
-    fn read_value<J: JsonReader>(
-        json_reader: &mut J,
-        f: &mut impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>> {
-        let consumed_value = Rc::new(Cell::new(false));
-        let value_reader = SingleValueReader {
-            json_reader,
-            consumed_value: Rc::clone(&consumed_value),
-        };
-
-        f(value_reader)?;
-        // If the function did not consume the value, skip it
-        if !consumed_value.get() {
-            json_reader.skip_value()?;
-        }
-        Ok(())
-    }
-
     // Special case for empty path because the logic below only handles non-empty paths
     if original_path.is_empty() {
         return read_value(json_reader, &mut f);
@@ -903,32 +990,6 @@ fn read_seeked_multi<J: JsonReader>(
             converted_path.push(PartialPath::JsonPath(current_section));
         }
         converted_path
-    }
-
-    /// 'Undoes' a `seek_to` call by consuming remaining array items and
-    /// object members and closing arrays and objects in reverse order
-    fn undo_seek<J: JsonReader>(json_reader: &mut J, path: &JsonPath) -> Result<(), ReaderError> {
-        // Undo seek piece by piece in reverse order
-        for piece in path.iter().rev() {
-            match piece {
-                JsonPathPiece::ArrayItem(_) => {
-                    // Skip remaining items
-                    while json_reader.has_next()? {
-                        json_reader.skip_value()?;
-                    }
-                    json_reader.end_array()?;
-                }
-                JsonPathPiece::ObjectMember(_) => {
-                    // Skip remaining members
-                    while json_reader.has_next()? {
-                        json_reader.skip_name()?;
-                        json_reader.skip_value()?;
-                    }
-                    json_reader.end_object()?;
-                }
-            }
-        }
-        Ok(())
     }
 
     // Get the original location for error reporting
@@ -1201,6 +1262,11 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     /// If the structure of the JSON data does not match the path, for example when the JSON data
     /// contains an array but the path expects an object, an error is returned.
     ///
+    /// The seeking behavior of this method is equivalent to [`ValueReader::read_seeked`], but
+    /// `seek_to` allows consuming the value afterwards without having to use a closure or separate
+    /// function (as required by `read_seeked`), however it is only available at the top-level
+    /// and not at nested levels in the JSON document.
+    ///
     /// # Examples
     /// ```
     /// # use struson::reader::simple::*;
@@ -1222,9 +1288,9 @@ impl<J: JsonReader> SimpleJsonReader<J> {
      * caller close the arrays and objects, but for `ArrayReader` it would cause problems because seeking
      * would break its `has_next` method, which expects to always be inside the original array.
      */
-    pub fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+    pub fn seek_to(&mut self, path: &JsonPath) -> Result<(), ReaderError> {
         self.has_seeked = true;
-        self.json_reader.seek_to(rel_json_path)
+        self.json_reader.seek_to(path)
     }
 
     fn finish(mut self) -> Result<(), ReaderError> {
@@ -1320,6 +1386,16 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         f: impl FnMut(String, SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         read_object_owned_names(&mut self.json_reader, f)?;
+        self.finish()?;
+        Ok(())
+    }
+
+    fn read_seeked(
+        mut self,
+        path: &JsonPath,
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        read_seeked(&mut self.json_reader, path, f)?;
         self.finish()?;
         Ok(())
     }
@@ -1425,6 +1501,14 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         read_object_owned_names(self.json_reader, f)
     }
 
+    fn read_seeked(
+        self,
+        path: &JsonPath,
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        read_seeked(self.json_reader, path, f)
+    }
+
     fn read_seeked_multi(
         self,
         path: &MultiJsonPath,
@@ -1511,6 +1595,15 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     ) -> Result<(), Box<dyn Error>> {
         self.consumed_value.set(true);
         read_object_owned_names(self.json_reader, f)
+    }
+
+    fn read_seeked(
+        self,
+        path: &JsonPath,
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.consumed_value.set(true);
+        read_seeked(self.json_reader, path, f)
     }
 
     fn read_seeked_multi(
@@ -1653,6 +1746,16 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         read_object_owned_names(self.json_reader, f)
+    }
+
+    fn read_seeked(
+        mut self,
+        path: &JsonPath,
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        read_seeked(self.json_reader, path, f)
     }
 
     fn read_seeked_multi(
