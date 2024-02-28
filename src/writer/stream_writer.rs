@@ -94,7 +94,7 @@ impl Default for WriterSettings {
     ///
     /// - pretty print: disabled (= compact JSON will be written)
     /// - escape all control chars: false (= only control characters `0x00` to `0x1F` are escaped)
-    /// - multiple top level values: disallowed
+    /// - multiple top-level values: disallowed
     fn default() -> Self {
         WriterSettings {
             pretty_print: false,

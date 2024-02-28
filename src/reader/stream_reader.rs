@@ -2210,7 +2210,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot skip to top level when string value reader is active");
+            panic!("Incorrect reader usage: Cannot skip to top-level when string value reader is active");
         }
 
         // Handle expected member value separately because has_next() calls below are not allowed when

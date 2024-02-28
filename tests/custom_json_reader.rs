@@ -37,7 +37,7 @@ mod custom_reader {
     pub struct JsonValueReader<'a> {
         /// Contains the next value to consume
         ///
-        /// Either the top level value, or the next value in arrays or for object members.
+        /// Either the top-level value, or the next value in arrays or for object members.
         next_value: Option<&'a Value>,
         stack: Vec<StackValue<'a>>,
         /// Whether the reader is currently in a JSON object and expects a name (or end of the JSON object)

@@ -109,15 +109,16 @@ pub mod json_path {
     /// ```
     /// # #![allow(deprecated)]
     /// # use struson::reader::json_path::*;
+    /// # use struson::reader::json_path::JsonPathPiece::*;
     /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
     /// assert_eq!(
     ///     json_path,
     ///     vec![
-    ///         JsonPathPiece::ObjectMember("outer".to_owned()),
-    ///         JsonPathPiece::ArrayItem(1),
-    ///         JsonPathPiece::ObjectMember("inner".to_owned()),
-    ///         JsonPathPiece::ArrayItem(2),
-    ///         JsonPathPiece::ArrayItem(3),
+    ///         ObjectMember("outer".to_owned()),
+    ///         ArrayItem(1),
+    ///         ObjectMember("inner".to_owned()),
+    ///         ArrayItem(2),
+    ///         ArrayItem(3),
     ///     ]
     /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -257,13 +258,14 @@ pub mod json_path {
     /// # Examples
     /// ```
     /// # use struson::reader::json_path::*;
+    /// # use struson::reader::json_path::JsonPathPiece::*;
     /// let json_path = json_path!["outer", 3, "inner"];
     /// assert_eq!(
     ///     json_path,
     ///     [
-    ///         JsonPathPiece::ObjectMember("outer".to_owned()),
-    ///         JsonPathPiece::ArrayItem(3),
-    ///         JsonPathPiece::ObjectMember("inner".to_owned()),
+    ///         ObjectMember("outer".to_owned()),
+    ///         ArrayItem(3),
+    ///         ObjectMember("inner".to_owned()),
     ///     ]
     /// );
     /// ```
@@ -1693,7 +1695,7 @@ pub trait JsonReader {
 
     /// Opposite of [`seek_to`](Self::seek_to)
     ///
-    /// This is the opposite of the `seek_to` method, it goes through the path in reverse
+    /// This is the opposite of the `seek_to` method; it goes through the path in reverse
     /// order skipping remaining JSON array items and object members and closing arrays
     /// and objects. Therefore once this method returns the reader is at the same nesting
     /// level it was before `seek_to` had been called and allows continuing reading

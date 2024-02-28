@@ -236,13 +236,13 @@ pub mod multi_json_path {
     ///
     /// | Argument | Path piece |
     /// | - | - |
-    /// | number of type `u32` | [`MultiJsonPathPiece::ArrayItem`] |
-    /// | string | [`MultiJsonPathPiece::ObjectMember`] |
-    /// | '`?`_string_' | [`MultiJsonPathPiece::OptionalObjectMember`] |
-    /// | '`[*]`' | [`MultiJsonPathPiece::AllArrayItems { allow_empty: true }`](MultiJsonPathPiece::AllArrayItems) |
-    /// | '`[+]`' | [`MultiJsonPathPiece::AllArrayItems { allow_empty: false }`](MultiJsonPathPiece::AllArrayItems) |
-    /// | '`{*}`' | [`MultiJsonPathPiece::AllObjectMembers { allow_empty: true }`](MultiJsonPathPiece::AllObjectMembers) |
-    /// | '`{+}`' | [`MultiJsonPathPiece::AllObjectMembers { allow_empty: false }`](MultiJsonPathPiece::AllObjectMembers) |
+    /// | number of type `u32` | [`ArrayItem`](MultiJsonPathPiece::ArrayItem) |
+    /// | string | [`ObjectMember`](MultiJsonPathPiece::ObjectMember) |
+    /// | '`?`string' | [`OptionalObjectMember`](MultiJsonPathPiece::OptionalObjectMember) |
+    /// | '`[*]`' | [`AllArrayItems { allow_empty: true }`](MultiJsonPathPiece::AllArrayItems) |
+    /// | '`[+]`' | [`AllArrayItems { allow_empty: false }`](MultiJsonPathPiece::AllArrayItems) |
+    /// | '`{*}`' | [`AllObjectMembers { allow_empty: true }`](MultiJsonPathPiece::AllObjectMembers) |
+    /// | '`{+}`' | [`AllObjectMembers { allow_empty: false }`](MultiJsonPathPiece::AllObjectMembers) |
     ///
     /// Providing no arguments creates an empty path without any path pieces.
     ///
@@ -266,24 +266,25 @@ pub mod multi_json_path {
     /// }
     /// ```
     ///
-    /// Then the following multi JSON path could be used to match all awards any book has
+    /// Then the following multi JSON path can be used to match all awards any book has
     /// received:
     /// ```
     /// # use struson::reader::simple::multi_json_path::*;
+    /// # use struson::reader::simple::multi_json_path::MultiJsonPathPiece::*;
     /// let json_path = multi_json_path![
     ///     "books",
     ///     [*], // match all books
     ///     ?"awards", // match the optional "awards" member
-    ///     [+], // match all awards
+    ///     [+], // match all awards (requiring non-empty array)
     /// ];
     ///
     /// assert_eq!(
     ///     json_path,
     ///     [
-    ///         MultiJsonPathPiece::ObjectMember("books".to_owned()),
-    ///         MultiJsonPathPiece::AllArrayItems { allow_empty: true },
-    ///         MultiJsonPathPiece::OptionalObjectMember("awards".to_owned()),
-    ///         MultiJsonPathPiece::AllArrayItems { allow_empty: false },
+    ///         ObjectMember("books".to_owned()),
+    ///         AllArrayItems { allow_empty: true },
+    ///         OptionalObjectMember("awards".to_owned()),
+    ///         AllArrayItems { allow_empty: false },
     ///     ]
     /// );
     /// ```
@@ -761,20 +762,19 @@ pub trait ValueReader<J: JsonReader> {
     ///
     /// Depending on what pieces the path consists of, it can match any number of values, including
     /// none. The `at_least_one_match` argument determines the behavior of this method in case the
-    /// path can potentially match no values. If `true` an error is returned, if `false` no error is
-    /// returned but `f` is also not called. `at_least_one_match` can for example be useful when a
-    /// [JSON object member is optional](MultiJsonPathPiece::OptionalObjectMember) but for multiple
-    /// of such objects at least one is expected to have the member.\
-    /// `at_least_one_match = false` does not override the behavior for path pieces which themself
-    /// require at least one match, such as [`MultiJsonPathPiece::AllArrayItems { allow_empty: false }`](MultiJsonPathPiece::AllArrayItems).
+    /// path matches no values. If `true` an error is returned; this can for example be useful when
+    /// a JSON object member is [optional](MultiJsonPathPiece::OptionalObjectMember) but for multiple
+    /// of such objects at least one is expected to have the member. If `false` no error is returned
+    /// but `f` is also not called. This does not override the behavior for path pieces which themself
+    /// require at least one match, such as [`AllArrayItems { allow_empty: false }`](MultiJsonPathPiece::AllArrayItems).
     ///
-    /// For [`MultiJsonPathPiece::ObjectMember`] and [`MultiJsonPathPiece::OptionalObjectMember`]
-    /// if multiple members in a JSON object have the same name (for example `{"a": 1, "a": 2}`)
+    /// For [`ObjectMember`](MultiJsonPathPiece::ObjectMember) and [`OptionalObjectMember`](MultiJsonPathPiece::OptionalObjectMember)
+    /// pieces if multiple members in a JSON object have the same name (for example `{"a": 1, "a": 2}`)
     /// this method will only seek to the first occurrence in that object ignoring the others.
     ///
     /// Once this method returns, the reader is at the original nesting level again and can continue
-    /// consuming values there, if any. Calling this method therefore acts as if it only consumed
-    /// one value (and its nested values) at the current level.
+    /// consuming values there. Calling this method therefore acts as if it only consumed one value
+    /// (and its nested values) at the that level.
     ///
     /// If the structure of the JSON data does not match the path, for example the JSON data contains
     /// an array but the path expects an object, an error is returned.
@@ -1255,8 +1255,8 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     ///
     /// The seeking behavior of this method is equivalent to [`read_seeked`](Self::read_seeked), but
     /// `seek_to` allows consuming the value afterwards without having to use a closure or separate
-    /// function (as required by `read_seeked`), however it is only available at the top-level
-    /// and not at nested levels in the JSON document.
+    /// function (as required by `read_seeked`), however it is only available for `SimpleJsonReader`
+    /// and not generally for the `ValueReader` trait.
     ///
     /// # Examples
     /// ```
