@@ -4161,6 +4161,67 @@ mod tests {
     }
 
     #[test]
+    fn seek_back() -> TestResult {
+        // Empty path
+        let path = json_path![];
+        let mut json_reader = new_reader("1");
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Empty path, in array
+        let path = json_path![];
+        let mut json_reader = new_reader("[1]");
+        json_reader.begin_array()?;
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Empty path, in object
+        let path = json_path![];
+        let mut json_reader = new_reader(r#"{"a": 1}"#);
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.end_object()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Reading multiple, array
+        let path = json_path![0];
+        let mut json_reader = new_reader("[1, 2, 3]");
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        assert_eq!("2", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Reading multiple, object
+        let path = json_path!["a"];
+        let mut json_reader = new_reader(r#"{"a": 1, "b": 2, "c": 3}"#);
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("2", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Mixed path
+        let path = json_path!["a", 0];
+        let mut json_reader = new_reader(r#"{"a": [1, 2, 3], "b": 4}"#);
+        json_reader.seek_to(&path)?;
+        assert_eq!("1", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
+    }
+
+    #[test]
     fn skip_to_top_level() -> TestResult {
         let mut json_reader = new_reader("null");
         // Should have no effect when not inside array or object

@@ -890,32 +890,6 @@ fn read_value<J: JsonReader, T>(
     Ok(result)
 }
 
-/// 'Undoes' a `seek_to` call by consuming remaining array items and
-/// object members and closing arrays and objects in reverse order
-fn undo_seek<J: JsonReader>(json_reader: &mut J, path: &JsonPath) -> Result<(), ReaderError> {
-    // Undo seek piece by piece in reverse order
-    for piece in path.iter().rev() {
-        match piece {
-            JsonPathPiece::ArrayItem(_) => {
-                // Skip remaining items
-                while json_reader.has_next()? {
-                    json_reader.skip_value()?;
-                }
-                json_reader.end_array()?;
-            }
-            JsonPathPiece::ObjectMember(_) => {
-                // Skip remaining members
-                while json_reader.has_next()? {
-                    json_reader.skip_name()?;
-                    json_reader.skip_value()?;
-                }
-                json_reader.end_object()?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn read_seeked<J: JsonReader, T>(
     json_reader: &mut J,
     path: &JsonPath,
@@ -923,7 +897,7 @@ fn read_seeked<J: JsonReader, T>(
 ) -> Result<T, Box<dyn Error>> {
     json_reader.seek_to(path)?;
     let result = read_value(json_reader, f)?;
-    undo_seek(json_reader, path)?;
+    json_reader.seek_back(path)?;
     Ok(result)
 }
 
@@ -1015,7 +989,7 @@ fn read_seeked_multi<J: JsonReader>(
                     path_index += 1;
                     // Continue moving down towards end of path
                 } else {
-                    undo_seek(json_reader, path)?;
+                    json_reader.seek_back(path)?;
                     // Continue moving up towards top level
                 }
             }

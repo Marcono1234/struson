@@ -840,6 +840,7 @@ pub enum TransferError {
 ///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
 ///     - [`skip_value`](Self::skip_value): Skipping a value
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
+///     - [`seek_back`](Self::seek_back): Opposite of `seek_to`
 ///     - [`skip_to_top_level`](Self::skip_to_top_level): Skipping the remaining elements of all enclosing JSON arrays and objects
 ///  - Other:
 ///     - [`transfer_to`](Self::transfer_to): Reading a JSON value and writing it to a given JSON writer
@@ -1601,6 +1602,9 @@ pub trait JsonReader {
     /// Seeking to a specific location can be useful when parts of the processed JSON document
     /// are not relevant for the application processing it.
     ///
+    /// To continue reading at the original nesting level before `seek_to` had been called,
+    /// use [`seek_back`](Self::seek_back) afterwards.
+    ///
     /// # Examples
     /// ```
     /// # use struson::reader::*;
@@ -1684,6 +1688,84 @@ pub trait JsonReader {
             }
         }
 
+        Ok(())
+    }
+
+    /// Opposite of [`seek_to`](Self::seek_to)
+    ///
+    /// This is the opposite of the `seek_to` method, it goes through the path in reverse
+    /// order skipping remaining JSON array items and object members and closing arrays
+    /// and objects. Therefore once this method returns the reader is at the same nesting
+    /// level it was before `seek_to` had been called and allows continuing reading
+    /// values there.
+    ///
+    /// For directly getting to the top-level regardless of the current position of the
+    /// JSON reader, prefer [`skip_to_top_level`](Self::skip_to_top_level) instead.
+    ///
+    /// The correct usage looks like this:
+    /// 1. Call `seek_to` with _path_
+    /// 2. Read one or more values
+    /// 3. Call `seek_back` with the same _path_
+    ///
+    /// Using this method in a different way can lead to errors and panics. In particular
+    /// it is important that for step 2:
+    /// - the value and all nested values (if any) are fully consumed; any additional JSON
+    ///   arrays and objects which are started must be closed again
+    /// - no enclosing JSON arrays or objects must be closed
+    /// - if the path points to the member of a JSON object, then for every additionally read
+    ///   member name of that object the corresponding member value must be consumed as well
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::*;
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"[{"a": {"b": "first"}}, {"a": {"b": "second"}}]"#.as_bytes()
+    /// );
+    /// let mut values = Vec::<String>::new();
+    ///
+    /// json_reader.begin_array()?;
+    /// while json_reader.has_next()? {
+    ///     let path = json_path!["a", "b"];
+    ///     json_reader.seek_to(&path)?;
+    ///
+    ///     // Read the value to which the call seeked to
+    ///     let value = json_reader.next_string()?;
+    ///     values.push(value);
+    ///
+    ///     // Go back to original location to continue reading there
+    ///     json_reader.seek_back(&path)?;
+    /// }
+    /// json_reader.end_array()?;
+    ///
+    /// assert_eq!(values, vec!["first", "second"]);
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Panics
+    /// Panics may occur if not used according to the correct usage described above.
+    fn seek_back(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+        // Undo seek piece by piece in reverse order
+        for piece in rel_json_path.iter().rev() {
+            match piece {
+                JsonPathPiece::ArrayItem(_) => {
+                    // Skip remaining items
+                    while self.has_next()? {
+                        self.skip_value()?;
+                    }
+                    self.end_array()?;
+                }
+                JsonPathPiece::ObjectMember(_) => {
+                    // Skip remaining members
+                    while self.has_next()? {
+                        self.skip_name()?;
+                        self.skip_value()?;
+                    }
+                    self.end_object()?;
+                }
+            }
+        }
         Ok(())
     }
 
