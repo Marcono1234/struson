@@ -460,7 +460,24 @@ pub trait ValueReader<J: JsonReader> {
     /// Consumes and returns a JSON boolean value
     fn read_bool(self) -> Result<bool, ReaderError>;
 
-    /// Consumes and returns a JSON string value
+    /// Consumes a JSON string value as borrowed `str`
+    ///
+    /// The function `f` is called with the read JSON string value as argument.
+    ///
+    /// To read a JSON string value as owned `String` use [`read_string`](Self::read_string).
+    /*
+     * Note: Ideally would return a `&str`, but that does not seem to be possible because `self`
+     * is consumed. And for some of the `ValueReader` implementations below this would probably
+     * also not work because they call additional methods after reading the value, e.g. `consume_trailing_whitespace()`
+     */
+    fn read_str<T>(
+        self,
+        f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>>;
+
+    /// Consumes and returns a JSON string value as owned `String`
+    ///
+    /// To read a JSON string value as borrowed `str` use [`read_str`](Self::read_str).
     fn read_string(self) -> Result<String, ReaderError>;
 
     /// Consumes and returns a JSON number value
@@ -698,7 +715,7 @@ pub trait ValueReader<J: JsonReader> {
     /// the original nesting level, therefore acting as if it only consumed one value
     /// (and its nested values) at that level.
     ///
-    /// For seeking to and reading multiple values use [`ValueReader::read_seeked_multi`].
+    /// For seeking to and reading multiple values use [`read_seeked_multi`](Self::read_seeked_multi).
     ///
     /// # Examples
     /// ```
@@ -762,7 +779,7 @@ pub trait ValueReader<J: JsonReader> {
     /// If the structure of the JSON data does not match the path, for example the JSON data contains
     /// an array but the path expects an object, an error is returned.
     ///
-    /// For seeking to and reading a single value at a fixed path prefer [`ValueReader::read_seeked`].
+    /// For seeking to and reading a single value at a fixed path prefer [`read_seeked`](Self::read_seeked).
     ///
     /// # Examples
     /// ```
@@ -1236,7 +1253,7 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     /// If the structure of the JSON data does not match the path, for example when the JSON data
     /// contains an array but the path expects an object, an error is returned.
     ///
-    /// The seeking behavior of this method is equivalent to [`ValueReader::read_seeked`], but
+    /// The seeking behavior of this method is equivalent to [`read_seeked`](Self::read_seeked), but
     /// `seek_to` allows consuming the value afterwards without having to use a closure or separate
     /// function (as required by `read_seeked`), however it is only available at the top-level
     /// and not at nested levels in the JSON document.
@@ -1301,6 +1318,15 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
 
     fn read_bool(mut self) -> Result<bool, ReaderError> {
         let result = self.json_reader.next_bool()?;
+        self.finish()?;
+        Ok(result)
+    }
+
+    fn read_str<T>(
+        mut self,
+        f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        let result = f(self.json_reader.next_str()?)?;
         self.finish()?;
         Ok(result)
     }
@@ -1431,6 +1457,13 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         self.json_reader.next_bool()
     }
 
+    fn read_str<T>(
+        self,
+        f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        f(self.json_reader.next_str()?)
+    }
+
     fn read_string(self) -> Result<String, ReaderError> {
         self.json_reader.next_string()
     }
@@ -1517,6 +1550,14 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     fn read_bool(self) -> Result<bool, ReaderError> {
         self.consumed_value.set(true);
         self.json_reader.next_bool()
+    }
+
+    fn read_str<T>(
+        self,
+        f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        self.consumed_value.set(true);
+        f(self.json_reader.next_str()?)
     }
 
     fn read_string(self) -> Result<String, ReaderError> {
@@ -1660,6 +1701,15 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         self.json_reader.next_bool()
+    }
+
+    fn read_str<T>(
+        mut self,
+        f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        self.check_skip_name()?;
+        self.consumed_value.set(true);
+        f(self.json_reader.next_str()?)
     }
 
     fn read_string(mut self) -> Result<String, ReaderError> {

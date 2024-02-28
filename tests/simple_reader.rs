@@ -27,6 +27,9 @@ fn read() -> Result<(), Box<dyn Error>> {
     assert_eq!(true, json_reader.read_bool()?);
 
     let json_reader = new_reader("\"test\"");
+    assert_eq!("test", json_reader.read_str(|s| Ok(s.to_owned()))?);
+
+    let json_reader = new_reader("\"test\"");
     assert_eq!("test", json_reader.read_string()?);
 
     let json_reader = new_reader("1");
@@ -64,7 +67,8 @@ fn read_array() -> Result<(), Box<dyn Error>> {
         [
             null,
             true,
-            "test",
+            "str",
+            "string",
             1,
             2.3,
             4.5e6,
@@ -84,7 +88,8 @@ fn read_array() -> Result<(), Box<dyn Error>> {
 
         array_reader.read_null()?;
         assert_eq!(true, array_reader.read_bool()?);
-        assert_eq!("test", array_reader.read_string()?);
+        assert_eq!("str", array_reader.read_str(|s| Ok(s.to_owned()))?);
+        assert_eq!("string", array_reader.read_string()?);
         assert_eq!(1_u64, array_reader.read_number()??);
         assert_eq!(2.3_f64, array_reader.read_number()??);
         assert_eq!("4.5e6", array_reader.read_number_as_string()?);
@@ -158,14 +163,15 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
         {
             "a": null,
             "b": true,
-            "c": "test",
-            "d": 1,
-            "e": 2.3,
-            "f": 4.5e6,
-            "g": "serde",
-            "h": [false],
-            "i": {"nested1": true},
-            "j": {"nested2": true}
+            "c": "str",
+            "d": "string",
+            "e": 1,
+            "f": 2.3,
+            "g": 4.5e6,
+            "h": "serde",
+            "i": [false],
+            "j": {"nested1": true},
+            "k": {"nested2": true}
         }
         "#,
     );
@@ -182,21 +188,22 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
                 assert_eq!(ValueType::Boolean, member_reader.peek_value()?);
                 assert_eq!(true, member_reader.read_bool()?);
             }
-            2 => assert_eq!("test", member_reader.read_string()?),
-            3 => assert_eq!(1_u64, member_reader.read_number()??),
-            4 => assert_eq!(2.3_f64, member_reader.read_number()??),
-            5 => assert_eq!("4.5e6", member_reader.read_number_as_string()?),
-            6 => assert_eq!("serde", member_reader.read_deserialize::<String>()?),
-            7 => member_reader.read_array(|array_reader| {
+            2 => assert_eq!("str", member_reader.read_str(|s| Ok(s.to_owned()))?),
+            3 => assert_eq!("string", member_reader.read_string()?),
+            4 => assert_eq!(1_u64, member_reader.read_number()??),
+            5 => assert_eq!(2.3_f64, member_reader.read_number()??),
+            6 => assert_eq!("4.5e6", member_reader.read_number_as_string()?),
+            7 => assert_eq!("serde", member_reader.read_deserialize::<String>()?),
+            8 => member_reader.read_array(|array_reader| {
                 assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            8 => member_reader.read_object_borrowed_names(|mut member_reader| {
+            9 => member_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
                 assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => member_reader.read_object_owned_names(|name, value_reader| {
+            10 => member_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
                 assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
@@ -206,7 +213,7 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
         index += 1;
         Ok(())
     })?;
-    assert_eq!(10, index);
+    assert_eq!(11, index);
     Ok(())
 }
 
@@ -217,14 +224,15 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
         {
             "a": null,
             "b": true,
-            "c": "test",
-            "d": 1,
-            "e": 2.3,
-            "f": 4.5e6,
-            "g": "serde",
-            "h": [false],
-            "i": {"nested1": true},
-            "j": {"nested2": true}
+            "c": "str",
+            "d": "string",
+            "e": 1,
+            "f": 2.3,
+            "g": 4.5e6,
+            "h": "serde",
+            "i": [false],
+            "j": {"nested1": true},
+            "k": {"nested2": true}
         }
         "#,
     );
@@ -240,21 +248,22 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
                 assert_eq!(ValueType::Boolean, value_reader.peek_value()?);
                 assert_eq!(true, value_reader.read_bool()?);
             }
-            2 => assert_eq!("test", value_reader.read_string()?),
-            3 => assert_eq!(1_u64, value_reader.read_number()??),
-            4 => assert_eq!(2.3_f64, value_reader.read_number()??),
-            5 => assert_eq!("4.5e6", value_reader.read_number_as_string()?),
-            6 => assert_eq!("serde", value_reader.read_deserialize::<String>()?),
-            7 => value_reader.read_array(|array_reader| {
+            2 => assert_eq!("str", value_reader.read_str(|s| Ok(s.to_owned()))?),
+            3 => assert_eq!("string", value_reader.read_string()?),
+            4 => assert_eq!(1_u64, value_reader.read_number()??),
+            5 => assert_eq!(2.3_f64, value_reader.read_number()??),
+            6 => assert_eq!("4.5e6", value_reader.read_number_as_string()?),
+            7 => assert_eq!("serde", value_reader.read_deserialize::<String>()?),
+            8 => value_reader.read_array(|array_reader| {
                 assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            8 => value_reader.read_object_borrowed_names(|mut member_reader| {
+            9 => value_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
                 assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => value_reader.read_object_owned_names(|name, value_reader| {
+            10 => value_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
                 assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
@@ -264,7 +273,7 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
         index += 1;
         Ok(())
     })?;
-    assert_eq!(10, index);
+    assert_eq!(11, index);
     Ok(())
 }
 
@@ -1237,6 +1246,10 @@ fn closure_error_propagation() {
             _ => panic!("unexpected result: {result:?}"),
         }
     }
+
+    // --- read_str ---
+    let json_reader = new_reader("\"test\"");
+    assert_error(json_reader.read_str(|_| Err(message.into())));
 
     // --- read_array ---
     let json_reader = new_reader("[");
