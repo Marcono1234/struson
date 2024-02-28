@@ -409,6 +409,13 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
         result.unwrap_err().to_string()
     );
 
+    // Returning result
+    let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
+    let result = json_reader.read_seeked(&json_path!["a"], |value_reader| {
+        Ok(value_reader.read_number_as_string()?)
+    })?;
+    assert_eq!("1", result);
+
     // Duplicate member
     let json_reader = new_reader(r#"{"a": 1, "a": 2}"#);
     let mut values = Vec::new();
@@ -421,7 +428,7 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
     // Error: Wrong JSON value type
     let json_reader = new_reader("[1]");
     // Seeking empty path
-    let result = json_reader.read_seeked(&json_path!["a"], |_| {
+    let result = json_reader.read_seeked(&json_path!["a"], |_| -> Result<(), _> {
         panic!("should not have been called");
     });
     assert_eq!(
@@ -441,7 +448,7 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
 
     // Error propagation
     let json_reader = new_reader("[1]");
-    let result = json_reader.read_seeked(&json_path![0], |_| Err("custom-error".into()));
+    let result = json_reader.read_seeked(&json_path![0], |_| Err::<(), _>("custom-error".into()));
     assert_eq!("custom-error", result.unwrap_err().to_string());
 
     // Nested usage inside of other reading methods, including nested inside another `read_seeked` call

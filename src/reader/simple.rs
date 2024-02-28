@@ -728,13 +728,13 @@ pub trait ValueReader<J: JsonReader> {
      * these advantages:
      * - It guarantees that it either calls `f` or returns an error; for `read_seeked_multi` you
      *   would have to deduce that from the given path or use `at_least_one_match = true`
-     * - It supports an `FnOnce` (instead of just an `FnMut`)
+     * - It supports an `FnOnce` (instead of just an `FnMut`), and returning a result from `f`
      */
-    fn read_seeked(
+    fn read_seeked<T>(
         self,
         path: &JsonPath,
-        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>>;
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>>;
 
     /// Seeks to multiple values and consumes them
     ///
@@ -872,22 +872,22 @@ fn read_object_owned_names<J: JsonReader>(
 }
 
 /// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
-fn read_value<J: JsonReader>(
+fn read_value<J: JsonReader, T>(
     json_reader: &mut J,
-    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-) -> Result<(), Box<dyn Error>> {
+    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+) -> Result<T, Box<dyn Error>> {
     let consumed_value = Rc::new(Cell::new(false));
     let value_reader = SingleValueReader {
         json_reader,
         consumed_value: Rc::clone(&consumed_value),
     };
 
-    f(value_reader)?;
+    let result = f(value_reader)?;
     // If the function did not consume the value, skip it
     if !consumed_value.get() {
         json_reader.skip_value()?;
     }
-    Ok(())
+    Ok(result)
 }
 
 /// 'Undoes' a `seek_to` call by consuming remaining array items and
@@ -916,15 +916,15 @@ fn undo_seek<J: JsonReader>(json_reader: &mut J, path: &JsonPath) -> Result<(), 
     Ok(())
 }
 
-fn read_seeked<J: JsonReader>(
+fn read_seeked<J: JsonReader, T>(
     json_reader: &mut J,
     path: &JsonPath,
-    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-) -> Result<(), Box<dyn Error>> {
+    f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+) -> Result<T, Box<dyn Error>> {
     json_reader.seek_to(path)?;
-    read_value(json_reader, f)?;
+    let result = read_value(json_reader, f)?;
     undo_seek(json_reader, path)?;
-    Ok(())
+    Ok(result)
 }
 
 fn read_seeked_multi<J: JsonReader>(
@@ -1390,14 +1390,14 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(())
     }
 
-    fn read_seeked(
+    fn read_seeked<T>(
         mut self,
         path: &JsonPath,
-        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>> {
-        read_seeked(&mut self.json_reader, path, f)?;
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        let result = read_seeked(&mut self.json_reader, path, f)?;
         self.finish()?;
-        Ok(())
+        Ok(result)
     }
 
     fn read_seeked_multi(
@@ -1501,11 +1501,11 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         read_object_owned_names(self.json_reader, f)
     }
 
-    fn read_seeked(
+    fn read_seeked<T>(
         self,
         path: &JsonPath,
-        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>> {
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
         read_seeked(self.json_reader, path, f)
     }
 
@@ -1597,11 +1597,11 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         read_object_owned_names(self.json_reader, f)
     }
 
-    fn read_seeked(
+    fn read_seeked<T>(
         self,
         path: &JsonPath,
-        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>> {
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
         self.consumed_value.set(true);
         read_seeked(self.json_reader, path, f)
     }
@@ -1748,11 +1748,11 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         read_object_owned_names(self.json_reader, f)
     }
 
-    fn read_seeked(
+    fn read_seeked<T>(
         mut self,
         path: &JsonPath,
-        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
-    ) -> Result<(), Box<dyn Error>> {
+        f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
         self.check_skip_name()?;
         self.consumed_value.set(true);
         read_seeked(self.json_reader, path, f)
