@@ -121,6 +121,29 @@ fn read_array() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn read_array_unexpected_items_count() {
+    let json_reader = new_reader("[]");
+    let result = json_reader.read_array(|array_reader| {
+        array_reader.read_bool()?;
+        Ok(())
+    });
+    assert_eq!(
+        "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[1]");
+    let result = json_reader.read_array(|_| {
+        // Does not read any items
+        Ok(())
+    });
+    assert_eq!(
+        "unexpected JSON structure MoreElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+}
+
+#[test]
 fn read_array_all() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader("[1, 2, 3]");
     let mut values = Vec::<u64>::new();
@@ -1221,15 +1244,6 @@ fn errors() {
     assert_error(
         json_reader.read_bool().map_err(|e| e.into()),
         "expected JSON value type Boolean but got Number at path '$', line 0, column 0 (data pos 0)"
-    );
-
-    let json_reader = new_reader("[]");
-    assert_error(
-        json_reader.read_array(|array_reader| {
-            array_reader.read_bool()?;
-            Ok(())
-        }),
-        "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
     );
 }
 
