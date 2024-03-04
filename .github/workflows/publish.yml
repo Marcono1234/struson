@@ -59,7 +59,7 @@ jobs:
           git tag -a "v${{ steps.get-new-version.outputs.VERSION }}" -m "Release ${{ steps.get-new-version.outputs.VERSION }}"
 
       - name: Install cargo-make
-        uses: davidB/rust-cargo-make@b23e588bc82d020c75f58c4acbc563fb2cd064fc  # v1.10.0
+        uses: davidB/rust-cargo-make@689ca68d60478a0ba51fb79b2c739219d7daf6a2  # v1.10.1
         with:
           version: '0.37.2'
 
