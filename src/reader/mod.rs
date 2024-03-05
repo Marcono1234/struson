@@ -808,6 +808,48 @@ pub enum ReaderError {
     },
 }
 
+impl ReaderError {
+    /// Creates a clone of this Error
+    ///
+    /// For most of the variants of this error this acts like a regular [`Clone`]. The only
+    /// exception is [`ReaderError::IoError`] where it might not be possible to fully preserve
+    /// all data of the original error.
+    #[allow(dead_code)] // called by Simple API (but currently guarded by feature flag)
+    pub(crate) fn rough_clone(&self) -> Self {
+        match self {
+            Self::SyntaxError(e) => Self::SyntaxError(e.clone()),
+            Self::UnexpectedValueType {
+                expected,
+                actual,
+                location,
+            } => Self::UnexpectedValueType {
+                expected: *expected,
+                actual: *actual,
+                location: location.clone(),
+            },
+            Self::UnexpectedStructure { kind, location } => Self::UnexpectedStructure {
+                kind: kind.clone(),
+                location: location.clone(),
+            },
+            Self::MaxNestingDepthExceeded {
+                max_nesting_depth,
+                location,
+            } => Self::MaxNestingDepthExceeded {
+                max_nesting_depth: *max_nesting_depth,
+                location: location.clone(),
+            },
+            Self::UnsupportedNumberValue { number, location } => Self::UnsupportedNumberValue {
+                number: number.clone(),
+                location: location.clone(),
+            },
+            Self::IoError { error, location } => Self::IoError {
+                error: IoError::new(error.kind(), error.to_string()),
+                location: location.clone(),
+            },
+        }
+    }
+}
+
 /// Error which occurred while calling [`JsonReader::transfer_to`]
 #[derive(Error, Debug)]
 pub enum TransferError {
@@ -1972,9 +2014,98 @@ pub trait JsonReader {
 
 #[cfg(test)]
 mod tests {
+    use std::io::ErrorKind;
+
     use super::{
-        json_path::JsonPathPiece, JsonReaderPosition, LinePosition, UnexpectedStructureKind,
+        json_path::{json_path, JsonPathPiece},
+        IoError, JsonReaderPosition, JsonSyntaxError, LinePosition, ReaderError, SyntaxErrorKind,
+        UnexpectedStructureKind, ValueType,
     };
+
+    #[test]
+    fn reader_error_clone() {
+        let original_location = JsonReaderPosition {
+            path: Some(json_path!["a", 1].to_vec()),
+            line_pos: Some(LinePosition { line: 0, column: 7 }),
+            data_pos: Some(7),
+        };
+
+        let syntax_error = JsonSyntaxError {
+            kind: SyntaxErrorKind::MalformedJson,
+            location: original_location.clone(),
+        };
+        let original = ReaderError::SyntaxError(syntax_error.clone());
+        match original.rough_clone() {
+            ReaderError::SyntaxError(e) => assert_eq!(syntax_error, e),
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        let original = ReaderError::UnexpectedValueType {
+            expected: ValueType::Array,
+            actual: ValueType::Boolean,
+            location: original_location.clone(),
+        };
+        match original.rough_clone() {
+            ReaderError::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean,
+                location,
+            } => assert_eq!(original_location, location),
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        let unexpected_structure = UnexpectedStructureKind::TooShortArray { expected_index: 2 };
+        let original = ReaderError::UnexpectedStructure {
+            kind: unexpected_structure.clone(),
+            location: original_location.clone(),
+        };
+        match original.rough_clone() {
+            ReaderError::UnexpectedStructure { kind, location } => {
+                assert_eq!(unexpected_structure, kind);
+                assert_eq!(original_location, location);
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        let original = ReaderError::MaxNestingDepthExceeded {
+            max_nesting_depth: 5,
+            location: original_location.clone(),
+        };
+        match original.rough_clone() {
+            ReaderError::MaxNestingDepthExceeded {
+                max_nesting_depth: 5,
+                location,
+            } => assert_eq!(original_location, location),
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        let original = ReaderError::UnsupportedNumberValue {
+            number: "1e123456".to_owned(),
+            location: original_location.clone(),
+        };
+        match original.rough_clone() {
+            ReaderError::UnsupportedNumberValue { number, location } => {
+                assert_eq!("1e123456", number);
+                assert_eq!(original_location, location);
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        let original = ReaderError::IoError {
+            error: IoError::new(ErrorKind::InvalidData, "custom-message"),
+            location: original_location.clone(),
+        };
+        match original.rough_clone() {
+            ReaderError::IoError { error, location } => {
+                assert_eq!(ErrorKind::InvalidData, error.kind());
+                // Note: Original error cannot be fully preserved, only its `to_string` value is preserved
+                assert_eq!("custom-message", error.get_ref().unwrap().to_string());
+
+                assert_eq!(original_location, location);
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+    }
 
     #[test]
     fn json_reader_location_display() {

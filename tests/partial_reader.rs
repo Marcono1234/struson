@@ -276,7 +276,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
     }
 
-    fn next_string_reader(&mut self) -> Result<Box<dyn std::io::Read + '_>, ReaderError> {
+    fn next_string_reader(&mut self) -> Result<std::io::Empty, ReaderError> {
         unimplemented!()
     }
 

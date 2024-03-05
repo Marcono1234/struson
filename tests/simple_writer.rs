@@ -4,9 +4,11 @@
 #![cfg(feature = "serde")]
 
 use std::{
+    cmp::min,
+    collections::HashMap,
     error::Error,
     fmt::Debug,
-    io::{sink, Sink},
+    io::{sink, ErrorKind, Sink, Write},
 };
 
 use struson::writer::{
@@ -138,4 +140,117 @@ fn closure_error_propagation() {
     assert_error(json_writer.write_object(|object_writer| {
         object_writer.write_object_member("name", |_| Err(message.into()))
     }));
+}
+
+/// Tests behavior when a user-provided closure discards errors and does not
+/// propagate them
+#[test]
+fn discarded_error_handling() {
+    fn new_writer() -> SimpleJsonWriter<JsonStreamWriter<Sink>> {
+        SimpleJsonWriter::new(sink())
+    }
+
+    let json_writer = new_writer();
+    let result = json_writer.write_array(|array_writer| {
+        let _ = array_writer.write_fp_number(f32::NAN);
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': non-finite number: {}",
+            ErrorKind::Other,
+            f32::NAN
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_writer = new_writer();
+    let result = json_writer.write_object(|object_writer| {
+        let _ = object_writer.write_fp_number_member("name", f32::NAN);
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': non-finite number: {}",
+            ErrorKind::Other,
+            f32::NAN
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_writer = new_writer();
+    let result = json_writer.write_array(|array_writer| {
+        let _ = array_writer.write_number_string("invalid");
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': invalid JSON number: invalid",
+            ErrorKind::Other
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_writer = new_writer();
+    let result = json_writer.write_array(|array_writer| {
+        let _ = array_writer.write_serialize(&f32::NAN);
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': invalid number: non-finite number: {}",
+            ErrorKind::Other,
+            f32::NAN
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_writer = new_writer();
+    let result = json_writer.write_array(|array_writer| {
+        let value = HashMap::from([(vec![1, 2], true)]);
+        let _ = array_writer.write_serialize(&value);
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': map key cannot be converted to string",
+            ErrorKind::Other
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    /// Writer which only permits a certain amount of bytes, returning an error afterwards
+    struct MaxCapacityWriter {
+        remaining_capacity: usize,
+    }
+    impl Write for MaxCapacityWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.remaining_capacity == 0 {
+                return Err(std::io::Error::new(ErrorKind::WouldBlock, "custom-error"));
+            }
+
+            let write_count = min(self.remaining_capacity, buf.len());
+            self.remaining_capacity -= write_count;
+            Ok(write_count)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            // Do nothing
+            Ok(())
+        }
+    }
+    let json_writer =
+        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
+            remaining_capacity: 4,
+        }));
+    let result = json_writer.write_array(|array_writer| {
+        // Must write long enough value to trigger flushing of JsonStreamWriter's buffer
+        let value = "a".repeat(1024 + 10);
+        let _ = array_writer.write_string(&value);
+        Ok(())
+    });
+    assert_eq!(
+        format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
+        result.unwrap_err().to_string()
+    )
 }

@@ -3,12 +3,17 @@
 #![cfg(feature = "experimental")]
 #![cfg(feature = "serde")]
 
-use std::{error::Error, fmt::Debug};
+use std::{
+    cmp::min,
+    error::Error,
+    fmt::Debug,
+    io::{ErrorKind, Read},
+};
 
 use struson::{
     json_path,
     reader::{
-        simple::{SimpleJsonReader, ValueReader},
+        simple::{multi_json_path::multi_json_path, SimpleJsonReader, ValueReader},
         JsonStreamReader, JsonSyntaxError, ReaderError, SyntaxErrorKind, ValueType,
     },
 };
@@ -1340,4 +1345,152 @@ fn closure_error_propagation() {
     assert_error(json_reader.read_object_owned_names(|_name, value_reader| {
         value_reader.read_object_owned_names(|_, _| Err(message.into()))
     }));
+}
+
+/// Tests behavior when a user-provided closure discards errors and does not
+/// propagate them
+#[test]
+fn discarded_error_handling() {
+    let json_reader = new_reader("[1]");
+    let result = json_reader.read_array(|array_reader| {
+        let _ = array_reader.read_null();
+        // Explicit read call after error
+        Ok(array_reader.read_number_as_string()?)
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[1]");
+    let result = json_reader.read_array(|array_reader| {
+        let _ = array_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[1, 2]");
+    let result = json_reader.read_array_items(|value_reader| {
+        // This must not cause an infinite loop; `read_array_items` should exit
+        let _ = value_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
+    let result = json_reader.read_object_owned_names(|_name, value_reader| {
+        // This must not cause an infinite loop; `read_object_owned_names` should exit
+        let _ = value_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$.a', line 0, column 6 (data pos 6)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader(r#"[0, 1]"#);
+    // Path with trailing `[+]`
+    let result = json_reader.read_seeked_multi(&multi_json_path![[+]], true, |value_reader| {
+        // This must not cause an infinite loop; `read_seeked_multi` should exit
+        let _ = value_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader(r#"[[0], [1]]"#);
+    // Path with non-trailing `[+]`
+    let result = json_reader.read_seeked_multi(&multi_json_path![[+], 0], true, |value_reader| {
+        // This must not cause an infinite loop; `read_seeked_multi` should exit
+        let _ = value_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[]");
+    let result = json_reader.read_array(|array_reader| {
+        let _ = array_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[?]");
+    let result = json_reader.read_array(|array_reader| {
+        let _ = array_reader.read_null();
+        Ok(())
+    });
+    assert_eq!(
+        "syntax error: JSON syntax error MalformedJson at path '$[0]', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[1000]");
+    let result = json_reader.read_array(|array_reader| {
+        let _: Result<u8, _> = array_reader.read_deserialize();
+        Ok(())
+    });
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "syntax error: JSON syntax error IncompleteDocument at <location unavailable>",
+        result.unwrap_err().to_string()
+    );
+
+    /// Reader which returns an EOF error (instead of 0) when the end has been reached
+    struct EofReader {
+        data: &'static [u8],
+    }
+    impl Read for EofReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.data.is_empty() {
+                return Err(std::io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "custom-message",
+                ));
+            }
+            if buf.is_empty() {
+                return Ok(0);
+            }
+
+            let copy_count = min(self.data.len(), buf.len());
+            buf[..copy_count].copy_from_slice(&self.data[..copy_count]);
+            self.data = &self.data[copy_count..];
+            Ok(copy_count)
+        }
+    }
+    let json_reader = SimpleJsonReader::from_json_reader(JsonStreamReader::new(EofReader {
+        data: r#"{"test"#.as_bytes(),
+    }));
+    let result = json_reader.read_object_borrowed_names(|mut member_reader| {
+        let _ = member_reader.read_name();
+        let _ = member_reader.read_bool();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
+            ErrorKind::UnexpectedEof
+        ),
+        result.unwrap_err().to_string()
+    );
 }

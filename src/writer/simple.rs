@@ -11,6 +11,7 @@
 
 use std::{error::Error, io::Write};
 
+use self::error_safe_writer::ErrorSafeJsonWriter;
 use crate::writer::{
     FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, JsonWriter,
 };
@@ -125,7 +126,7 @@ pub trait ValueWriter<J: JsonWriter> {
 }
 
 fn write_array<J: JsonWriter>(
-    json_writer: &mut J,
+    json_writer: &mut ErrorSafeJsonWriter<J>,
     f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
     json_writer.begin_array()?;
@@ -136,7 +137,7 @@ fn write_array<J: JsonWriter>(
 }
 
 fn write_object<J: JsonWriter>(
-    json_writer: &mut J,
+    json_writer: &mut ErrorSafeJsonWriter<J>,
     f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
     json_writer.begin_object()?;
@@ -146,6 +147,172 @@ fn write_object<J: JsonWriter>(
     Ok(())
 }
 
+mod error_safe_writer {
+    use std::io::ErrorKind;
+
+    use super::*;
+    use crate::writer::{IoError, UnreachableStringValueWriter};
+
+    type StoredIoError = (ErrorKind, String);
+
+    fn convert_io_error(error: &IoError) -> StoredIoError {
+        (error.kind(), error.to_string())
+    }
+
+    fn convert_number_error(error: &JsonNumberError) -> StoredIoError {
+        match error {
+            JsonNumberError::InvalidNumber(message) => (ErrorKind::Other, message.clone()),
+            JsonNumberError::IoError(e) => convert_io_error(e),
+        }
+    }
+
+    fn error_from_stored(error: &StoredIoError) -> IoError {
+        // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+        // because it considers the original error kind as safe to retry
+        // And also because the original error might have been related to originally provided data
+        // (e.g. invalid UTF-8 data) and is unrelated to the now called JSON writer method
+        IoError::other(format!("previous error '{}': {}", error.0, error.1.clone()))
+    }
+
+    /// If previously an error had occurred, returns that error. Otherwise uses the delegate
+    /// writer and in case of an error stores it to prevent subsequent usage.
+    /* This is a macro instead of a function to support error conversion */
+    macro_rules! use_delegate {
+        ($self:ident, |$json_writer:ident| $writing_action:expr, |$original_error:ident| $original_error_converter:expr, |$stored_error:ident| $stored_error_converter:expr) => {
+            if let Some(error) = &$self.error {
+                // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+                // because it considers the original error kind as safe to retry
+                // And also because the original error might have been related to originally provided data
+                // (e.g. invalid UTF-8 data) and is unrelated to the now called JSON writer method
+                let $stored_error = error_from_stored(error);
+                Err($stored_error_converter)
+            } else {
+                let $json_writer = &mut $self.delegate;
+                let result = $writing_action;
+                if let Err($original_error) = &result {
+                    $self.error = Some($original_error_converter);
+                }
+                result
+            }
+        };
+        ($self:ident, |$json_writer:ident| $writing_action:expr) => {
+            use_delegate!(
+                $self,
+                |$json_writer| $writing_action,
+                |original_error| convert_io_error(original_error),
+                |stored_error| stored_error
+            )
+        }
+    }
+
+    /// [`JsonWriter`] implementation which in case of errors keeps returning the error and does
+    /// not use the underlying JSON writer anymore
+    ///
+    /// This is mainly to protect against user-provided closures or functions which accidentally
+    /// discard and not propagate writer errors, which could lead to subsequent panics. How exactly
+    /// this writer repeats errors or what information it preserves is unspecified; users should
+    /// always propagate writer errors and not (intentionally) rely on this safeguard here.
+    #[derive(Debug)]
+    pub(super) struct ErrorSafeJsonWriter<J: JsonWriter> {
+        pub(super) delegate: J,
+        // Store as `IoError` (destructured as `(kind, message)`) because that is the common error type
+        // supported by all methods
+        pub(super) error: Option<StoredIoError>,
+    }
+
+    impl<J: JsonWriter> JsonWriter for ErrorSafeJsonWriter<J> {
+        fn begin_object(&mut self) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.begin_object())
+        }
+
+        fn end_object(&mut self) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.end_object())
+        }
+
+        fn begin_array(&mut self) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.begin_array())
+        }
+
+        fn end_array(&mut self) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.end_array())
+        }
+
+        fn name(&mut self, name: &str) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.name(name))
+        }
+
+        fn null_value(&mut self) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.null_value())
+        }
+
+        fn bool_value(&mut self, value: bool) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.bool_value(value))
+        }
+
+        fn string_value(&mut self, value: &str) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.string_value(value))
+        }
+
+        fn string_value_writer(&mut self) -> Result<UnreachableStringValueWriter, IoError> {
+            unreachable!("not used by Simple API")
+            // If this is used in the future, the string value writer must track all of its errors
+            // and then store them here as error as well, to prevent further JSON writer usage
+        }
+
+        fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
+            use_delegate!(
+                self,
+                |w| w.number_value_from_string(value),
+                |original_error| convert_number_error(original_error),
+                |stored_error| JsonNumberError::IoError(stored_error)
+            )
+        }
+
+        fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
+            use_delegate!(self, |w| w.number_value(value))
+        }
+
+        fn fp_number_value<N: FloatingPointNumber>(
+            &mut self,
+            value: N,
+        ) -> Result<(), JsonNumberError> {
+            use_delegate!(
+                self,
+                |w| w.fp_number_value(value),
+                |original_error| convert_number_error(original_error),
+                |stored_error| JsonNumberError::IoError(stored_error)
+            )
+        }
+
+        #[cfg(feature = "serde")]
+        fn serialize_value<S: serde::ser::Serialize>(
+            &mut self,
+            value: &S,
+        ) -> Result<(), crate::serde::SerializerError> {
+            use crate::serde::SerializerError;
+
+            use_delegate!(
+                self,
+                |w| w.serialize_value(value),
+                |original_error| match original_error {
+                    SerializerError::IoError(e) => convert_io_error(e),
+                    e => (ErrorKind::Other, e.to_string()),
+                },
+                // Note: Could also create `SerializerError::Custom` instead
+                |stored_error| SerializerError::IoError(stored_error)
+            )
+        }
+
+        fn finish_document(self) -> Result<(), IoError> {
+            // Special code because this method consumes `self`
+            if let Some(error) = self.error {
+                return Err(error_from_stored(&error));
+            }
+            self.delegate.finish_document()
+        }
+    }
+}
+
 /// JSON writer variant which is easier to use than [`JsonWriter`]
 ///
 /// This JSON writer variant ensures correct usage at compile-time making it easier and less
@@ -153,8 +320,9 @@ fn write_object<J: JsonWriter>(
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonWriter` being less flexible
 /// to use, and it not offerring all features of [`JsonWriter`].
 ///
-/// When an error is returned by one of the methods of the writer, processing should be aborted
-/// and the writer should not be used any further.
+/// When an error is returned by one of the methods of the writer, the error should be propagated
+/// (for example by using Rust's `?` operator), processing should be aborted and the writer should
+/// not be used any further.
 ///
 /// # Examples
 /// ```
@@ -175,7 +343,7 @@ fn write_object<J: JsonWriter>(
 /// ```
 #[derive(Debug)]
 pub struct SimpleJsonWriter<J: JsonWriter> {
-    json_writer: J,
+    json_writer: ErrorSafeJsonWriter<J>,
 }
 impl<J: JsonWriter> SimpleJsonWriter<J> {
     /// Creates a new `SimpleJsonWriter` from the given [`JsonWriter`]
@@ -202,7 +370,12 @@ impl<J: JsonWriter> SimpleJsonWriter<J> {
     /// );
     /// ```
     pub fn from_json_writer(json_writer: J) -> Self {
-        SimpleJsonWriter { json_writer }
+        SimpleJsonWriter {
+            json_writer: ErrorSafeJsonWriter {
+                delegate: json_writer,
+                error: None,
+            },
+        }
     }
 }
 impl<W: Write> SimpleJsonWriter<JsonStreamWriter<W>> {
@@ -290,7 +463,7 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
 /// This struct is used by [`ValueWriter::write_array`].
 #[derive(Debug)]
 pub struct ArrayWriter<'a, J: JsonWriter> {
-    json_writer: &'a mut J,
+    json_writer: &'a mut ErrorSafeJsonWriter<J>,
 }
 // Implement for `&mut ArrayWriter` to allow writing multiple values instead of just one
 impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
@@ -353,7 +526,7 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
 /// This struct is used by [`ValueWriter::write_object`].
 #[derive(Debug)]
 pub struct ObjectWriter<'a, J: JsonWriter> {
-    json_writer: &'a mut J,
+    json_writer: &'a mut ErrorSafeJsonWriter<J>,
 }
 impl<J: JsonWriter> ObjectWriter<'_, J> {
     /// Writes a member with JSON null as value

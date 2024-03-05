@@ -523,7 +523,7 @@ impl<R: Read> JsonStreamReader<R> {
         self.buf_pos += 1;
     }
 
-    /// Reads the next byte, throwing an error if the end of the
+    /// Reads the next byte, returning an error if the end of the
     /// input has been reached
     fn read_byte(&mut self, eof_error_kind: SyntaxErrorKind) -> Result<u8, StringReadingError> {
         if let Some(b) = self.peek_byte()? {
@@ -2475,11 +2475,10 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use super::*;
     use crate::writer::{
         FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, StringValueWriter,
+        UnreachableStringValueWriter,
     };
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -4413,26 +4412,6 @@ mod tests {
     fn transfer_to_writer_error() {
         fn err() -> IoError {
             IoError::new(ErrorKind::Other, "test error")
-        }
-
-        struct UnreachableStringValueWriter;
-        impl Write for UnreachableStringValueWriter {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                unreachable!()
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                unreachable!()
-            }
-        }
-        impl StringValueWriter for UnreachableStringValueWriter {
-            fn write_str(&mut self, _: &str) -> Result<(), IoError> {
-                unreachable!()
-            }
-
-            fn finish_value(self) -> Result<(), IoError> {
-                unreachable!()
-            }
         }
 
         struct FailingJsonWriter;

@@ -11,11 +11,17 @@
 
 use std::{cell::Cell, error::Error, io::Read, rc::Rc, str::FromStr};
 
-use self::multi_json_path::MultiJsonPath;
-use crate::reader::{
-    json_path::{JsonPath, JsonPathPiece},
-    simple::multi_json_path::MultiJsonPathPiece,
-    JsonReader, JsonStreamReader, ReaderError, ValueType,
+use self::{
+    error_safe_reader::ErrorSafeJsonReader,
+    multi_json_path::{MultiJsonPath, MultiJsonPathPiece},
+};
+use crate::{
+    reader::{
+        json_path::{JsonPath, JsonPathPiece},
+        JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, ReaderError,
+        SyntaxErrorKind, TransferError, ValueType,
+    },
+    writer::JsonWriter,
 };
 
 /// Module for 'multi JSON path'
@@ -830,7 +836,7 @@ pub trait ValueReader<J: JsonReader> {
 }
 
 fn read_array<J: JsonReader, T>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
 ) -> Result<T, Box<dyn Error>> {
     json_reader.begin_array()?;
@@ -841,7 +847,7 @@ fn read_array<J: JsonReader, T>(
 }
 
 fn read_object_borrowed_names<J: JsonReader>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     mut f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
     json_reader.begin_object()?;
@@ -867,7 +873,7 @@ fn read_object_borrowed_names<J: JsonReader>(
 }
 
 fn read_object_owned_names<J: JsonReader>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     mut f: impl FnMut(String, SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
     json_reader.begin_object()?;
@@ -890,7 +896,7 @@ fn read_object_owned_names<J: JsonReader>(
 
 /// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
 fn read_value<J: JsonReader, T>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
 ) -> Result<T, Box<dyn Error>> {
     let consumed_value = Rc::new(Cell::new(false));
@@ -908,7 +914,7 @@ fn read_value<J: JsonReader, T>(
 }
 
 fn read_seeked<J: JsonReader, T>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     path: &JsonPath,
     f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
 ) -> Result<T, Box<dyn Error>> {
@@ -919,7 +925,7 @@ fn read_seeked<J: JsonReader, T>(
 }
 
 fn read_seeked_multi<J: JsonReader>(
-    json_reader: &mut J,
+    json_reader: &mut ErrorSafeJsonReader<J>,
     original_path: &MultiJsonPath,
     require_at_least_one_match: bool,
     mut f: impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
@@ -1166,6 +1172,230 @@ fn read_seeked_multi<J: JsonReader>(
     }
 }
 
+mod error_safe_reader {
+    use super::*;
+
+    /// Creates a [`ReaderError`] for situations where the original error cannot be preserved
+    fn create_dummy_error(location: &JsonReaderPosition) -> ReaderError {
+        ReaderError::SyntaxError(JsonSyntaxError {
+            // This error kind does not suit that well, but the other kinds suit even worse
+            // Mainly have to return 'any' error; users should not rely on this safeguard in the first place
+            kind: SyntaxErrorKind::IncompleteDocument,
+            location: location.clone(),
+        })
+    }
+
+    /// Creates a dummy [`ReaderError`] with unknown position
+    fn create_unknown_pos_error() -> ReaderError {
+        let location = JsonReaderPosition {
+            path: None,
+            line_pos: None,
+            data_pos: None,
+        };
+        create_dummy_error(&location)
+    }
+
+    /// If previously an error had occurred, returns that error. Otherwise uses the delegate
+    /// reader and in case of an error stores it to prevent subsequent usage.
+    /* This is a macro instead of a function for methods returning `&str`, and to support error conversion */
+    macro_rules! use_delegate {
+        ($self:ident, |$json_reader:ident| $reading_action:expr, |$original_error:ident| $original_error_converter:expr, |$stored_error:ident| $stored_error_converter:expr) => {
+            if let Some(error) = &$self.error {
+                let $stored_error = error.rough_clone();
+                Err($stored_error_converter)
+            } else {
+                let $json_reader = &mut $self.delegate;
+                let result = $reading_action;
+                if let Err($original_error) = &result {
+                    $self.error = Some($original_error_converter);
+                }
+                result
+            }
+        };
+        ($self:ident, |$json_reader:ident| $reading_action:expr) => {
+            use_delegate!(
+                $self,
+                |$json_reader| $reading_action,
+                |original_error| {
+                    match original_error {
+                        // Note: List all error types instead of using a 'catch-all' to explicitly decide for each the
+                        // correct handling, especially when future error types are being added
+                        e @ ReaderError::SyntaxError(_) => e.rough_clone(),
+                        e @ ReaderError::MaxNestingDepthExceeded { .. } => e.rough_clone(),
+                        e @ ReaderError::UnsupportedNumberValue { .. } => e.rough_clone(),
+                        ReaderError::IoError { error, location } => ReaderError::IoError {
+                            // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+                            // because it considers the original error kind as safe to retry
+                            error: std::io::Error::other(format!(
+                                "previous error '{}': {}",
+                                error.kind(),
+                                error.to_string()
+                            )),
+                            location: location.clone(),
+                        },
+                        // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
+                        // therefore use a dummy error
+                        // Technically `JsonReader` allows retrying for these errors, but that would be error-prone when they ocurred during a
+                        // `seek_to` or similar where the reader position is uncertain afterwards; therefore don't allow retrying
+                        ReaderError::UnexpectedValueType { location, .. } => create_dummy_error(location),
+                        ReaderError::UnexpectedStructure { location, .. } => create_dummy_error(location),
+                    }
+                },
+                |stored_error| stored_error
+            )
+        }
+    }
+
+    /// [`JsonReader`] implementation which in case of errors keeps returning the error and does
+    /// not use the underlying JSON reader anymore
+    ///
+    /// This is mainly to protect against user-provided closures or functions which accidentally
+    /// discard and not propagate reader errors, which could lead to subsequent panics. How exactly
+    /// this reader repeats errors or what information it preserves is unspecified; users should
+    /// always propagate reader errors and not (intentionally) rely on this safeguard here.
+    #[derive(Debug)]
+    pub(super) struct ErrorSafeJsonReader<J: JsonReader> {
+        pub(super) delegate: J,
+        pub(super) error: Option<ReaderError>,
+    }
+
+    impl<J: JsonReader> JsonReader for ErrorSafeJsonReader<J> {
+        fn peek(&mut self) -> Result<ValueType, ReaderError> {
+            use_delegate!(self, |r| r.peek())
+        }
+
+        fn begin_object(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.begin_object())
+        }
+
+        fn end_object(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.end_object())
+        }
+
+        fn begin_array(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.begin_array())
+        }
+
+        fn end_array(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.end_array())
+        }
+
+        fn has_next(&mut self) -> Result<bool, ReaderError> {
+            use_delegate!(self, |r| r.has_next())
+        }
+
+        fn next_name(&mut self) -> Result<&str, ReaderError> {
+            use_delegate!(self, |r| r.next_name())
+        }
+
+        fn next_name_owned(&mut self) -> Result<String, ReaderError> {
+            use_delegate!(self, |r| r.next_name_owned())
+        }
+
+        fn next_str(&mut self) -> Result<&str, ReaderError> {
+            use_delegate!(self, |r| r.next_str())
+        }
+
+        fn next_string(&mut self) -> Result<String, ReaderError> {
+            use_delegate!(self, |r| r.next_string())
+        }
+
+        fn next_string_reader(&mut self) -> Result<std::io::Empty, ReaderError> {
+            unreachable!("not used by Simple API")
+            // If this is used in the future, the string value reader must track all of its errors
+            // and then store them here as error as well, to prevent further JSON reader usage
+        }
+
+        fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
+            use_delegate!(self, |r| r.next_number_as_str())
+        }
+
+        fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
+            use_delegate!(self, |r| r.next_number_as_string())
+        }
+
+        fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
+            use_delegate!(self, |r| r.next_number())
+        }
+
+        fn next_bool(&mut self) -> Result<bool, ReaderError> {
+            use_delegate!(self, |r| r.next_bool())
+        }
+
+        fn next_null(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.next_null())
+        }
+
+        #[cfg(feature = "serde")]
+        fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+            &mut self,
+        ) -> Result<D, crate::serde::DeserializerError> {
+            use crate::serde::DeserializerError;
+
+            use_delegate!(
+                self,
+                |r| r.deserialize_next(),
+                |original_error| {
+                    match original_error {
+                        DeserializerError::ReaderError(e) => e.rough_clone(),
+                        // Cannot easily preserve information for these errors
+                        DeserializerError::Custom(_) => create_unknown_pos_error(),
+                        DeserializerError::MaxNestingDepthExceeded(_) => create_unknown_pos_error(),
+                        DeserializerError::InvalidNumber(_) => create_unknown_pos_error(),
+                    }
+                },
+                |stored_error| DeserializerError::ReaderError(stored_error)
+            )
+        }
+
+        fn skip_name(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.skip_name())
+        }
+
+        fn skip_value(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.skip_value())
+        }
+
+        fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.skip_to_top_level())
+        }
+
+        fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
+            use_delegate!(
+                self,
+                |r| r.transfer_to(json_writer),
+                |original_error| match original_error {
+                    TransferError::ReaderError(e) => e.rough_clone(),
+                    // Cannot easily preserve this, and reporting it as reader IO error might be confusing
+                    TransferError::WriterError(_) => create_unknown_pos_error(),
+                },
+                |stored_error| TransferError::ReaderError(stored_error)
+            )
+        }
+
+        fn current_position(&self, include_path: bool) -> JsonReaderPosition {
+            // Permit calling this even if error occurred before
+            self.delegate.current_position(include_path)
+        }
+
+        fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.seek_to(rel_json_path))
+        }
+
+        fn seek_back(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.seek_back(rel_json_path))
+        }
+
+        fn consume_trailing_whitespace(self) -> Result<(), ReaderError> {
+            // Special code because this method consumes `self`
+            if let Some(error) = self.error {
+                return Err(error);
+            }
+            self.delegate.consume_trailing_whitespace()
+        }
+    }
+}
+
 /// JSON reader variant which is easier to use than [`JsonReader`]
 ///
 /// This JSON reader variant ensures correct usage at compile-time making it easier and less
@@ -1173,8 +1403,9 @@ fn read_seeked_multi<J: JsonReader>(
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonReader` being less flexible
 /// to use, and it not offerring all features of [`JsonReader`].
 ///
-/// When an error is returned by one of the methods of the reader, processing should be aborted
-/// and the reader should not be used any further.
+/// When an error is returned by one of the methods of the reader, the error should be propagated
+/// (for example by using Rust's `?` operator), processing should be aborted and the reader should
+/// not be used any further.
 ///
 /// # Examples
 /// ```
@@ -1193,7 +1424,7 @@ fn read_seeked_multi<J: JsonReader>(
 /// ```
 #[derive(Debug)]
 pub struct SimpleJsonReader<J: JsonReader> {
-    json_reader: J,
+    json_reader: ErrorSafeJsonReader<J>,
     /// Whether [`seek_to`] has been used
     has_seeked: bool,
 }
@@ -1230,7 +1461,10 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     /// ```
     pub fn from_json_reader(json_reader: J) -> Self {
         SimpleJsonReader {
-            json_reader,
+            json_reader: ErrorSafeJsonReader {
+                delegate: json_reader,
+                error: None,
+            },
             has_seeked: false,
         }
     }
@@ -1417,7 +1651,7 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
 /// This struct is used by [`ValueReader::read_array`].
 #[derive(Debug)]
 pub struct ArrayReader<'a, J: JsonReader> {
-    json_reader: &'a mut J,
+    json_reader: &'a mut ErrorSafeJsonReader<J>,
 }
 impl<J: JsonReader> ArrayReader<'_, J> {
     /// Checks if there is a next item in the JSON array, without consuming it
@@ -1534,7 +1768,7 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
 /// - [`ValueReader::read_seeked_multi`]
 #[derive(Debug)]
 pub struct SingleValueReader<'a, J: JsonReader> {
-    json_reader: &'a mut J,
+    json_reader: &'a mut ErrorSafeJsonReader<J>,
     consumed_value: Rc<Cell<bool>>,
 }
 impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
@@ -1640,7 +1874,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
 /// This struct is used by [`ValueReader::read_object_borrowed_names`].
 #[derive(Debug)]
 pub struct MemberReader<'a, J: JsonReader> {
-    json_reader: &'a mut J,
+    json_reader: &'a mut ErrorSafeJsonReader<J>,
     consumed_name: Rc<Cell<bool>>,
     consumed_value: Rc<Cell<bool>>,
 }

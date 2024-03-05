@@ -617,6 +617,27 @@ pub trait StringValueWriter: Write {
     fn finish_value(self) -> Result<(), IoError>;
 }
 
+/// [`StringValueWriter`] which is unreachable
+pub(crate) struct UnreachableStringValueWriter;
+impl Write for UnreachableStringValueWriter {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        unreachable!()
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        unreachable!()
+    }
+}
+impl StringValueWriter for UnreachableStringValueWriter {
+    fn write_str(&mut self, _: &str) -> Result<(), IoError> {
+        unreachable!()
+    }
+
+    fn finish_value(self) -> Result<(), IoError> {
+        unreachable!()
+    }
+}
+
 /// Sealed trait for finite number types such as `u32`
 ///
 /// Values of this number type are finite and will therefore always be
