@@ -1143,7 +1143,7 @@ mod tests {
     impl<'de> Visitor<'de> for &mut TrackingVisitor {
         type Value = ();
 
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(formatter, "custom-test-value")
         }
 
@@ -2122,7 +2122,7 @@ mod tests {
 
                         fn expecting(
                             &self,
-                            formatter: &mut std::fmt::Formatter,
+                            formatter: &mut std::fmt::Formatter<'_>,
                         ) -> std::fmt::Result {
                             write!(formatter, "map")
                         }
@@ -2443,7 +2443,10 @@ mod tests {
                 impl<'de> Visitor<'de> for V {
                     type Value = String;
 
-                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
                         write!(formatter, "map")
                     }
 
@@ -2724,7 +2727,7 @@ mod tests {
         impl<'de> Visitor<'de> for V {
             type Value = ();
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(formatter, "enum")
             }
 

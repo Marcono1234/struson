@@ -1075,7 +1075,7 @@ mod tests {
 
     fn assert_serialized<
         F: FnOnce(
-            &mut JsonWriterSerializer<JsonStreamWriter<&mut Vec<u8>>>,
+            &mut JsonWriterSerializer<'_, JsonStreamWriter<&mut Vec<u8>>>,
         ) -> Result<(), SerializerError>,
     >(
         serializing_function: F,
@@ -1145,7 +1145,7 @@ mod tests {
 
     fn assert_number_error<
         F: FnOnce(
-            &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
+            &mut JsonWriterSerializer<'_, JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
     >(
         serializing_function: F,
@@ -1171,10 +1171,10 @@ mod tests {
     /// - `F2` should claim to serialize 0 elements but actually try to serialize an element.
     fn assert_elements_count_error<
         F1: FnOnce(
-            &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
+            &mut JsonWriterSerializer<'_, JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
         F2: FnOnce(
-            &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
+            &mut JsonWriterSerializer<'_, JsonStreamWriter<std::io::Sink>>,
         ) -> Result<(), SerializerError>,
     >(
         serialize_none: F1,
@@ -1182,7 +1182,7 @@ mod tests {
     ) {
         fn assert_result<
             F: FnOnce(
-                &mut JsonWriterSerializer<JsonStreamWriter<std::io::Sink>>,
+                &mut JsonWriterSerializer<'_, JsonStreamWriter<std::io::Sink>>,
             ) -> Result<(), SerializerError>,
         >(
             serializing_function: F,

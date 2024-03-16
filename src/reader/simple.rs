@@ -525,7 +525,7 @@ pub trait ValueReader<J: JsonReader> {
     ///   to unspecified behavior
     fn read_string_with_reader<T>(
         self,
-        f: impl FnOnce(StringValueReader) -> Result<T, Box<dyn Error>>,
+        f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>>;
 
     /// Consumes and returns a JSON number value
@@ -1374,7 +1374,7 @@ mod error_safe_reader {
 
         fn next_string_reader(
             &mut self,
-        ) -> Result<ErrorSafeStringValueReader<impl Read>, ReaderError> {
+        ) -> Result<ErrorSafeStringValueReader<'_, impl Read>, ReaderError> {
             let string_reader_delegate = use_delegate!(self, |r| r.next_string_reader())?;
             Ok(ErrorSafeStringValueReader {
                 delegate: string_reader_delegate,

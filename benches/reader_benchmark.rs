@@ -153,7 +153,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
         impl Visitor<'_> for UnitVisitor {
             type Value = ();
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(formatter, "unit")
             }
 
@@ -238,7 +238,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
     impl<'de> Visitor<'de> for StringVisitor {
         type Value = ();
 
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(formatter, "a string")
         }
 

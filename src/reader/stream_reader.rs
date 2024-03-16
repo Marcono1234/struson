@@ -5677,7 +5677,7 @@ mod tests {
         }
     }
 
-    fn new_with_debuggable_reader(bytes: &[u8]) -> JsonStreamReader<DebuggableReader> {
+    fn new_with_debuggable_reader(bytes: &[u8]) -> JsonStreamReader<DebuggableReader<'_>> {
         JsonStreamReader::new(DebuggableReader::new(bytes))
     }
 

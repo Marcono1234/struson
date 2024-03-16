@@ -38,6 +38,9 @@ experimental = []
 
 [lints.rust]
 unsafe_code = "forbid"
+# The documentation discourages omitting `'_` in paths, but this lint is "allow" by default,
+# see https://doc.rust-lang.org/reference/lifetime-elision.html#lifetime-elision-in-functions
+elided_lifetimes_in_paths = "warn"
 
 [lints.clippy]
 # Allow needless `return` because that makes it sometimes more obvious that
