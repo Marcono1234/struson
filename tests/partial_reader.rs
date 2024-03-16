@@ -11,8 +11,9 @@
 use serde::Deserialize;
 use struson::{
     reader::{
-        json_path, JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, LinePosition,
-        ReaderError, SyntaxErrorKind, TransferError, ValueType,
+        json_path::json_path, JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError,
+        LinePosition, ReaderError, SyntaxErrorKind, TransferError, UnexpectedStructureKind,
+        ValueType,
     },
     serde::{DeserializerError, JsonReaderDeserializer},
     writer::JsonWriter,
@@ -101,8 +102,8 @@ impl<J: JsonReader> PartialJsonReader<J> {
 
                 // Only works for non-top-level value; for top-level value cannot know if number is complete
                 if !self.is_in_object.is_empty() {
-                    // Trigger EOF error in case nothing follows last char of number
-                    self.delegate.has_next()?;
+                    // Trigger EOF error in case nothing follows after last char of number
+                    let _ = self.delegate.has_next()?;
                 }
                 self.after_peeked_pos = self.provident_current_position();
                 v
@@ -138,12 +139,35 @@ impl<J: JsonReader> PartialJsonReader<J> {
     }
 }
 
+macro_rules! consume_expected_value {
+    ($self:ident, $expected:pat_param => $consumer:expr, $expected_type:ident) => {{
+        // Populate `self.peeked_value` (or fail if there is no next value)
+        let _ = $self.peek()?;
+
+        let p = $self.peeked_value.take().unwrap();
+        if let $expected = p {
+            Ok($consumer)
+        } else {
+            let actual_type = p.get_value_type();
+
+            // Put back unexpected value
+            $self.peeked_value = Some(p);
+
+            Err(ReaderError::UnexpectedValueType {
+                expected: ValueType::$expected_type,
+                actual: actual_type,
+                location: $self.peeked_value_pos.clone().unwrap(),
+            })
+        }
+    }};
+}
+
 /*
  * This implementation is incomplete:
  * - multiple methods contain `unimplemented!()`
  * - correct API usage is not properly enforced, e.g. it might be possible to consume
  *   an object member value before its name
- * - retrying on any error type causes unspecified behavior (even the ones for which JsonReader says
+ * - retrying on any error type may cause unspecified behavior (even the ones for which JsonReader says
  *   it is safe to retry)
  */
 impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
@@ -153,68 +177,74 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             return self.peek_value();
         }
 
-        if let Some(p) = &self.peeked_value {
+        if self.has_next()? {
+            let p = self.peeked_value.as_ref().unwrap();
             Ok(p.get_value_type())
         } else {
-            panic!("should call `has_next` before peeking value")
+            Err(ReaderError::UnexpectedStructure {
+                kind: UnexpectedStructureKind::FewerElementsThanExpected,
+                location: self.current_position(true),
+            })
         }
     }
 
     fn begin_object(&mut self) -> Result<(), ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if p == PeekedValue::PeekedObject {
+        consume_expected_value!(
+            self,
+            PeekedValue::PeekedObject => {
                 self.is_in_object.push(true);
                 self.delegate.begin_object()?;
                 self.after_peeked_pos = self.provident_current_position();
-                Ok(())
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::Object,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+            },
+            Object
+        )
     }
 
     fn end_object(&mut self) -> Result<(), ReaderError> {
-        self.is_in_object.pop();
+        match self.is_in_object.last() {
+            Some(true) => {}
+            // Covers `None` (neither in array nor object), and `Some(false)` (in array)
+            _ => panic!("not inside object"),
+        }
+
         if self.reached_eof {
+            self.is_in_object.pop();
             Ok(())
         } else {
             self.delegate.end_object()?;
+            // Only pop after delegate `end_object()` was successful, to allow retry if it fails with MoreElementsThanExpected
+            self.is_in_object.pop();
             self.after_peeked_pos = self.provident_current_position();
             Ok(())
         }
     }
 
     fn begin_array(&mut self) -> Result<(), ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if p == PeekedValue::PeekedArray {
+        consume_expected_value!(
+            self,
+            PeekedValue::PeekedArray => {
                 self.is_in_object.push(false);
                 self.delegate.begin_array()?;
                 self.after_peeked_pos = self.provident_current_position();
-                Ok(())
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::Array,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+            },
+            Array
+        )
     }
 
     fn end_array(&mut self) -> Result<(), ReaderError> {
-        self.is_in_object.pop();
+        match self.is_in_object.last() {
+            Some(false) => {}
+            // Covers `None` (neither in array nor object), and `Some(true)` (in object)
+            _ => panic!("not inside array"),
+        }
+
         if self.reached_eof {
+            self.is_in_object.pop();
             Ok(())
         } else {
             self.delegate.end_array()?;
+            // Only pop after delegate `end_array()` was successful, to allow retry if it fails with MoreElementsThanExpected
+            self.is_in_object.pop();
             self.after_peeked_pos = self.provident_current_position();
             Ok(())
         }
@@ -248,10 +278,19 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     }
 
     fn next_name_owned(&mut self) -> Result<String, ReaderError> {
-        if let Some(s) = self.peeked_name.take() {
-            Ok(s)
+        match self.is_in_object.last() {
+            Some(true) => {}
+            // Covers `None` (neither in array nor object), and `Some(false)` (in array)
+            _ => panic!("not inside object"),
+        }
+
+        if self.has_next()? {
+            Ok(self.peeked_name.take().unwrap())
         } else {
-            panic!("should call `has_next` before consuming name")
+            Err(ReaderError::UnexpectedStructure {
+                kind: UnexpectedStructureKind::FewerElementsThanExpected,
+                location: self.current_position(true),
+            })
         }
     }
 
@@ -261,19 +300,11 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     }
 
     fn next_string(&mut self) -> Result<String, ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if let PeekedValue::String(s) = p {
-                Ok(s)
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::String,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+        consume_expected_value!(
+            self,
+            PeekedValue::String(s) => s,
+            String
+        )
     }
 
     fn next_string_reader(&mut self) -> Result<std::io::Empty, ReaderError> {
@@ -286,51 +317,27 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     }
 
     fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if let PeekedValue::Number(s) = p {
-                Ok(s)
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::Number,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+        consume_expected_value!(
+            self,
+            PeekedValue::Number(s) => s,
+            Number
+        )
     }
 
     fn next_bool(&mut self) -> Result<bool, ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if let PeekedValue::Bool(b) = p {
-                Ok(b)
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::Boolean,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+        consume_expected_value!(
+            self,
+            PeekedValue::Bool(b) => b,
+            Boolean
+        )
     }
 
     fn next_null(&mut self) -> Result<(), ReaderError> {
-        if let Some(p) = self.peeked_value.take() {
-            if p == PeekedValue::Null {
-                Ok(())
-            } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected: ValueType::Null,
-                    actual: p.get_value_type(),
-                    location: self.peeked_value_pos.clone().unwrap(),
-                })
-            }
-        } else {
-            panic!("should call `has_next` before consuming value")
-        }
+        consume_expected_value!(
+            self,
+            PeekedValue::Null => (),
+            Null
+        )
     }
 
     fn deserialize_next<'de, D: Deserialize<'de>>(&mut self) -> Result<D, DeserializerError> {
@@ -339,42 +346,38 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     }
 
     fn skip_name(&mut self) -> Result<(), ReaderError> {
-        if self.peeked_name.take().is_some() {
-            Ok(())
-        } else {
-            panic!("should call `has_next` before consuming name")
-        }
+        let _ = self.next_name()?;
+        Ok(())
     }
 
     // Important: This is implemented recursively; could lead to stack overflow for deeply nested JSON
     fn skip_value(&mut self) -> Result<(), ReaderError> {
-        if let Some(p) = &self.peeked_value {
+        // Populate `self.peeked_value` (or fail if there is no next value)
+        let _ = self.peek()?;
+
+        match self.peeked_value.as_ref().unwrap() {
             // For array and object need to manually skip value here by delegating to other
             // methods to handle EOF properly; cannot delegate to underlying JSON reader
-            if *p == PeekedValue::PeekedArray {
+            PeekedValue::PeekedArray => {
                 self.begin_array()?;
                 while self.has_next()? {
                     self.skip_value()?;
                 }
                 self.end_array()
-            } else if *p == PeekedValue::PeekedObject {
+            }
+            PeekedValue::PeekedObject => {
                 self.begin_object()?;
                 while self.has_next()? {
                     self.skip_name()?;
                     self.skip_value()?;
                 }
                 self.end_object()
-            } else {
+            }
+            _ => {
                 self.peeked_value.take();
                 Ok(())
             }
-        } else {
-            panic!("should call `has_next` before skipping value")
         }
-    }
-
-    fn seek_to(&mut self, _rel_json_path: &json_path::JsonPath) -> Result<(), ReaderError> {
-        unimplemented!()
     }
 
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
@@ -536,6 +539,168 @@ fn test() {
             "For char index {index}, JSON: {json}"
         );
     }
+}
+
+#[test]
+fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
+    let json = "true";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    match json_reader.next_number_as_str() {
+        Err(ReaderError::UnexpectedValueType {
+            expected: ValueType::Number,
+            actual: ValueType::Boolean,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: None,
+                    line_pos: Some(LinePosition { line: 0, column: 0 }),
+                    data_pos: Some(0)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    assert_eq!(true, json_reader.next_bool()?);
+
+    let json = "true";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    match json_reader.begin_array() {
+        Err(ReaderError::UnexpectedValueType {
+            expected: ValueType::Array,
+            actual: ValueType::Boolean,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: None,
+                    line_pos: Some(LinePosition { line: 0, column: 0 }),
+                    data_pos: Some(0)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    assert_eq!(true, json_reader.next_bool()?);
+
+    let json = "[true]";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    match json_reader.next_number_as_str() {
+        Err(ReaderError::UnexpectedValueType {
+            expected: ValueType::Number,
+            actual: ValueType::Array,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: None,
+                    line_pos: Some(LinePosition { line: 0, column: 0 }),
+                    data_pos: Some(0)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    json_reader.begin_array()?;
+    assert_eq!(true, json_reader.next_bool()?);
+    json_reader.end_array()?;
+
+    Ok(())
+}
+
+#[test]
+fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
+    let json = "[]";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_array()?;
+    match json_reader.peek() {
+        Err(ReaderError::UnexpectedStructure {
+            kind: UnexpectedStructureKind::FewerElementsThanExpected,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: None,
+                    line_pos: Some(LinePosition { line: 0, column: 1 }),
+                    data_pos: Some(1)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    json_reader.end_array()?;
+
+    let json = "[true]";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_array()?;
+    match json_reader.end_array() {
+        Err(ReaderError::UnexpectedStructure {
+            kind: UnexpectedStructureKind::MoreElementsThanExpected,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: Some(json_path![0].to_vec()),
+                    line_pos: Some(LinePosition { line: 0, column: 1 }),
+                    data_pos: Some(1)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    assert_eq!(true, json_reader.next_bool()?);
+    json_reader.end_array()?;
+
+    let json = "{}";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_object()?;
+    match json_reader.next_name() {
+        Err(ReaderError::UnexpectedStructure {
+            kind: UnexpectedStructureKind::FewerElementsThanExpected,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: None,
+                    line_pos: Some(LinePosition { line: 0, column: 1 }),
+                    data_pos: Some(1)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    json_reader.end_object()?;
+
+    let json = "{\"a\": true}";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_object()?;
+    match json_reader.end_object() {
+        Err(ReaderError::UnexpectedStructure {
+            kind: UnexpectedStructureKind::MoreElementsThanExpected,
+            location,
+        }) => {
+            assert_eq!(
+                JsonReaderPosition {
+                    path: Some(json_path!["<?>"].to_vec()),
+                    line_pos: Some(LinePosition { line: 0, column: 1 }),
+                    data_pos: Some(1)
+                },
+                location
+            );
+        }
+        r => panic!("unexpected result: {r:?}"),
+    }
+    assert_eq!("a", json_reader.next_name()?);
+    assert_eq!(true, json_reader.next_bool()?);
+    json_reader.end_object()?;
+
+    Ok(())
 }
 
 #[test]
