@@ -45,6 +45,11 @@
 //!
 //! **🔬 Experimental**\
 //! The simple API and its naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
+//! It has to be enabled by specifying the `experimental` feature in `Cargo.toml`:
+//! ```toml
+//! [dependencies]
+//! struson = { version = "...", features = ["experimental"] }
+//! ```
 //! Any feedback is appreciated!
 //!
 //! ### Reading
@@ -65,6 +70,37 @@
 //!     Ok(())
 //! })?;
 //! assert_eq!(words, vec!["a", "short", "example"]);
+//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! For reading nested values, the methods [`read_seeked`](crate::reader::simple::ValueReader::read_seeked)
+//! and [`read_seeked_multi`](crate::reader::simple::ValueReader::read_seeked_multi) can be used:
+//! ```
+//! # #[cfg(feature = "experimental")]
+//! # {
+//! use struson::reader::simple::*;
+//! use struson::reader::simple::multi_json_path::multi_json_path;
+//!
+//! // In this example JSON data comes from a string;
+//! // normally it would come from a file or a network connection
+//! let json = r#"{
+//!     "users": [
+//!         {"name": "John", "age": 32},
+//!         {"name": "Jane", "age": 41}
+//!     ]
+//! }"#;
+//! let json_reader = SimpleJsonReader::new(json.as_bytes());
+//!
+//! let mut ages = Vec::<u32>::new();
+//! // Select the ages of all users
+//! let json_path = multi_json_path!["users", [*], "age"];
+//! json_reader.read_seeked_multi(&json_path, false, |value_reader| {
+//!     let age = value_reader.read_number()??;
+//!     ages.push(age);
+//!     Ok(())
+//! })?;
+//! assert_eq!(ages, vec![32, 41]);
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

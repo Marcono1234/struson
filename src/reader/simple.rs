@@ -791,40 +791,23 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     /// # use struson::reader::simple::*;
     /// # use struson::reader::simple::multi_json_path::*;
-    /// let json = r#"
-    /// {
-    ///     "books": [
-    ///         {
-    ///             "title": "A normal day in the life of an ant",
-    ///             "awards": [
-    ///                 "Best Thriller",
-    ///                 "Best Short Story"
-    ///             ]
-    ///         },
-    ///         {
-    ///             "name": "Tired of Potatoes",
-    ///             "awards": [
-    ///                 "Best Drama"
-    ///             ]
-    ///         }
+    /// let json = r#"{
+    ///     "users": [
+    ///         {"name": "John", "age": 32},
+    ///         {"name": "Jane", "age": 41}
     ///     ]
-    /// }
-    /// "#;
+    /// }"#;
     /// let json_reader = SimpleJsonReader::new(json.as_bytes());
     ///
-    /// let mut all_awards = Vec::<String>::new();
-    /// // Select the awards of all books
-    /// let json_path = multi_json_path!["books", [*], "awards", [*]];
+    /// let mut ages = Vec::<u32>::new();
+    /// // Select the ages of all users
+    /// let json_path = multi_json_path!["users", [*], "age"];
     /// json_reader.read_seeked_multi(&json_path, false, |value_reader| {
-    ///     let award = value_reader.read_string()?;
-    ///     all_awards.push(award);
+    ///     let age = value_reader.read_number()??;
+    ///     ages.push(age);
     ///     Ok(())
     /// })?;
-    ///
-    /// assert_eq!(
-    ///     all_awards,
-    ///     vec!["Best Thriller", "Best Short Story", "Best Drama"]
-    /// );
+    /// assert_eq!(ages, vec![32, 41]);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn read_seeked_multi(
