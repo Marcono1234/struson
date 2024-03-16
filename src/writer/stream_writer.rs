@@ -155,7 +155,7 @@ impl<W: Write> JsonStreamWriter<W> {
     pub fn new_custom(writer: W, writer_settings: WriterSettings) -> Self {
         Self {
             writer,
-            buf: [0; WRITER_BUF_SIZE],
+            buf: [0_u8; WRITER_BUF_SIZE],
             buf_write_pos: 0,
             is_empty: true,
             expects_member_name: false,
@@ -528,7 +528,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         self.is_string_value_writer_active = true;
         Ok(StringValueWriterImpl {
             json_writer: self,
-            utf8_buf: [0; utf8::MAX_BYTES_PER_CHAR],
+            utf8_buf: [0_u8; utf8::MAX_BYTES_PER_CHAR],
             utf8_pos: 0,
             utf8_expected_len: 0,
             error: None,
@@ -733,43 +733,49 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
             ))),
         }
     }
-}
-impl<W: Write> Write for StringValueWriterImpl<'_, W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.check_previous_error()?;
 
-        let result = self.write_impl(buf);
+    fn run_with_error_tracking<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, IoError>,
+    ) -> Result<T, IoError> {
+        self.check_previous_error()?;
+        let result = f(self);
         if let Err(e) = &result {
             self.error = Some((e.kind(), e.to_string()));
         }
         result
     }
+}
+impl<W: Write> Write for StringValueWriterImpl<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.run_with_error_tracking(|self_| self_.write_impl(buf))
+    }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.check_previous_error()?;
-        self.json_writer.flush()
+        self.run_with_error_tracking(|self_| self_.json_writer.flush())
     }
 }
 
 impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
     // Provides more efficient implementation which benefits from avoided UTF-8 validation
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
-        self.check_previous_error()?;
-
-        if self.utf8_pos > 0 {
-            // If there is pending incomplete UTF-8 data, then this is an error because str contains
-            // self-contained complete UTF-8 data, and therefore does not complete the incomplete data
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                "incomplete multi-byte UTF-8 data",
-            ));
-        }
-        self.json_writer.write_string_value_piece(s)?;
-        Ok(())
+        self.run_with_error_tracking(|self_| {
+            if self_.utf8_pos > 0 {
+                // If there is pending incomplete UTF-8 data, then this is an error because str contains
+                // self-contained complete UTF-8 data, and therefore does not complete the incomplete data
+                return Err(IoError::new(
+                    ErrorKind::InvalidData,
+                    "incomplete multi-byte UTF-8 data",
+                ));
+            }
+            self_.json_writer.write_string_value_piece(s)
+        })
     }
 
     fn finish_value(self) -> Result<(), IoError> {
         self.check_previous_error()?;
+        // Note: Don't need to use `self.run_with_error_tracking` here because this method consumes `self`,
+        // so user cannot retry if it fails, as desired
 
         if self.utf8_pos > 0 {
             return Err(IoError::new(
@@ -786,6 +792,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp::min;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1209,54 +1216,113 @@ mod tests {
     }
 
     #[test]
-    fn string_writer_repeats_error() -> TestResult {
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = JsonStreamWriter::new(&mut writer);
+    fn string_writer_repeats_error() {
+        // This is mainly a macro because cannot specify the exact type of the StringValueWriter if this was
+        // a function taking a `FnMut` since `string_value_writer()` returns `impl Trait`
+        macro_rules! test_error_handling {
+            ($writer:expr, |$string_writer:ident| $failing_action:expr, $expected_error_kind:expr, $expected_message:expr) => {{
+                let mut json_writer = JsonStreamWriter::new($writer);
+                let mut $string_writer = json_writer.string_value_writer().unwrap();
 
-        let mut string_writer = json_writer.string_value_writer()?;
-        // Invalid UTF-8 byte 1111_1000
-        match string_writer.write_all(b"\xF8") {
-            Ok(_) => panic!("Should have failed"),
-            Err(e) => {
-                assert_eq!(ErrorKind::InvalidData, e.kind());
-                // The wrapped error is actually the String message converted using `impl From<String> for Box<dyn Error>`
-                let wrapped_error = e.get_ref().unwrap();
-                assert_eq!("invalid UTF-8 data", wrapped_error.to_string());
-            }
-        }
+                let result = $failing_action;
 
-        // Subsequent write attemps should fail with same error, but use custom message and kind `Other`
-        fn assert_error(result: std::io::Result<()>) {
-            match result {
-                Ok(_) => panic!("Should have failed"),
-                Err(e) => {
-                    assert_eq!(ErrorKind::Other, e.kind());
-                    // The wrapped error is actually the String message converted using `impl From<String> for Box<dyn Error>`
-                    let wrapped_error = e.get_ref().unwrap();
-
-                    let expected_original_kind = ErrorKind::InvalidData;
-                    let expected_original_message = "invalid UTF-8 data";
-                    assert_eq!(
-                        format!(
-                            "previous error '{}': {}",
-                            expected_original_kind, expected_original_message
-                        ),
-                        wrapped_error.to_string()
-                    );
+                match result {
+                    Ok(_) => panic!("Should have failed"),
+                    Err(e) => {
+                        assert_eq!($expected_error_kind, e.kind());
+                        // The wrapped error is actually the String message converted using `impl From<String> for Box<dyn Error>`
+                        let wrapped_error = e.get_ref().unwrap();
+                        assert_eq!($expected_message, wrapped_error.to_string());
+                    }
                 }
+
+                // Subsequent usage should fail with same error, but use custom message and kind `Other`
+                fn assert_error(result: std::io::Result<()>) {
+                    match result {
+                        Ok(_) => panic!("Should have failed"),
+                        Err(e) => {
+                            assert_eq!(ErrorKind::Other, e.kind());
+                            // The wrapped error is actually the String message converted using `impl From<String> for Box<dyn Error>`
+                            let wrapped_error = e.get_ref().unwrap();
+
+                            assert_eq!(
+                                format!(
+                                    "previous error '{}': {}",
+                                    $expected_error_kind, $expected_message
+                                ),
+                                wrapped_error.to_string()
+                            );
+                        }
+                    }
+                }
+
+                assert_error($string_writer.write_all(b"test"));
+                assert_error($string_writer.write_str("test"));
+                assert_error($string_writer.flush());
+                assert_error($string_writer.finish_value());
+
+                // Should still consider string value writer as active because value was not
+                // successfully finished
+                assert!(json_writer.is_string_value_writer_active);
+            }};
+        }
+
+        test_error_handling!(
+            std::io::sink(),
+            |string_writer| {
+                // Invalid UTF-8 byte 1111_1000
+                string_writer.write_all(b"\xF8")
+            },
+            ErrorKind::InvalidData,
+            "invalid UTF-8 data"
+        );
+
+        /// Writer which only permits a certain amount of bytes, returning an error afterwards
+        struct MaxCapacityWriter {
+            remaining_capacity: usize,
+        }
+        impl Write for MaxCapacityWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                if self.remaining_capacity == 0 {
+                    return Err(IoError::new(ErrorKind::WouldBlock, "custom-error"));
+                }
+
+                let write_count = min(self.remaining_capacity, buf.len());
+                self.remaining_capacity -= write_count;
+                Ok(write_count)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                // Do nothing
+                Ok(())
             }
         }
 
-        assert_error(string_writer.write_all(b"test"));
-        assert_error(string_writer.write_str("test"));
-        assert_error(string_writer.flush());
-        assert_error(string_writer.finish_value());
+        test_error_handling!(
+            MaxCapacityWriter {
+                remaining_capacity: 2,
+            },
+            |string_writer| {
+                // Write enough data to cause flushing
+                let value = "a".repeat(WRITER_BUF_SIZE + 10);
+                string_writer.write_str(&value)
+            },
+            ErrorKind::WouldBlock,
+            "custom-error"
+        );
 
-        // Should still consider string value writer as active because value was not
-        // successfully finished
-        assert!(json_writer.is_string_value_writer_active);
-
-        Ok(())
+        test_error_handling!(
+            MaxCapacityWriter {
+                remaining_capacity: 2,
+            },
+            |string_writer| {
+                // `write_str` should not fail because bytes have not been flushed to underlying writer yet
+                string_writer.write_str("test").unwrap();
+                string_writer.flush()
+            },
+            ErrorKind::WouldBlock,
+            "custom-error"
+        );
     }
 
     #[test]

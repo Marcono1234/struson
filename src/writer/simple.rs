@@ -11,9 +11,10 @@
 
 use std::{error::Error, io::Write};
 
-use self::error_safe_writer::ErrorSafeJsonWriter;
+use self::error_safe_writer::{error_from_stored, ErrorSafeJsonWriter};
 use crate::writer::{
     FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, JsonWriter,
+    StringValueWriter as AdvancedStringValueWriter,
 };
 
 type IoError = std::io::Error;
@@ -27,7 +28,53 @@ pub trait ValueWriter<J: JsonWriter> {
     fn write_bool(self, value: bool) -> Result<(), IoError>;
 
     /// Writes a JSON string value
+    ///
+    /// For writing a large string value in a streaming way, use
+    /// [`write_string_with_writer`](Self::write_string_with_writer).
     fn write_string(self, value: &str) -> Result<(), IoError>;
+
+    /// Writes a JSON string value using a [`Write`]
+    ///
+    /// The function `f` is called with a writer as argument which allows writing the
+    /// JSON string value. Characters will be automatically escaped if necessary, for
+    /// example `"` will be written as `\"`.
+    ///
+    /// This method is mainly intended for writing large JSON string values in a
+    /// streaming way; for all other cases prefer [`write_string`](Self::write_string).
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::writer::simple::*;
+    /// # use std::io::Write;
+    /// let mut writer = Vec::<u8>::new();
+    /// let json_writer = SimpleJsonWriter::new(&mut writer);
+    /// json_writer.write_string_with_writer(|mut string_writer| {
+    ///     // Can use regular `Write` methods
+    ///     string_writer.write_all(b"some text")?;
+    ///     // Or `write_str` method
+    ///     string_writer.write_str(" with \" quote")?;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(
+    ///     json,
+    ///     "\"some text with \\\" quote\""
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Writer errors
+    /// The error behavior of the string writer differs from the guarantees made by [`Write`]:
+    /// - if an error is returned there are no guarantees about if or how many bytes have been
+    ///   written
+    /// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+    ///   trying to use the string writer or the original JSON writer afterwards will lead
+    ///   to unspecified behavior
+    fn write_string_with_writer(
+        self,
+        f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>>;
 
     /// Writes a JSON number value
     fn write_number<N: FiniteNumber>(self, value: N) -> Result<(), IoError>;
@@ -147,15 +194,34 @@ fn write_object<J: JsonWriter>(
     Ok(())
 }
 
+fn write_string_with_writer<J: JsonWriter>(
+    json_writer: &mut ErrorSafeJsonWriter<J>,
+    f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut delegate = json_writer.string_value_writer()?;
+    let string_writer = StringValueWriter {
+        delegate: &mut delegate as &mut dyn AdvancedStringValueWriter,
+    };
+    f(string_writer)?;
+
+    // Check if there is error which was not propagated by function
+    if let Some(error) = delegate.error {
+        return Err(error_from_stored(error).into());
+    }
+
+    delegate.finish_value()?;
+    Ok(())
+}
+
 mod error_safe_writer {
     use std::io::ErrorKind;
 
     use super::*;
-    use crate::writer::{IoError, UnreachableStringValueWriter};
+    use crate::writer::IoError;
 
-    type StoredIoError = (ErrorKind, String);
+    pub(super) type StoredIoError = (ErrorKind, String);
 
-    fn convert_io_error(error: &IoError) -> StoredIoError {
+    pub(super) fn convert_io_error(error: &IoError) -> StoredIoError {
         (error.kind(), error.to_string())
     }
 
@@ -166,7 +232,7 @@ mod error_safe_writer {
         }
     }
 
-    fn error_from_stored(error: &StoredIoError) -> IoError {
+    pub(super) fn error_from_stored(error: &StoredIoError) -> IoError {
         // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
         // because it considers the original error kind as safe to retry
         // And also because the original error might have been related to originally provided data
@@ -180,10 +246,6 @@ mod error_safe_writer {
     macro_rules! use_delegate {
         ($self:ident, |$json_writer:ident| $writing_action:expr, |$original_error:ident| $original_error_converter:expr, |$stored_error:ident| $stored_error_converter:expr) => {
             if let Some(error) = &$self.error {
-                // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
-                // because it considers the original error kind as safe to retry
-                // And also because the original error might have been related to originally provided data
-                // (e.g. invalid UTF-8 data) and is unrelated to the now called JSON writer method
                 let $stored_error = error_from_stored(error);
                 Err($stored_error_converter)
             } else {
@@ -202,7 +264,7 @@ mod error_safe_writer {
                 |original_error| convert_io_error(original_error),
                 |stored_error| stored_error
             )
-        }
+        };
     }
 
     /// [`JsonWriter`] implementation which in case of errors keeps returning the error and does
@@ -253,10 +315,17 @@ mod error_safe_writer {
             use_delegate!(self, |w| w.string_value(value))
         }
 
-        fn string_value_writer(&mut self) -> Result<UnreachableStringValueWriter, IoError> {
-            unreachable!("not used by Simple API")
-            // If this is used in the future, the string value writer must track all of its errors
-            // and then store them here as error as well, to prevent further JSON writer usage
+        fn string_value_writer(
+            &mut self,
+        ) -> Result<ErrorSafeStringValueWriter<'_, impl AdvancedStringValueWriter>, IoError>
+        {
+            let string_writer_delegate = use_delegate!(self, |w| w.string_value_writer())?;
+            Ok(ErrorSafeStringValueWriter {
+                delegate: string_writer_delegate,
+                // Store errors in the `error` field of this `ErrorSafeStringValueWriter`, so they are
+                // available to the original JsonWriter afterwards
+                error: &mut self.error,
+            })
         }
 
         fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
@@ -309,6 +378,55 @@ mod error_safe_writer {
                 return Err(error_from_stored(&error));
             }
             self.delegate.finish_document()
+        }
+    }
+
+    // Note: Repeating errors here might be a bit redundant if JsonStreamWriter is used since it does
+    // this itself as well; but that is not guaranteed for all JsonWriter implementations
+    pub(super) struct ErrorSafeStringValueWriter<'a, D: AdvancedStringValueWriter> {
+        delegate: D,
+        pub(super) error: &'a mut Option<StoredIoError>,
+    }
+    impl<D: AdvancedStringValueWriter> ErrorSafeStringValueWriter<'_, D> {
+        fn use_delegate<T>(
+            &mut self,
+            f: impl FnOnce(&mut D) -> std::io::Result<T>,
+        ) -> std::io::Result<T> {
+            if let Some(error) = self.error {
+                return Err(error_from_stored(error));
+            }
+
+            let result = f(&mut self.delegate);
+            if let Err(error) = &result {
+                *self.error = Some(convert_io_error(error));
+            }
+            result
+        }
+    }
+    impl<D: AdvancedStringValueWriter> Write for ErrorSafeStringValueWriter<'_, D> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.use_delegate(|d| d.write(buf))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.use_delegate(|d| d.flush())
+        }
+    }
+    impl<D: AdvancedStringValueWriter> AdvancedStringValueWriter for ErrorSafeStringValueWriter<'_, D> {
+        fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+            self.use_delegate(|d| d.write_str(s))
+        }
+
+        fn finish_value(self) -> Result<(), IoError> {
+            // Special code because this method consumes `self`
+            if let Some(error) = self.error {
+                return Err(error_from_stored(error));
+            }
+            let result = self.delegate.finish_value();
+            if let Err(error) = &result {
+                *self.error = Some(convert_io_error(error));
+            }
+            result
         }
     }
 }
@@ -406,6 +524,15 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
         self.json_writer.finish_document()
     }
 
+    fn write_string_with_writer(
+        mut self,
+        f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        write_string_with_writer(&mut self.json_writer, f)?;
+        self.json_writer.finish_document()?;
+        Ok(())
+    }
+
     fn write_number<N: FiniteNumber>(mut self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)?;
         self.json_writer.finish_document()
@@ -479,6 +606,13 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
         self.json_writer.string_value(value)
     }
 
+    fn write_string_with_writer(
+        self,
+        f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        write_string_with_writer(self.json_writer, f)
+    }
+
     fn write_number<N: FiniteNumber>(self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)
     }
@@ -523,6 +657,9 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
 /// For example the member `"a": 1` consists of the name "a" and the value 1,
 /// which can be written using [`write_number_member`](Self::write_number_member).
 ///
+/// The methods of this trait are similar to the methods of [`ValueWriter`], see its
+/// documentation for more details on how the JSON values are written.
+///
 /// This struct is used by [`ValueWriter::write_object`].
 #[derive(Debug)]
 pub struct ObjectWriter<'a, J: JsonWriter> {
@@ -545,6 +682,16 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     pub fn write_string_member(&mut self, name: &str, value: &str) -> Result<(), IoError> {
         self.json_writer.name(name)?;
         self.json_writer.string_value(value)
+    }
+
+    /// Writes a member with a JSON string as value, using a [`Write`]
+    pub fn write_string_member_with_writer(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.json_writer.name(name)?;
+        write_string_with_writer(self.json_writer, f)
     }
 
     /// Writes a member with a JSON number as value
@@ -618,5 +765,50 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     ) -> Result<(), Box<dyn Error>> {
         self.json_writer.name(name)?;
         write_object(self.json_writer, f)
+    }
+}
+
+/// Writer for a JSON string value
+///
+/// Characters are automatically escaped in the JSON output if necessary. Writing invalid
+/// UTF-8 data will cause a [`std::io::Error`].
+///
+/// This struct is used by [`ValueWriter::write_string_with_writer`].
+///
+/// # Error behavior
+/// The error behavior of this string writer differs from the guarantees made by [`Write`]:
+/// - if an error is returned there are no guarantees about if or how many bytes have been
+///   written
+/// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+///   trying to use this string writer or the original JSON writer afterwards will lead
+///   to unspecified behavior
+/* TODO: Should implement `Debug`, but seems to not be easily possible when using `dyn` below */
+pub struct StringValueWriter<'a> {
+    // TODO: Ideally would avoid `dyn` here, but using generic type parameter seems to not be
+    //   easily possible when `JsonWriter::string_value_writer()` does not use associated type
+    //   and `FnOnce` cannot use `impl Trait` for arguments
+    delegate: &'a mut dyn AdvancedStringValueWriter,
+}
+impl Write for StringValueWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.delegate.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.delegate.flush()
+    }
+}
+impl StringValueWriter<'_> {
+    /// Writes a string value piece
+    ///
+    /// This method behaves the same way as if all the string bytes were written using
+    /// the `write` method, however this method might be more efficient. Therefore if
+    /// a value already exists as string, using `write_str` is likely at least as
+    /// efficient as using the `write` method.
+    ///
+    /// Calls to `write_str` can be mixed with regular `write` calls, however preceding
+    /// `write` calls must have written complete UTF-8 data, otherwise an error is returned.
+    pub fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+        self.delegate.write_str(s)
     }
 }

@@ -580,6 +580,17 @@ pub struct JsonReaderPosition {
     /// in case the JSON reader buffers data internally which it has not processed yet.
     pub data_pos: Option<u64>,
 }
+impl JsonReaderPosition {
+    /// Creates an 'unknown' position, with all position information being [`None`]
+    #[allow(dead_code)] // called by Simple API (but currently guarded by feature flag)
+    pub(crate) fn unknown_position() -> Self {
+        JsonReaderPosition {
+            path: None,
+            line_pos: None,
+            data_pos: None,
+        }
+    }
+}
 
 impl Display for JsonReaderPosition {
     // Create display string depending on which of the Option values are present
@@ -1272,8 +1283,7 @@ pub trait JsonReader {
     /// This method is only intended to consume string values, it cannot be used to consume
     /// JSON object member names. The method [`next_name`](Self::next_name) has to be used for that.
     ///
-    /// JSON syntax errors which occur while consuming the JSON document with the reader
-    /// are reported as [`std::io::Error`] for that reader.
+    /// Escape sequences will be automatically converted to the corresponding characters.
     ///
     /// **Important:** The data of the string value reader must be fully consumed, that means
     /// `read` has to be called with a non-empty buffer until it returns `Ok(0)`. Otherwise the
@@ -1290,7 +1300,7 @@ pub trait JsonReader {
     /// json_reader.begin_array()?;
     ///
     /// let mut string_reader = json_reader.next_string_reader()?;
-    /// let mut buf = [0; 1];
+    /// let mut buf = [0_u8; 1];
     ///
     /// // Important: This calls read until it returns Ok(0) to properly end the string value
     /// while string_reader.read(&mut buf)? > 0 {
@@ -1315,6 +1325,9 @@ pub trait JsonReader {
     /// check the type if it is not known in advance.
     ///
     /// # Reader errors
+    /// JSON syntax errors and invalid UTF-8 data which occurs while consuming the JSON string
+    /// value with the reader are reported as [`std::io::Error`] for that reader.
+    ///
     /// The error behavior of the string reader differs from the guarantees made by [`Read`]:
     /// - if an error is returned there are no guarantees about if or how many data has been
     ///   consumed from the underlying data source and been stored in the provided `buf`
@@ -1580,7 +1593,10 @@ pub trait JsonReader {
     /// To skip to a specific location in the JSON document the method [`seek_to`](Self::seek_to) can be used.
     ///
     /// # Errors
-    /// None, besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`].
+    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    ///
+    /// If there is no next object member a [`ReaderError::UnexpectedStructure`] is returned.
+    /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This

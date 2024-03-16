@@ -9,7 +9,7 @@
 //! This API and the naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
 //! Any feedback is appreciated!
 
-use std::{cell::Cell, error::Error, io::Read, rc::Rc, str::FromStr};
+use std::{error::Error, io::Read, str::FromStr};
 
 use self::{
     error_safe_reader::ErrorSafeJsonReader,
@@ -18,9 +18,11 @@ use self::{
 use crate::{
     reader::{
         json_path::{JsonPath, JsonPathPiece},
+        simple::error_safe_reader::create_dummy_error,
         JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, ReaderError,
         SyntaxErrorKind, TransferError, ValueType,
     },
+    utf8,
     writer::JsonWriter,
 };
 
@@ -471,7 +473,8 @@ pub trait ValueReader<J: JsonReader> {
     ///
     /// The function `f` is called with the read JSON string value as argument.
     ///
-    /// To read a JSON string value as owned `String` use [`read_string`](Self::read_string).
+    /// To read a string value as owned `String` use [`read_string`](Self::read_string).\
+    /// To read a large string value in a streaming way, use [`read_string_with_reader`](Self::read_string_with_reader).
     /*
      * Note: Ideally would return a `&str`, but that does not seem to be possible because `self`
      * is consumed. And for some of the `ValueReader` implementations below this would probably
@@ -484,8 +487,46 @@ pub trait ValueReader<J: JsonReader> {
 
     /// Consumes and returns a JSON string value as owned `String`
     ///
-    /// To read a JSON string value as borrowed `str` use [`read_str`](Self::read_str).
+    /// To read a string value as borrowed `str` use [`read_str`](Self::read_str).\
+    /// To read a large string value in a streaming way, use [`read_string_with_reader`](Self::read_string_with_reader).
     fn read_string(self) -> Result<String, ReaderError>;
+
+    /// Consumes a JSON string using a [`Read`]
+    ///
+    /// The function `f` is called with a reader as argument which allows reading the JSON string
+    /// value. Escape sequences will be automatically converted to the corresponding characters. If
+    /// the function returns `Ok` but did not consume all bytes of the string value, the remaining
+    /// bytes will be skipped automatically.
+    ///
+    /// This method is mainly intended for reading large JSON string values in a streaming way;
+    /// for short string values prefer [`read_str`](Self::read_str) or [`read_string`](Self::read_string).
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::simple::*;
+    /// # use std::io::Read;
+    /// let json_reader = SimpleJsonReader::new("\"text with \\\" quote\"".as_bytes());
+    /// json_reader.read_string_with_reader(|mut string_reader| {
+    ///     let mut buf = [0_u8; 1];
+    ///     while string_reader.read(&mut buf)? > 0 {
+    ///         println!("Read byte: {}", buf[0]);
+    ///     }
+    ///     Ok(())
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Reader errors
+    /// The error behavior of the string reader differs from the guarantees made by [`Read`]:
+    /// - if an error is returned there are no guarantees about if or how many data has been
+    ///   consumed from the underlying data source and been stored in the provided `buf`
+    /// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+    ///   trying to use the string reader or the original JSON reader afterwards will lead
+    ///   to unspecified behavior
+    fn read_string_with_reader<T>(
+        self,
+        f: impl FnOnce(StringValueReader) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>>;
 
     /// Consumes and returns a JSON number value
     ///
@@ -835,19 +876,19 @@ fn read_object_borrowed_names<J: JsonReader>(
 ) -> Result<(), Box<dyn Error>> {
     json_reader.begin_object()?;
     while json_reader.has_next()? {
-        let consumed_name = Rc::new(Cell::new(false));
-        let consumed_value = Rc::new(Cell::new(false));
+        let mut consumed_name = false;
+        let mut consumed_value = false;
         let member_reader = MemberReader {
             json_reader,
-            consumed_name: Rc::clone(&consumed_name),
-            consumed_value: Rc::clone(&consumed_value),
+            consumed_name: &mut consumed_name,
+            consumed_value: &mut consumed_value,
         };
         f(member_reader)?;
         // If the function did not consume the member name or value, skip them
-        if !consumed_name.get() {
+        if !consumed_name {
             json_reader.skip_name()?;
         }
-        if !consumed_value.get() {
+        if !consumed_value {
             json_reader.skip_value()?;
         }
     }
@@ -862,14 +903,14 @@ fn read_object_owned_names<J: JsonReader>(
     json_reader.begin_object()?;
     while json_reader.has_next()? {
         let name = json_reader.next_name_owned()?;
-        let consumed_value = Rc::new(Cell::new(false));
+        let mut consumed_value = false;
         let member_value_reader = SingleValueReader {
             json_reader,
-            consumed_value: Rc::clone(&consumed_value),
+            consumed_value: &mut consumed_value,
         };
         f(name, member_value_reader)?;
         // If the function did not consume the value, skip it
-        if !consumed_value.get() {
+        if !consumed_value {
             json_reader.skip_value()?;
         }
     }
@@ -877,20 +918,50 @@ fn read_object_owned_names<J: JsonReader>(
     Ok(())
 }
 
+fn read_string_with_reader<J: JsonReader, T>(
+    json_reader: &mut ErrorSafeJsonReader<J>,
+    f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
+) -> Result<T, Box<dyn Error>> {
+    let mut delegate = json_reader.next_string_reader()?;
+    let string_reader: StringValueReader<'_> = StringValueReader {
+        delegate: &mut delegate as &mut dyn Read,
+    };
+    let result = f(string_reader)?;
+
+    // Check if there is error which was not propagated by function
+    if let Some(error) = delegate.error {
+        return Err(error.rough_clone().into());
+    }
+
+    // Skip remaining bytes, if any
+    // First check with small buffer if there are any bytes to skip
+    // TODO: Should this retry on `ErrorKind::Interrupted`?
+    if delegate.read(&mut [0_u8; utf8::MAX_BYTES_PER_CHAR])? > 0 {
+        // Then use larger buffer for skipping
+        let mut buf = [0_u8; 512];
+
+        while delegate.read(&mut buf)? > 0 {
+            // Do nothing
+        }
+    }
+
+    Ok(result)
+}
+
 /// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
 fn read_value<J: JsonReader, T>(
     json_reader: &mut ErrorSafeJsonReader<J>,
     f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
 ) -> Result<T, Box<dyn Error>> {
-    let consumed_value = Rc::new(Cell::new(false));
+    let mut consumed_value = false;
     let value_reader = SingleValueReader {
         json_reader,
-        consumed_value: Rc::clone(&consumed_value),
+        consumed_value: &mut consumed_value,
     };
 
     let result = f(value_reader)?;
     // If the function did not consume the value, skip it
-    if !consumed_value.get() {
+    if !consumed_value {
         json_reader.skip_value()?;
     }
     Ok(result)
@@ -1007,10 +1078,15 @@ fn read_seeked_multi<J: JsonReader>(
                     // Only need to check this for `is_moving_down == true`, because otherwise at least one
                     // array item had already been read
                     if !allow_empty && !json_reader.has_next()? {
-                        // Note: Location points at closing ']'
-                        let location = json_reader.current_position(true);
-                        // TODO Proper error type? Or use `ReaderError::UnexpectedStructure` with `FewerElementsThanExpected`?
-                        return Err(format!("unexpected empty array at {location}").into());
+                        /*
+                         * TODO: Use custom error; relying on `peek()` to trigger error might be too brittle?
+                         * Would have to store it in `ErrorSafeJsonReader` then though
+                         */
+                        return Err(json_reader
+                            // Call `peek()` to trigger a `FewerElementsThanExpected` error (since `has_next()` was `false`)
+                            .peek()
+                            .expect_err("should have failed with `FewerElementsThanExpected`")
+                            .into());
                     }
                 }
 
@@ -1061,10 +1137,15 @@ fn read_seeked_multi<J: JsonReader>(
                     // Only need to check this for `is_moving_down == true`, because otherwise at least one
                     // object member had already been read
                     if !allow_empty && !json_reader.has_next()? {
-                        // Note: Location points at closing '}'
-                        let location = json_reader.current_position(true);
-                        // TODO Proper error type? Or use `ReaderError::UnexpectedStructure` with `FewerElementsThanExpected`?
-                        return Err(format!("unexpected empty object at {location}").into());
+                        /*
+                         * TODO: Use custom error; relying on `skip_name()` to trigger error might be too brittle?
+                         * Would have to store it in `ErrorSafeJsonReader` then though
+                         */
+                        return Err(json_reader
+                            // Call `skip_name()` to trigger a `FewerElementsThanExpected` error (since `has_next()` was `false`)
+                            .skip_name()
+                            .expect_err("should have failed with `FewerElementsThanExpected`")
+                            .into());
                     }
                 }
 
@@ -1145,6 +1226,12 @@ fn read_seeked_multi<J: JsonReader>(
         // Report the original location where seeking started because there is no single
         // location where the path had no match, instead the path as a whole had no match
         let original_location = original_location.unwrap();
+        if json_reader.error.is_none() {
+            // Use dummy error because cannot preserve original error, and because error
+            // is specific to `read_seeked_multi` and the provided path, and it would be
+            // confusing to repeat it for unrelated subsequent reader calls
+            json_reader.error = Some(create_dummy_error(&original_location));
+        }
         // TODO Proper error type?
         Err(
             format!("no matching value found for path '{formatted_path}' at {original_location}")
@@ -1158,8 +1245,21 @@ fn read_seeked_multi<J: JsonReader>(
 mod error_safe_reader {
     use super::*;
 
+    type IoError = std::io::Error;
+
+    pub(super) fn clone_original_io_error(error: &IoError) -> IoError {
+        // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+        // because it considers the original error kind as safe to retry
+        #[allow(clippy::to_string_in_format_args)] // make it explicit that this uses `to_string()`
+        IoError::other(format!(
+            "previous error '{}': {}",
+            error.kind(),
+            error.to_string()
+        ))
+    }
+
     /// Creates a [`ReaderError`] for situations where the original error cannot be preserved
-    fn create_dummy_error(location: &JsonReaderPosition) -> ReaderError {
+    pub(super) fn create_dummy_error(location: &JsonReaderPosition) -> ReaderError {
         ReaderError::SyntaxError(JsonSyntaxError {
             // This error kind does not suit that well, but the other kinds suit even worse
             // Mainly have to return 'any' error; users should not rely on this safeguard in the first place
@@ -1170,12 +1270,7 @@ mod error_safe_reader {
 
     /// Creates a dummy [`ReaderError`] with unknown position
     fn create_unknown_pos_error() -> ReaderError {
-        let location = JsonReaderPosition {
-            path: None,
-            line_pos: None,
-            data_pos: None,
-        };
-        create_dummy_error(&location)
+        create_dummy_error(&JsonReaderPosition::unknown_position())
     }
 
     /// If previously an error had occurred, returns that error. Otherwise uses the delegate
@@ -1207,13 +1302,7 @@ mod error_safe_reader {
                         e @ ReaderError::MaxNestingDepthExceeded { .. } => e.rough_clone(),
                         e @ ReaderError::UnsupportedNumberValue { .. } => e.rough_clone(),
                         ReaderError::IoError { error, location } => ReaderError::IoError {
-                            // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
-                            // because it considers the original error kind as safe to retry
-                            error: std::io::Error::other(format!(
-                                "previous error '{}': {}",
-                                error.kind(),
-                                error.to_string()
-                            )),
+                            error: clone_original_io_error(error),
                             location: location.clone(),
                         },
                         // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
@@ -1226,7 +1315,7 @@ mod error_safe_reader {
                 },
                 |stored_error| stored_error
             )
-        }
+        };
     }
 
     /// [`JsonReader`] implementation which in case of errors keeps returning the error and does
@@ -1283,10 +1372,16 @@ mod error_safe_reader {
             use_delegate!(self, |r| r.next_string())
         }
 
-        fn next_string_reader(&mut self) -> Result<std::io::Empty, ReaderError> {
-            unreachable!("not used by Simple API")
-            // If this is used in the future, the string value reader must track all of its errors
-            // and then store them here as error as well, to prevent further JSON reader usage
+        fn next_string_reader(
+            &mut self,
+        ) -> Result<ErrorSafeStringValueReader<impl Read>, ReaderError> {
+            let string_reader_delegate = use_delegate!(self, |r| r.next_string_reader())?;
+            Ok(ErrorSafeStringValueReader {
+                delegate: string_reader_delegate,
+                // Store errors in the `error` field of this `ErrorSafeStringValueReader`, so they are
+                // available to the original JsonReader afterwards
+                error: &mut self.error,
+            })
         }
 
         fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
@@ -1375,6 +1470,45 @@ mod error_safe_reader {
                 return Err(error);
             }
             self.delegate.consume_trailing_whitespace()
+        }
+    }
+
+    // Note: Repeating errors here might be a bit redundant if JsonStreamReader is used since it does
+    // this itself as well; but that is not guaranteed for all JsonReader implementations
+    pub(super) struct ErrorSafeStringValueReader<'a, D: Read> {
+        delegate: D,
+        pub(super) error: &'a mut Option<ReaderError>,
+    }
+    impl<D: Read> ErrorSafeStringValueReader<'_, D> {
+        fn use_delegate<T>(
+            &mut self,
+            f: impl FnOnce(&mut D) -> std::io::Result<T>,
+        ) -> std::io::Result<T> {
+            if let Some(error) = &self.error {
+                return Err(match error.rough_clone() {
+                    // Ignore `location`; assuming that IO error was set here by ErrorSafeStringValueReader
+                    // and therefore no real location exists (or original location would already be included
+                    // in error message)
+                    ReaderError::IoError { error, .. } => error,
+                    // Error should have only been set by ErrorSafeStringValueReader, and therefore be IoError;
+                    // any previous other error type should have prevented creation of ErrorSafeStringValueReader
+                    e => unreachable!("unexpected error type: {e:?}"),
+                });
+            }
+
+            let result = f(&mut self.delegate);
+            if let Err(error) = &result {
+                *self.error = Some(ReaderError::IoError {
+                    error: clone_original_io_error(error),
+                    location: JsonReaderPosition::unknown_position(),
+                });
+            }
+            result
+        }
+    }
+    impl<D: Read> Read for ErrorSafeStringValueReader<'_, D> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.use_delegate(|d| d.read(buf))
         }
     }
 }
@@ -1554,6 +1688,15 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(result)
     }
 
+    fn read_string_with_reader<T>(
+        mut self,
+        f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        let result = read_string_with_reader(&mut self.json_reader, f)?;
+        self.finish()?;
+        Ok(result)
+    }
+
     fn read_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
         let result = self.json_reader.next_number()?;
         self.finish()?;
@@ -1685,6 +1828,13 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         self.json_reader.next_string()
     }
 
+    fn read_string_with_reader<T>(
+        self,
+        f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        read_string_with_reader(self.json_reader, f)
+    }
+
     fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
         self.json_reader.next_number()
     }
@@ -1752,7 +1902,7 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
 #[derive(Debug)]
 pub struct SingleValueReader<'a, J: JsonReader> {
     json_reader: &'a mut ErrorSafeJsonReader<J>,
-    consumed_value: Rc<Cell<bool>>,
+    consumed_value: &'a mut bool,
 }
 impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
@@ -1760,12 +1910,12 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     }
 
     fn read_null(self) -> Result<(), ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_null()
     }
 
     fn read_bool(self) -> Result<bool, ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_bool()
     }
 
@@ -1773,22 +1923,30 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         self,
         f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         f(self.json_reader.next_str()?)
     }
 
     fn read_string(self) -> Result<String, ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_string()
     }
 
+    fn read_string_with_reader<T>(
+        self,
+        f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        *self.consumed_value = true;
+        read_string_with_reader(self.json_reader, f)
+    }
+
     fn read_number<T: FromStr>(self) -> Result<Result<T, T::Err>, ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_number()
     }
 
     fn read_number_as_string(self) -> Result<String, ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_number_as_string()
     }
 
@@ -1796,12 +1954,12 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.deserialize_next()
     }
 
     fn skip_value(self) -> Result<(), ReaderError> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.skip_value()
     }
 
@@ -1809,7 +1967,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         self,
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_array(self.json_reader, f)
     }
 
@@ -1817,7 +1975,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         self,
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_object_borrowed_names(self.json_reader, f)
     }
 
@@ -1825,7 +1983,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         self,
         f: impl FnMut(String, SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_object_owned_names(self.json_reader, f)
     }
 
@@ -1834,7 +1992,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         path: &JsonPath,
         f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_seeked(self.json_reader, path, f)
     }
 
@@ -1844,7 +2002,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
         at_least_one_match: bool,
         f: impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_seeked_multi(self.json_reader, path, at_least_one_match, f)
     }
 }
@@ -1858,8 +2016,8 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
 #[derive(Debug)]
 pub struct MemberReader<'a, J: JsonReader> {
     json_reader: &'a mut ErrorSafeJsonReader<J>,
-    consumed_name: Rc<Cell<bool>>,
-    consumed_value: Rc<Cell<bool>>,
+    consumed_name: &'a mut bool,
+    consumed_value: &'a mut bool,
 }
 impl<J: JsonReader> MemberReader<'_, J> {
     /// Reads the member name
@@ -1880,16 +2038,16 @@ impl<J: JsonReader> MemberReader<'_, J> {
          * But also the method name `read_name` suggests that it advances the reader, so it
          * might be counterintuitive that subsequent calls return a previously read name.
          */
-        if self.consumed_name.get() {
+        if *self.consumed_name {
             panic!("name has already been consumed");
         }
-        self.consumed_name.set(true);
+        *self.consumed_name = true;
         self.json_reader.next_name()
     }
 
     fn check_skip_name(&mut self) -> Result<(), ReaderError> {
-        if !self.consumed_name.get() {
-            self.consumed_name.set(true);
+        if !*self.consumed_name {
+            *self.consumed_name = true;
             self.json_reader.skip_name()?;
         }
         Ok(())
@@ -1910,13 +2068,13 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
 
     fn read_null(mut self) -> Result<(), ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_null()
     }
 
     fn read_bool(mut self) -> Result<bool, ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_bool()
     }
 
@@ -1925,25 +2083,34 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnOnce(&str) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         f(self.json_reader.next_str()?)
     }
 
     fn read_string(mut self) -> Result<String, ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_string()
+    }
+
+    fn read_string_with_reader<T>(
+        mut self,
+        f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
+    ) -> Result<T, Box<dyn Error>> {
+        self.check_skip_name()?;
+        *self.consumed_value = true;
+        read_string_with_reader(self.json_reader, f)
     }
 
     fn read_number<T: FromStr>(mut self) -> Result<Result<T, T::Err>, ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_number()
     }
 
     fn read_number_as_string(mut self) -> Result<String, ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.next_number_as_string()
     }
 
@@ -1952,13 +2119,13 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.deserialize_next()
     }
 
     fn skip_value(mut self) -> Result<(), ReaderError> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         self.json_reader.skip_value()
     }
 
@@ -1967,7 +2134,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnOnce(&mut ArrayReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_array(self.json_reader, f)
     }
 
@@ -1976,7 +2143,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnMut(MemberReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_object_borrowed_names(self.json_reader, f)
     }
 
@@ -1985,7 +2152,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnMut(String, SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_object_owned_names(self.json_reader, f)
     }
 
@@ -1995,7 +2162,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnOnce(SingleValueReader<'_, J>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_seeked(self.json_reader, path, f)
     }
 
@@ -2006,7 +2173,34 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         f: impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.check_skip_name()?;
-        self.consumed_value.set(true);
+        *self.consumed_value = true;
         read_seeked_multi(self.json_reader, path, at_least_one_match, f)
+    }
+}
+
+/// Reader for a JSON string value
+///
+/// JSON syntax errors and invalid UTF-8 data which occurs while consuming the JSON string
+/// value are reported as [`std::io::Error`].
+///
+/// This struct is used by [`ValueReader::read_string_with_reader`].
+///
+/// # Error behavior
+/// The error behavior of this string reader differs from the guarantees made by [`Read`]:
+/// - if an error is returned there are no guarantees about if or how many data has been
+///   consumed from the underlying data source and been stored in the provided `buf`
+/// - if an error occurs, processing should be aborted, regardless of the kind of the error;
+///   trying to use this string reader or the original JSON reader afterwards will lead
+///   to unspecified behavior
+/* TODO: Should implement `Debug`, but seems to not be easily possible when using `dyn` below */
+pub struct StringValueReader<'a> {
+    // TODO: Ideally would avoid `dyn` here, but using generic type parameter seems to not be
+    //   easily possible when `JsonReader::next_string_reader()` does not use associated type
+    //   and `FnOnce` cannot use `impl Trait` for arguments
+    delegate: &'a mut dyn Read,
+}
+impl Read for StringValueReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.delegate.read(buf)
     }
 }

@@ -13,7 +13,7 @@ use std::{
 use struson::{
     json_path,
     reader::{
-        simple::{multi_json_path::multi_json_path, SimpleJsonReader, ValueReader},
+        simple::{SimpleJsonReader, ValueReader},
         JsonStreamReader, JsonSyntaxError, ReaderError, SyntaxErrorKind, ValueType,
     },
 };
@@ -66,6 +66,69 @@ fn read_trailing_data() {
 }
 
 #[test]
+fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
+    let json_reader = new_reader("\"\"");
+    let value = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf)?;
+        Ok(buf)
+    })?;
+    assert_eq!("", value);
+
+    let json_reader = new_reader("\"test\"");
+    let value = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf)?;
+        Ok(buf)
+    })?;
+    assert_eq!("test", value);
+
+    let json_reader = new_reader("\"test\"");
+    let value = json_reader.read_string_with_reader(|mut reader| {
+        let mut value = Vec::new();
+
+        let mut buf = [0_u8; 1];
+        while reader.read(&mut buf)? > 0 {
+            value.push(buf[0]);
+        }
+        Ok(value)
+    })?;
+    assert_eq!(b"test" as &[u8], value);
+
+    let json_reader = new_reader("[\"some string\", 12]");
+    let value = json_reader.read_array(|array_reader| {
+        let value = array_reader.read_string_with_reader(|mut reader| {
+            let mut value = Vec::new();
+
+            let mut buf = [0_u8; 1];
+            let read_count = reader.read(&mut buf)?;
+            assert_eq!(1, read_count);
+            value.push(buf[0]);
+
+            // Implicitly skip remainder
+
+            Ok(value)
+        })?;
+        assert_eq!(b"s" as &[u8], value);
+
+        Ok(array_reader.read_number_as_string()?)
+    })?;
+    assert_eq!("12", value);
+
+    let json_reader = new_reader("1");
+    // Verify closure is not called if value is not a string
+    let result = json_reader.read_string_with_reader::<()>(|_| {
+        panic!("should not have been called");
+    });
+    assert_eq!(
+        "expected JSON value type String but got Number at path '$', line 0, column 0 (data pos 0)",
+        result.unwrap_err().to_string()
+    );
+
+    Ok(())
+}
+
+#[test]
 fn read_array() -> Result<(), Box<dyn Error>> {
     let json_reader = new_reader(
         r#"
@@ -74,6 +137,7 @@ fn read_array() -> Result<(), Box<dyn Error>> {
             true,
             "str",
             "string",
+            "string-reader",
             1,
             2.3,
             4.5e6,
@@ -95,6 +159,14 @@ fn read_array() -> Result<(), Box<dyn Error>> {
         assert_eq!(true, array_reader.read_bool()?);
         assert_eq!("str", array_reader.read_str(|s| Ok(s.to_owned()))?);
         assert_eq!("string", array_reader.read_string()?);
+        assert_eq!(
+            "string-reader",
+            array_reader.read_string_with_reader(|mut r| {
+                let mut buf = String::new();
+                r.read_to_string(&mut buf)?;
+                Ok(buf)
+            })?
+        );
         assert_eq!(1_u64, array_reader.read_number()??);
         assert_eq!(2.3_f64, array_reader.read_number()??);
         assert_eq!("4.5e6", array_reader.read_number_as_string()?);
@@ -193,13 +265,14 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
             "b": true,
             "c": "str",
             "d": "string",
-            "e": 1,
-            "f": 2.3,
-            "g": 4.5e6,
-            "h": "serde",
-            "i": [false],
-            "j": {"nested1": true},
-            "k": {"nested2": true}
+            "e": "string-reader",
+            "f": 1,
+            "g": 2.3,
+            "h": 4.5e6,
+            "i": "serde",
+            "j": [false],
+            "k": {"nested1": true},
+            "l": {"nested2": true}
         }
         "#,
     );
@@ -218,20 +291,28 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
             }
             2 => assert_eq!("str", member_reader.read_str(|s| Ok(s.to_owned()))?),
             3 => assert_eq!("string", member_reader.read_string()?),
-            4 => assert_eq!(1_u64, member_reader.read_number()??),
-            5 => assert_eq!(2.3_f64, member_reader.read_number()??),
-            6 => assert_eq!("4.5e6", member_reader.read_number_as_string()?),
-            7 => assert_eq!("serde", member_reader.read_deserialize::<String>()?),
-            8 => member_reader.read_array(|array_reader| {
+            4 => assert_eq!(
+                "string-reader",
+                member_reader.read_string_with_reader(|mut r| {
+                    let mut buf = String::new();
+                    r.read_to_string(&mut buf)?;
+                    Ok(buf)
+                })?
+            ),
+            5 => assert_eq!(1_u64, member_reader.read_number()??),
+            6 => assert_eq!(2.3_f64, member_reader.read_number()??),
+            7 => assert_eq!("4.5e6", member_reader.read_number_as_string()?),
+            8 => assert_eq!("serde", member_reader.read_deserialize::<String>()?),
+            9 => member_reader.read_array(|array_reader| {
                 assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => member_reader.read_object_borrowed_names(|mut member_reader| {
+            10 => member_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
                 assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            10 => member_reader.read_object_owned_names(|name, value_reader| {
+            11 => member_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
                 assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
@@ -241,7 +322,7 @@ fn read_object_borrowed_names() -> Result<(), Box<dyn Error>> {
         index += 1;
         Ok(())
     })?;
-    assert_eq!(11, index);
+    assert_eq!(12, index);
     Ok(())
 }
 
@@ -254,13 +335,14 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
             "b": true,
             "c": "str",
             "d": "string",
-            "e": 1,
-            "f": 2.3,
-            "g": 4.5e6,
-            "h": "serde",
-            "i": [false],
-            "j": {"nested1": true},
-            "k": {"nested2": true}
+            "e": "string-reader",
+            "f": 1,
+            "g": 2.3,
+            "h": 4.5e6,
+            "i": "serde",
+            "j": [false],
+            "k": {"nested1": true},
+            "l": {"nested2": true}
         }
         "#,
     );
@@ -278,20 +360,28 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
             }
             2 => assert_eq!("str", value_reader.read_str(|s| Ok(s.to_owned()))?),
             3 => assert_eq!("string", value_reader.read_string()?),
-            4 => assert_eq!(1_u64, value_reader.read_number()??),
-            5 => assert_eq!(2.3_f64, value_reader.read_number()??),
-            6 => assert_eq!("4.5e6", value_reader.read_number_as_string()?),
-            7 => assert_eq!("serde", value_reader.read_deserialize::<String>()?),
-            8 => value_reader.read_array(|array_reader| {
+            4 => assert_eq!(
+                "string-reader",
+                value_reader.read_string_with_reader(|mut r| {
+                    let mut buf = String::new();
+                    r.read_to_string(&mut buf)?;
+                    Ok(buf)
+                })?
+            ),
+            5 => assert_eq!(1_u64, value_reader.read_number()??),
+            6 => assert_eq!(2.3_f64, value_reader.read_number()??),
+            7 => assert_eq!("4.5e6", value_reader.read_number_as_string()?),
+            8 => assert_eq!("serde", value_reader.read_deserialize::<String>()?),
+            9 => value_reader.read_array(|array_reader| {
                 assert_eq!(false, array_reader.read_bool()?);
                 Ok(())
             })?,
-            9 => value_reader.read_object_borrowed_names(|mut member_reader| {
+            10 => value_reader.read_object_borrowed_names(|mut member_reader| {
                 assert_eq!("nested1", member_reader.read_name()?);
                 assert_eq!(true, member_reader.read_bool()?);
                 Ok(())
             })?,
-            10 => value_reader.read_object_owned_names(|name, value_reader| {
+            11 => value_reader.read_object_owned_names(|name, value_reader| {
                 assert_eq!("nested2", name);
                 assert_eq!(true, value_reader.read_bool()?);
                 Ok(())
@@ -301,7 +391,7 @@ fn read_object_owned_names() -> Result<(), Box<dyn Error>> {
         index += 1;
         Ok(())
     })?;
-    assert_eq!(11, index);
+    assert_eq!(12, index);
     Ok(())
 }
 
@@ -465,7 +555,7 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
     // Error: Wrong JSON value type
     let json_reader = new_reader("[1]");
     // Seeking empty path
-    let result = json_reader.read_seeked(&json_path!["a"], |_| -> Result<(), _> {
+    let result = json_reader.read_seeked::<()>(&json_path!["a"], |_| {
         panic!("should not have been called");
     });
     assert_eq!(
@@ -485,7 +575,7 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
 
     // Error propagation
     let json_reader = new_reader("[1]");
-    let result = json_reader.read_seeked(&json_path![0], |_| Err::<(), _>("custom-error".into()));
+    let result = json_reader.read_seeked::<()>(&json_path![0], |_| Err("custom-error".into()));
     assert_eq!("custom-error", result.unwrap_err().to_string());
 
     // Nested usage inside of other reading methods, including nested inside another `read_seeked` call
@@ -753,7 +843,7 @@ mod read_seeked_multi {
                 Ok(())
             });
         assert_eq!(
-            "unexpected empty array at path '$[1][0]', line 0, column 7 (data pos 7)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$[1][0]', line 0, column 7 (data pos 7)",
             result.unwrap_err().to_string()
         );
         // Should have already collected the first value
@@ -765,7 +855,7 @@ mod read_seeked_multi {
             panic!("should not have been called");
         });
         assert_eq!(
-            "unexpected empty array at path '$[0]', line 0, column 1 (data pos 1)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
 
@@ -900,7 +990,7 @@ mod read_seeked_multi {
                 Ok(())
             });
         assert_eq!(
-            "unexpected empty object at path '$[1].<?>', line 0, column 12 (data pos 12)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$[1].<?>', line 0, column 12 (data pos 12)",
             result.unwrap_err().to_string()
         );
         // Should have already collected the first value
@@ -912,7 +1002,7 @@ mod read_seeked_multi {
             panic!("should not have been called");
         });
         assert_eq!(
-            "unexpected empty object at path '$.<?>', line 0, column 1 (data pos 1)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$.<?>', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
 
@@ -1184,6 +1274,99 @@ mod read_seeked_multi {
 
         Ok(())
     }
+
+    /// Tests behavior when a user-provided closure encounters an `Err` from the reader,
+    /// but instead of propagating it, returns `Ok`
+    #[test]
+    fn discarded_error_handling() {
+        let json_reader = new_reader(r#"[0, 1]"#);
+        // Path with trailing `[+]`
+        let result = json_reader.read_seeked_multi(&multi_json_path![[+]], true, |value_reader| {
+            // Discarding error must not cause an infinite loop; `read_seeked_multi` should exit
+            let result = value_reader.read_null();
+            assert_eq!(
+                "expected JSON value type Null but got Number at path '$[0]', line 0, column 1 (data pos 1)",
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        });
+        assert_eq!(
+            // Created a dummy `IncompleteDocument` error
+            "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
+
+        let json_reader = new_reader(r#"[[0], [1]]"#);
+        // Path with non-trailing `[+]`
+        let result = json_reader.read_seeked_multi(&multi_json_path![[+], 0], true, |value_reader| {
+            // Discarding error must not cause an infinite loop; `read_seeked_multi` should exit
+            let result = value_reader.read_null();
+            assert_eq!(
+                "expected JSON value type Null but got Number at path '$[0][0]', line 0, column 2 (data pos 2)",
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        });
+        assert_eq!(
+            // Created a dummy `IncompleteDocument` error
+            "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+
+        let json_reader = new_reader(r#"[[]]"#);
+        // `[+]` matching nothing
+        let result = json_reader.read_array(|array_reader| {
+            let result = array_reader.read_seeked_multi(&multi_json_path![[+]], true, |_| {
+                panic!("should not have been called");
+            });
+            assert_eq!(
+                "unexpected JSON structure FewerElementsThanExpected at path '$[0][0]', line 0, column 2 (data pos 2)",
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        });
+        assert_eq!(
+            // Created a dummy `IncompleteDocument` error
+            "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+
+        let json_reader = new_reader(r#"[{}]"#);
+        // `{+}` matching nothing
+        let result = json_reader.read_array(|array_reader| {
+            let result = array_reader.read_seeked_multi(&multi_json_path![{+}], true, |_| {
+                panic!("should not have been called");
+            });
+            assert_eq!(
+                "unexpected JSON structure FewerElementsThanExpected at path '$[0].<?>', line 0, column 2 (data pos 2)",
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        });
+        assert_eq!(
+            // Created a dummy `IncompleteDocument` error
+            "syntax error: JSON syntax error IncompleteDocument at path '$[0].<?>', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+
+        let json_reader = new_reader(r#"[[]]"#);
+        // `at_least_one_match = true` matching nothing
+        let result = json_reader.read_array(|array_reader| {
+            let result = array_reader.read_seeked_multi(&multi_json_path![[*]], true, |_| {
+                panic!("should not have been called");
+            });
+            assert_eq!(
+                "no matching value found for path '[*]' at path '$[0]', line 0, column 1 (data pos 1)",
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        });
+        assert_eq!(
+            // Created a dummy `IncompleteDocument` error
+            "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
+    }
 }
 
 #[test]
@@ -1270,6 +1453,10 @@ fn closure_error_propagation() {
     let json_reader = new_reader("\"test\"");
     assert_error(json_reader.read_str(|_| Err(message.into())));
 
+    // --- read_string_with_reader ---
+    let json_reader = new_reader("\"test\"");
+    assert_error(json_reader.read_string_with_reader(|_| Err(message.into())));
+
     // --- read_array ---
     let json_reader = new_reader("[");
     assert_error(json_reader.read_array(|_| Err(message.into())));
@@ -1347,13 +1534,13 @@ fn closure_error_propagation() {
     }));
 }
 
-/// Tests behavior when a user-provided closure discards errors and does not
-/// propagate them
+/// Tests behavior when a user-provided closure encounters an `Err` from the reader,
+/// but instead of propagating it, returns `Ok`
 #[test]
 fn discarded_error_handling() {
     let json_reader = new_reader("[1]");
     let result = json_reader.read_array(|array_reader| {
-        let _ = array_reader.read_null();
+        array_reader.read_null().unwrap_err();
         // Explicit read call after error
         Ok(array_reader.read_number_as_string()?)
     });
@@ -1365,7 +1552,7 @@ fn discarded_error_handling() {
 
     let json_reader = new_reader("[1]");
     let result = json_reader.read_array(|array_reader| {
-        let _ = array_reader.read_null();
+        array_reader.read_null().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1376,8 +1563,8 @@ fn discarded_error_handling() {
 
     let json_reader = new_reader("[1, 2]");
     let result = json_reader.read_array_items(|value_reader| {
-        // This must not cause an infinite loop; `read_array_items` should exit
-        let _ = value_reader.read_null();
+        // Discarding error must not cause an infinite loop; `read_array_items` should exit
+        value_reader.read_null().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1388,8 +1575,8 @@ fn discarded_error_handling() {
 
     let json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
     let result = json_reader.read_object_owned_names(|_name, value_reader| {
-        // This must not cause an infinite loop; `read_object_owned_names` should exit
-        let _ = value_reader.read_null();
+        // Discarding error must not cause an infinite loop; `read_object_owned_names` should exit
+        value_reader.read_null().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1398,35 +1585,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_reader = new_reader(r#"[0, 1]"#);
-    // Path with trailing `[+]`
-    let result = json_reader.read_seeked_multi(&multi_json_path![[+]], true, |value_reader| {
-        // This must not cause an infinite loop; `read_seeked_multi` should exit
-        let _ = value_reader.read_null();
-        Ok(())
-    });
-    assert_eq!(
-        // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
-        result.unwrap_err().to_string()
-    );
-
-    let json_reader = new_reader(r#"[[0], [1]]"#);
-    // Path with non-trailing `[+]`
-    let result = json_reader.read_seeked_multi(&multi_json_path![[+], 0], true, |value_reader| {
-        // This must not cause an infinite loop; `read_seeked_multi` should exit
-        let _ = value_reader.read_null();
-        Ok(())
-    });
-    assert_eq!(
-        // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
-        result.unwrap_err().to_string()
-    );
-
     let json_reader = new_reader("[]");
     let result = json_reader.read_array(|array_reader| {
-        let _ = array_reader.read_null();
+        array_reader.read_null().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1437,7 +1598,7 @@ fn discarded_error_handling() {
 
     let json_reader = new_reader("[?]");
     let result = json_reader.read_array(|array_reader| {
-        let _ = array_reader.read_null();
+        array_reader.read_null().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1447,7 +1608,7 @@ fn discarded_error_handling() {
 
     let json_reader = new_reader("[1000]");
     let result = json_reader.read_array(|array_reader| {
-        let _: Result<u8, _> = array_reader.read_deserialize();
+        array_reader.read_deserialize::<u8>().unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -1482,14 +1643,75 @@ fn discarded_error_handling() {
         data: r#"{"test"#.as_bytes(),
     }));
     let result = json_reader.read_object_borrowed_names(|mut member_reader| {
-        let _ = member_reader.read_name();
-        let _ = member_reader.read_bool();
+        let result = member_reader.read_name();
+        assert_eq!(
+            "IO error 'custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
+            result.unwrap_err().to_string()
+        );
+        member_reader.read_bool().unwrap_err();
         Ok(())
     });
     assert_eq!(
         format!(
             "IO error 'previous error '{}': custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
             ErrorKind::UnexpectedEof
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("\"test");
+    let result = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = Vec::new();
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
+            result.unwrap_err().to_string()
+        );
+        reader.read_to_end(&mut buf).unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)' at (roughly) <location unavailable>",
+            ErrorKind::Other
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    // Reading malformed UTF-8 data
+    let json_reader = SimpleJsonReader::new(b"\"\xFF\"" as &[u8]);
+    let result = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = Vec::new();
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
+        reader.read_to_end(&mut buf).unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)' at (roughly) <location unavailable>",
+            ErrorKind::Other
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_reader = new_reader("[\"a]");
+    let result = json_reader.read_array(|array_reader| {
+        array_reader
+            .read_string_with_reader(|_| {
+                // Does not read from string; remainder should be implicitly skipped
+                Ok(())
+            })
+            .unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': JSON syntax error IncompleteDocument at path '$[0]', line 0, column 4 (data pos 4)' at (roughly) <location unavailable>",
+            ErrorKind::Other
         ),
         result.unwrap_err().to_string()
     );

@@ -382,7 +382,7 @@ impl<R: Read> JsonStreamReader<R> {
         let initial_nesting_capacity = 16;
         Self {
             reader,
-            buf: [0; READER_BUF_SIZE],
+            buf: [0_u8; READER_BUF_SIZE],
             buf_pos: 0,
             buf_end_pos: 0,
             buf_used_for_bytes_value: false,
@@ -1577,7 +1577,7 @@ impl<R: Read> JsonStreamReader<R> {
                         // Treat as byte count because Unicode escape only uses single byte ASCII chars
                         consumed_bytes_count += escape_consumed_chars_count as u64;
 
-                        let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
+                        let mut char_encode_buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                         let encoded_char = c.encode_utf8(&mut char_encode_buf);
                         for b in encoded_char.as_bytes() {
                             consumer(*b);
@@ -1696,7 +1696,7 @@ impl<R: Read> JsonStreamReader<R> {
                             bytes_reader.json_reader.column += consumed_chars_count as u64;
                             // Treat as byte count because Unicode escape only uses single byte ASCII chars
                             bytes_reader.json_reader.byte_pos += consumed_chars_count as u64;
-                            let mut char_encode_buf = [0; utf8::MAX_BYTES_PER_CHAR];
+                            let mut char_encode_buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                             let encoded_char = c.encode_utf8(&mut char_encode_buf);
                             bytes_reader.push_bytes(encoded_char.as_bytes());
                         }
@@ -2175,7 +2175,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         self.is_string_value_reader_active = true;
         Ok(StringValueReader {
             json_reader: self,
-            utf8_buf: [0; STRING_VALUE_READER_BUF_SIZE],
+            utf8_buf: [0_u8; STRING_VALUE_READER_BUF_SIZE],
             utf8_start_pos: 0,
             utf8_count: 0,
             reached_end: false,
@@ -2475,10 +2475,11 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
     use crate::writer::{
         FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, StringValueWriter,
-        UnreachableStringValueWriter,
     };
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -3057,30 +3058,17 @@ mod tests {
 
         let mut reader = json_reader.next_string_reader()?;
 
-        let mut buf = [0; 1];
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b't', buf[0]);
+        // Reading with empty buffer
+        let mut buf = [];
+        assert_eq!(0, reader.read(&mut buf)?);
 
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b'e', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b's', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b't', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b'\xF4', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b'\x8F', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b'\xBF', buf[0]);
-
-        assert_eq!(1, reader.read(&mut buf)?);
-        assert_eq!(b'\xBF', buf[0]);
+        let mut buf = [0_u8; 1];
+        let mut bytes = Vec::new();
+        for _ in 0..8 {
+            assert_eq!(1, reader.read(&mut buf)?);
+            bytes.push(buf[0]);
+        }
+        assert_eq!(b"test\xF4\x8F\xBF\xBF", bytes.as_slice());
 
         assert_eq!(0, reader.read(&mut buf)?);
         // Calling `read` again at end of string should have no effect
@@ -3236,7 +3224,7 @@ mod tests {
 
         let mut reader = json_reader.next_string_reader().unwrap();
 
-        let mut buf = [0; 1];
+        let mut buf = [0_u8; 1];
         assert_eq!(1, reader.read(&mut buf).unwrap());
         drop(reader);
 
@@ -4414,10 +4402,30 @@ mod tests {
             IoError::new(ErrorKind::Other, "test error")
         }
 
-        struct FailingJsonWriter;
+        /// [`StringValueWriter`] which is unreachable
+        struct UnreachableStringValueWriter;
+        impl Write for UnreachableStringValueWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                unreachable!()
+            }
 
-        // JsonWriter which always returns Err(...)
-        // Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test
+            fn flush(&mut self) -> std::io::Result<()> {
+                unreachable!()
+            }
+        }
+        impl StringValueWriter for UnreachableStringValueWriter {
+            fn write_str(&mut self, _: &str) -> Result<(), IoError> {
+                unreachable!()
+            }
+
+            fn finish_value(self) -> Result<(), IoError> {
+                unreachable!()
+            }
+        }
+
+        /// [`JsonWriter`] which always returns `Err(...)`
+        /* Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test */
+        struct FailingJsonWriter;
         impl JsonWriter for FailingJsonWriter {
             fn begin_object(&mut self) -> Result<(), IoError> {
                 Err(err())

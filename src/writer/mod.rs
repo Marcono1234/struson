@@ -303,8 +303,7 @@ pub trait JsonWriter {
     /// JSON object member names. The method [`name`](Self::name) has to be used for that.
     ///
     /// Characters are automatically escaped in the JSON output if necessary. For example
-    /// the character U+0000 is written as `\u0000`. Writing invalid UTF-8 data to the
-    /// writer will cause a [`std::io::Error`].
+    /// the character U+0000 is written as `\u0000`.
     ///
     /// **Important:** Once the string value is finished, [`StringValueWriter::finish_value`]
     /// must be called. Otherwise the string value writer will still be considered 'active'
@@ -332,6 +331,8 @@ pub trait JsonWriter {
     /// ```
     ///
     /// # Writer errors
+    /// Writing invalid UTF-8 data to the writer will cause a [`std::io::Error`].
+    ///
     /// The error behavior of the string writer differs from the guarantees made by [`Write`]:
     /// - if an error is returned there are no guarantees about if or how many bytes have been
     ///   written
@@ -557,17 +558,17 @@ pub trait JsonWriter {
 /// methods of the original JSON writer will panic. Dropping the writer will not
 /// automatically finish the value.
 ///
-/// # Errors
-/// The error behavior of the string writer differs from the guarantees made by [`Write`]:
+/// # Error behavior
+/// The error behavior of this string writer differs from the guarantees made by [`Write`]:
 /// - if an error is returned there are no guarantees about if or how many bytes have been written
 /// - if an error occurs, processing should be aborted, regardless of the kind of the error;
-///   trying to use the string writer or the underlying JSON writer afterwards will lead
+///   trying to use this string writer or the underlying JSON writer afterwards will lead
 ///   to unspecified behavior
 /* Note: Dropping writer will not automatically finish value since that would silently discard errors which might occur */
 pub trait StringValueWriter: Write {
     /// Writes a string value piece
     ///
-    /// This method behaves the same way as if the string bytes were written using
+    /// This method behaves the same way as if all the string bytes were written using
     /// the `write` method, however `JsonWriter` implementations might implement
     /// `write_str` more efficiently. For example, they can omit UTF-8 validation
     /// because the data of a `str` already represents valid UTF-8 data.\
@@ -615,27 +616,6 @@ pub trait StringValueWriter: Write {
     /// using the original JSON writer again.
     /* Consumes 'self' */
     fn finish_value(self) -> Result<(), IoError>;
-}
-
-/// [`StringValueWriter`] which is unreachable
-pub(crate) struct UnreachableStringValueWriter;
-impl Write for UnreachableStringValueWriter {
-    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-        unreachable!()
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        unreachable!()
-    }
-}
-impl StringValueWriter for UnreachableStringValueWriter {
-    fn write_str(&mut self, _: &str) -> Result<(), IoError> {
-        unreachable!()
-    }
-
-    fn finish_value(self) -> Result<(), IoError> {
-        unreachable!()
-    }
 }
 
 /// Sealed trait for finite number types such as `u32`
