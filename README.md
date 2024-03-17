@@ -2,7 +2,7 @@
 
 Struson is an [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
 
-Its main purpose is to allow writing JSON documents in a memory efficient way without having to store the complete JSON document structure in memory.
+Its main purpose is to allow reading and writing JSON documents in a memory efficient way without having to store the complete JSON document structure in memory.
 
 The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
