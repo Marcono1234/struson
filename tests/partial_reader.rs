@@ -11,9 +11,8 @@
 use serde::Deserialize;
 use struson::{
     reader::{
-        json_path::json_path, JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError,
-        LinePosition, ReaderError, SyntaxErrorKind, TransferError, UnexpectedStructureKind,
-        ValueType,
+        JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, LinePosition,
+        ReaderError, SyntaxErrorKind, TransferError, UnexpectedStructureKind, ValueType,
     },
     serde::{DeserializerError, JsonReaderDeserializer},
     writer::JsonWriter,
@@ -207,6 +206,13 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             _ => panic!("not inside object"),
         }
 
+        if self.has_next()? {
+            return Err(ReaderError::UnexpectedStructure {
+                kind: UnexpectedStructureKind::MoreElementsThanExpected,
+                location: self.current_position(true),
+            });
+        }
+
         if self.reached_eof {
             self.is_in_object.pop();
             Ok(())
@@ -236,6 +242,13 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             Some(false) => {}
             // Covers `None` (neither in array nor object), and `Some(true)` (in object)
             _ => panic!("not inside array"),
+        }
+
+        if self.has_next()? {
+            return Err(ReaderError::UnexpectedStructure {
+                kind: UnexpectedStructureKind::MoreElementsThanExpected,
+                location: self.current_position(true),
+            });
         }
 
         if self.reached_eof {
@@ -612,6 +625,25 @@ fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn end_incomplete() -> Result<(), Box<dyn std::error::Error>> {
+    let json = "[";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_array()?;
+    // Directly calls `end_array()` without preceding `has_next()`
+    json_reader.end_array()?;
+    json_reader.consume_trailing_whitespace()?;
+
+    let json = "{";
+    let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
+    json_reader.begin_object()?;
+    // Directly calls `end_object()` without preceding `has_next()`
+    json_reader.end_object()?;
+    json_reader.consume_trailing_whitespace()?;
+
+    Ok(())
+}
+
+#[test]
 fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
     let json = "[]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -644,7 +676,7 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             assert_eq!(
                 JsonReaderPosition {
-                    path: Some(json_path![0].to_vec()),
+                    path: None,
                     line_pos: Some(LinePosition { line: 0, column: 1 }),
                     data_pos: Some(1)
                 },
@@ -687,7 +719,7 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             assert_eq!(
                 JsonReaderPosition {
-                    path: Some(json_path!["<?>"].to_vec()),
+                    path: None,
                     line_pos: Some(LinePosition { line: 0, column: 1 }),
                     data_pos: Some(1)
                 },
