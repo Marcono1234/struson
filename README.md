@@ -6,7 +6,7 @@ Its main purpose is to allow reading and writing JSON documents in a memory effi
 
 The API of Struson was inspired by the streaming API of the Java library [Gson](https://github.com/google/gson) (classes `JsonReader` and `JsonWriter`). It is rather low-level and its methods correspond to the elements of a JSON document, with little abstraction on top of it, allowing to read and write any valid JSON document regardless of its structure or content.
 
-**Note:** This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://semver.org/), breaking changes may occur.\
+**Note:** This library is still experimental. The performance is not very good yet and the API might be changed in future versions; releases < 1.0.0 might not follow [Semantic Versioning](https://doc.rust-lang.org/cargo/reference/semver.html), breaking changes may occur.\
 Feedback and suggestions for improvements are welcome!
 
 ## Why?
