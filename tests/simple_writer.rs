@@ -7,7 +7,7 @@ use std::{
     cmp::min,
     collections::HashMap,
     error::Error,
-    fmt::Debug,
+    fmt::{Debug, Display},
     io::{sink, ErrorKind, Sink, Write},
 };
 
@@ -29,7 +29,7 @@ fn assert_written<E: Debug>(
 }
 
 #[test]
-fn write() {
+fn write_simple() {
     assert_written(|j| j.write_null(), "null");
     assert_written(|j| j.write_bool(true), "true");
     assert_written(|j| j.write_string("test"), "\"test\"");
@@ -37,7 +37,10 @@ fn write() {
     assert_written(|j| j.write_fp_number(2.3_f64), "2.3");
     assert_written(|j| j.write_number_string("4.5e6"), "4.5e6");
     assert_written(|j| j.write_serialize(&"serde"), "\"serde\"");
+}
 
+#[test]
+fn write_array() {
     assert_written(
         |json_writer| {
             json_writer.write_array(|array_writer| {
@@ -67,6 +70,26 @@ fn write() {
         },
         "[null,true,\"string\",\"string-writer\",1,2.3,4.5e6,\"serde\",[false],{\"a\":false}]",
     );
+}
+
+#[test]
+fn write_object() {
+    assert_written(
+        |json_writer| {
+            json_writer.write_object(|object_writer| {
+                object_writer.write_member("a", |value_writer| {
+                    value_writer.write_bool(true)?;
+                    Ok(())
+                })?;
+                object_writer.write_member("b", |_| {
+                    // Writing no value will cause JSON null to be written
+                    Ok(())
+                })?;
+                Ok(())
+            })
+        },
+        r#"{"a":true,"b":null}"#,
+    );
 
     assert_written(
         |json_writer| {
@@ -93,8 +116,7 @@ fn write() {
                 })?;
 
                 Ok(())
-            })?;
-            Ok::<(), Box<dyn Error>>(())
+            })
         },
         r#"{"a":null,"b":true,"c":"string","d":"string-writer","e":1,"f":2.3,"g":4.5e6,"h":"serde","i":[false],"j":{"nested":true}}"#,
     );
@@ -207,49 +229,58 @@ fn write_string_with_writer() -> Result<(), Box<dyn Error>> {
 /// called since that could cause a panic.
 #[test]
 fn closure_error_propagation() {
-    fn new_writer() -> SimpleJsonWriter<JsonStreamWriter<Sink>> {
-        SimpleJsonWriter::new(sink())
-    }
-
     let message = "custom-message";
-    fn assert_error<T: Debug>(result: Result<T, Box<dyn Error>>) {
+    fn assert_error<T: Debug, E: Display + Debug>(
+        f: impl FnOnce(SimpleJsonWriter<JsonStreamWriter<&mut Vec<u8>>>) -> Result<T, E>,
+    ) {
+        let mut writer = Vec::new();
+        let json_writer = SimpleJsonWriter::new(&mut writer);
+        let result = f(json_writer);
         match result {
             Err(e) => assert_eq!("custom-message", e.to_string()),
             _ => panic!("unexpected result: {result:?}"),
-        }
+        };
+
+        // TODO: Ideally would check partial written JSON data to make sure no additional data
+        // (e.g. closing `]`) was written after error was propagated; but this is currently not
+        // easily possible due to JsonStreamWriter's internal buffering (and therefore `writer`
+        // being empty)
     }
 
     // --- write_string_with_writer ---
-    let json_writer = new_writer();
-    assert_error(json_writer.write_string_with_writer(|_| Err(message.into())));
+    assert_error(|json_writer| json_writer.write_string_with_writer(|_| Err(message.into())));
 
     // --- write_array ---
-    let json_writer = new_writer();
-    assert_error(json_writer.write_array(|_| Err(message.into())));
+    assert_error(|json_writer| json_writer.write_array(|_| Err(message.into())));
 
-    let json_writer = new_writer();
-    assert_error(
-        json_writer.write_array(|array_writer| array_writer.write_array(|_| Err(message.into()))),
-    );
+    assert_error(|json_writer| {
+        json_writer.write_array(|array_writer| array_writer.write_array(|_| Err(message.into())))
+    });
 
-    let json_writer = new_writer();
-    assert_error(
-        json_writer.write_array(|array_writer| array_writer.write_object(|_| Err(message.into()))),
-    );
+    assert_error(|json_writer| {
+        json_writer.write_array(|array_writer| array_writer.write_object(|_| Err(message.into())))
+    });
 
     // --- write_object ---
-    let json_writer = new_writer();
-    assert_error(json_writer.write_object(|_| Err(message.into())));
+    assert_error(|json_writer| json_writer.write_object(|_| Err(message.into())));
 
-    let json_writer = new_writer();
-    assert_error(json_writer.write_object(|object_writer| {
-        object_writer.write_array_member("name", |_| Err(message.into()))
-    }));
+    assert_error(|json_writer| {
+        json_writer.write_object(|object_writer| {
+            object_writer.write_member("name", |_| Err(message.into()))
+        })
+    });
 
-    let json_writer = new_writer();
-    assert_error(json_writer.write_object(|object_writer| {
-        object_writer.write_object_member("name", |_| Err(message.into()))
-    }));
+    assert_error(|json_writer| {
+        json_writer.write_object(|object_writer| {
+            object_writer.write_array_member("name", |_| Err(message.into()))
+        })
+    });
+
+    assert_error(|json_writer| {
+        json_writer.write_object(|object_writer| {
+            object_writer.write_object_member("name", |_| Err(message.into()))
+        })
+    });
 }
 
 /// Tests behavior when a user-provided closure encounters an `Err` from the writer,
@@ -279,6 +310,23 @@ fn discarded_error_handling() {
         object_writer
             .write_fp_number_member("name", f32::NAN)
             .unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "previous error '{}': non-finite number: {}",
+            ErrorKind::Other,
+            f32::NAN
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    let json_writer = new_writer();
+    let result = json_writer.write_object(|object_writer| {
+        object_writer.write_member("name", |value_writer| {
+            value_writer.write_fp_number(f32::NAN).unwrap_err();
+            Ok(())
+        })?;
         Ok(())
     });
     assert_eq!(

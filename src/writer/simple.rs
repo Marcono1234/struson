@@ -653,9 +653,13 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
 
 /// Writer for JSON object members
 ///
-/// Each method writes a JSON object member in the form of a name-value pair.
-/// For example the member `"a": 1` consists of the name "a" and the value 1,
-/// which can be written using [`write_number_member`](Self::write_number_member).
+/// Each method writes a JSON object member in the form of a name-value pair. For example
+/// the member `"a": 1` consists of the name "a" and the value 1. There are two ways to
+/// write members:
+/// - using the convenience methods which directly take the member value as argument,
+///   for example [`write_number_member`](Self::write_number_member)
+/// - using [`write_member`](Self::write_member), which provides a [`ValueWriter`] for
+///   writing the member value
 ///
 /// The methods of this trait are similar to the methods of [`ValueWriter`], see its
 /// documentation for more details on how the JSON values are written.
@@ -666,6 +670,72 @@ pub struct ObjectWriter<'a, J: JsonWriter> {
     json_writer: &'a mut ErrorSafeJsonWriter<J>,
 }
 impl<J: JsonWriter> ObjectWriter<'_, J> {
+    /// Writes a member
+    ///
+    /// The function `f` is called with a [`MemberValueWriter`] for writing the value of
+    /// the member. If the function returns `Ok` but did not write a value, JSON null will
+    /// be written as value.
+    ///
+    /// This method is intended for cases where a separate function taking a [`ValueWriter`]
+    /// as argument should be called. For all other cases it might be easier to use one
+    /// of the methods which directly take the member value as argument, such as
+    /// [`write_number_member`](Self::write_number_member).
+    ///
+    /// # Examples
+    /// ```
+    /// # use std::error::Error;
+    /// # use struson::writer::*;
+    /// # use struson::writer::simple::*;
+    /// // Helper function which takes a `ValueWriter` as argument
+    /// fn writeOption<J: JsonWriter>(
+    ///     value_writer: impl ValueWriter<J>,
+    ///     value: Option<&str>
+    /// ) -> Result<(), Box<dyn Error>> {
+    ///     Ok(match value {
+    ///         None => value_writer.write_null(),
+    ///         Some(s) => value_writer.write_string(s),
+    ///     }?)
+    /// }
+    ///
+    /// let mut writer = Vec::<u8>::new();
+    /// let json_writer = SimpleJsonWriter::new(&mut writer);
+    /// json_writer.write_object(|object_writer| {
+    ///     object_writer.write_member(
+    ///         "a",
+    ///         |value_writer| writeOption(value_writer, Some("some text"))
+    ///     )?;
+    ///     object_writer.write_member(
+    ///         "b",
+    ///         |value_writer| writeOption(value_writer, None)
+    ///     )?;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// let json = String::from_utf8(writer)?;
+    /// assert_eq!(json, r#"{"a":"some text","b":null}"#);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn write_member(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(MemberValueWriter<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.json_writer.name(name)?;
+
+        let mut wrote_value = false;
+        let value_writer = MemberValueWriter {
+            json_writer: self.json_writer,
+            wrote_value: &mut wrote_value,
+        };
+        f(value_writer)?;
+
+        // If the function did not write a value, write a JSON null
+        if !wrote_value {
+            self.json_writer.null_value()?;
+        }
+        Ok(())
+    }
+
     /// Writes a member with JSON null as value
     pub fn write_null_member(&mut self, name: &str) -> Result<(), IoError> {
         self.json_writer.name(name)?;
@@ -764,6 +834,78 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
         f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         self.json_writer.name(name)?;
+        write_object(self.json_writer, f)
+    }
+}
+
+/// Writer for the value of a JSON object member
+///
+/// This struct is used by [`ObjectWriter::write_member`].
+pub struct MemberValueWriter<'a, J: JsonWriter> {
+    json_writer: &'a mut ErrorSafeJsonWriter<J>,
+    wrote_value: &'a mut bool,
+}
+impl<J: JsonWriter> ValueWriter<J> for MemberValueWriter<'_, J> {
+    fn write_null(self) -> Result<(), IoError> {
+        *self.wrote_value = true;
+        self.json_writer.null_value()
+    }
+
+    fn write_bool(self, value: bool) -> Result<(), IoError> {
+        *self.wrote_value = true;
+        self.json_writer.bool_value(value)
+    }
+
+    fn write_string(self, value: &str) -> Result<(), IoError> {
+        *self.wrote_value = true;
+        self.json_writer.string_value(value)
+    }
+
+    fn write_string_with_writer(
+        self,
+        f: impl FnOnce(StringValueWriter<'_>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        *self.wrote_value = true;
+        write_string_with_writer(self.json_writer, f)
+    }
+
+    fn write_number<N: FiniteNumber>(self, value: N) -> Result<(), IoError> {
+        *self.wrote_value = true;
+        self.json_writer.number_value(value)
+    }
+
+    fn write_fp_number<N: FloatingPointNumber>(self, value: N) -> Result<(), JsonNumberError> {
+        *self.wrote_value = true;
+        self.json_writer.fp_number_value(value)
+    }
+
+    fn write_number_string(self, value: &str) -> Result<(), JsonNumberError> {
+        *self.wrote_value = true;
+        self.json_writer.number_value_from_string(value)
+    }
+
+    #[cfg(feature = "serde")]
+    fn write_serialize<S: serde::ser::Serialize>(
+        self,
+        value: &S,
+    ) -> Result<(), crate::serde::SerializerError> {
+        *self.wrote_value = true;
+        self.json_writer.serialize_value(value)
+    }
+
+    fn write_array(
+        self,
+        f: impl FnOnce(&mut ArrayWriter<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        *self.wrote_value = true;
+        write_array(self.json_writer, f)
+    }
+
+    fn write_object(
+        self,
+        f: impl FnOnce(&mut ObjectWriter<'_, J>) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        *self.wrote_value = true;
         write_object(self.json_writer, f)
     }
 }
