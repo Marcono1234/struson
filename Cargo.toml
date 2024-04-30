@@ -12,7 +12,7 @@ categories = ["parser-implementations"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thiserror = "1.0.58"
+thiserror = "1.0.59"
 strum = { version = "0.26.2", features = ["derive"] }
 duplicate = "1.0.0"
 
