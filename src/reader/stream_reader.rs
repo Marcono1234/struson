@@ -1981,7 +1981,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
         if let Some(ref mut json_path) = self.json_path {
             match json_path.last_mut().unwrap() {
-                JsonPathPiece::ObjectMember(path_name) => *path_name = name.clone(),
+                JsonPathPiece::ObjectMember(path_name) => path_name.clone_from(&name),
                 _ => unreachable!("Path should be object member"),
             }
         }

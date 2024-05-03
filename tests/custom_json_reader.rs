@@ -244,7 +244,7 @@ mod custom_reader {
 
                 self.expects_name = false;
                 if let JsonPathPiece::ObjectMember(path_name) = self.json_path.last_mut().unwrap() {
-                    *path_name = name.to_owned();
+                    name.clone_into(path_name);
                 } else {
                     unreachable!()
                 }
