@@ -31,6 +31,8 @@ assert_no_alloc = { git = "https://github.com/Windfisch/rust-assert-no-alloc.git
 ] }
 
 [features]
+# Optional Serde integration
+serde = ["dep:serde"]
 # Feature for all experimental functionality of Struson which is likely going to change in the future,
 # or might even be removed again
 # Note: Might be better to use standard Rust attributes for this once they are available, see https://github.com/rust-lang/rfcs/issues/1491
