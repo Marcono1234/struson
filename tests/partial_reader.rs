@@ -320,8 +320,11 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         )
     }
 
-    fn next_string_reader(&mut self) -> Result<std::io::Empty, ReaderError> {
-        unimplemented!()
+    fn next_string_reader(&mut self) -> Result<impl std::io::Read + '_, ReaderError> {
+        unimplemented!();
+        // Unreachable; allow the compiler to infer the type of `impl std::io::Read`
+        #[allow(unreachable_code)]
+        Ok(std::io::empty())
     }
 
     fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {

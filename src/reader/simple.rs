@@ -1372,6 +1372,7 @@ mod error_safe_reader {
             use_delegate!(self, |r| r.next_string())
         }
 
+        #[allow(refining_impl_trait)] // this `JsonReader` impl is for an internal struct, so should not cause issues?
         fn next_string_reader(
             &mut self,
         ) -> Result<ErrorSafeStringValueReader<'_, impl Read>, ReaderError> {

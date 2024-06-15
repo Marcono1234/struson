@@ -315,6 +315,7 @@ mod error_safe_writer {
             use_delegate!(self, |w| w.string_value(value))
         }
 
+        #[allow(refining_impl_trait)] // this `JsonWriter` impl is for an internal struct, so should not cause issues?
         fn string_value_writer(
             &mut self,
         ) -> Result<ErrorSafeStringValueWriter<'_, impl AdvancedStringValueWriter>, IoError>
