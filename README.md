@@ -220,6 +220,10 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
   > Json pull parser
 - <https://github.com/zotta/json-writer-rs>
   > Simple and fast crate for writing JSON to a string without creating intermediate objects
+- <https://crates.io/crates/jsn>
+  > A queryable, streaming, JSON pull-parser with low allocation overhead.
+- <https://github.com/michel-kraemer/actson-rs>
+  > Actson is a low-level JSON parser for reactive applications and non-blocking I/O.
 - [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
