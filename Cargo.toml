@@ -14,7 +14,7 @@ categories = ["parser-implementations"]
 
 [dependencies]
 thiserror = "1.0.61"
-strum = { version = "0.26.2", features = ["derive"] }
+strum = { version = "0.26.3", features = ["derive"] }
 duplicate = "1.0.0"
 
 serde = { version = "1.0.202", optional = true }
