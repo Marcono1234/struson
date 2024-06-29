@@ -209,7 +209,7 @@ pub mod json_path {
                 #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
                 for i in index..end_index {
                     let b = path_bytes[i];
-                    if !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+                    if !(b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')) {
                         return Err(JsonPathParseError {
                             index: i,
                             message: "unsupported char in member name".to_owned(),

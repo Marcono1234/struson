@@ -66,7 +66,7 @@ pub(crate) fn is_valid_3bytes(b0: u8, b1: u8, b2: u8) -> bool {
         | u32::from(b1 & CONT_MASK_VAL) << 6
         | u32::from(b2 & CONT_MASK_VAL);
     // Verify no 'overlong encoding' of lower code points, and no UTF-16 surrogate chars encoded in UTF-8
-    code_point >= 0x800 && !(0xD800..=0xDFFF).contains(&code_point)
+    code_point >= 0x800 && !matches!(code_point, 0xD800..=0xDFFF)
 }
 
 /// Whether the 4 bytes UTF-8 encoding is valid
@@ -81,7 +81,7 @@ pub(crate) fn is_valid_4bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
         | u32::from(b3 & CONT_MASK_VAL);
 
     // Verify no 'overlong encoding' of lower code points, and no invalid code point > U+10FFFF
-    (0x10000..=0x10FFFF).contains(&code_point)
+    matches!(code_point, 0x10000..=0x10FFFF)
 }
 
 fn debug_assert_valid_utf8(bytes: &[u8]) {

@@ -26,7 +26,7 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
     }
 
     // Consume integer part, but treat 0 specially, because leading 0 before integer part is disallowed
-    if (b'1'..=b'9').contains(&byte) {
+    if matches!(byte, b'1'..=b'9') {
         loop {
             if let Some(b) = reader.consume_current_peek_next()? {
                 byte = b;
@@ -81,7 +81,7 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
 
     // Exponent part
     let mut exponent_digits_count = 0;
-    if byte == b'e' || byte == b'E' {
+    if matches!(byte, b'e' | b'E') {
         if let Some(b) = reader.consume_current_peek_next()? {
             byte = b;
         } else {
@@ -89,7 +89,7 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
             return Ok(None);
         }
 
-        if byte == b'-' || byte == b'+' {
+        if matches!(byte, b'-' | b'+') {
             if let Some(b) = reader.consume_current_peek_next()? {
                 byte = b;
             } else {
@@ -99,7 +99,7 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
         }
 
         // Check for '1'..='9' to ignore leading 0s for exponent digits count
-        if (b'1'..=b'9').contains(&byte) {
+        if matches!(byte, b'1'..=b'9') {
             exponent_digits_count += 1;
         } else if byte != b'0' {
             // Invalid number (invalid exponent number)
@@ -125,13 +125,7 @@ pub(crate) fn consume_json_number<E, R: NumberBytesProvider<E>>(
         }
     }
 
-    if byte.is_ascii_digit()
-        || byte == b'-'
-        || byte == b'+'
-        || byte == b'.'
-        || byte == b'e'
-        || byte == b'E'
-    {
+    if byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E') {
         // If character after number (which is not part of number) is a number char, treat it as invalid
         // For example `01`, `1.2.3` or `1-`
         Ok(None)

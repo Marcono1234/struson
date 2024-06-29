@@ -300,9 +300,9 @@ impl<W: Write> JsonStreamWriter<W> {
 // Implementation with string writing methods
 impl<W: Write> JsonStreamWriter<W> {
     fn should_escape(&self, c: char) -> bool {
-        c == '"' || c == '\\'
+        matches!(c, '"' | '\\')
         // Control characters which must be escaped per JSON specification
-        || ('\u{0}'..='\u{1F}').contains(&c)
+        || matches!(c, '\u{0}'..='\u{1F}')
             || (self.writer_settings.escape_all_non_ascii && !c.is_ascii())
             || (self.writer_settings.escape_all_control_chars && c.is_control())
     }

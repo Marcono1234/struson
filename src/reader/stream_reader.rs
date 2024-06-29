@@ -596,7 +596,7 @@ impl<R: Read> JsonStreamReader<R> {
         &mut self,
         eof_error_kind: Option<SyntaxErrorKind>,
     ) -> Result<(), ReaderError> {
-        self.skip_to(|byte| (byte == b'\n') || (byte == b'\r'), eof_error_kind)
+        self.skip_to(|byte| matches!(byte, b'\n' | b'\r'), eof_error_kind)
         // Don't consume LF or CR, let skip_whitespace handle it
     }
 
@@ -636,14 +636,8 @@ impl<R: Read> JsonStreamReader<R> {
         // Run this in loop because when comment is skipped have to skip whitespace (and comments) again
         loop {
             self.skip_to(
-                |byte| {
-                    !(
-                        // Skip whitespace
-                        (byte == b' ') || (byte == b'\t')
-                            // Skip line breaks
-                            || (byte == b'\n') || (byte == b'\r')
-                    )
-                },
+                // Skip whitespace and line breaks
+                |byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'),
                 None,
             )?;
 
@@ -1133,14 +1127,14 @@ trait UnicodeEscapeReader {
         let mut consumed_chars_count = 4;
 
         // Unpaired low surrogate
-        if (0xDC00..=0xDFFF).contains(&c) {
+        if matches!(c, 0xDC00..=0xDFFF) {
             return Err(JsonSyntaxError {
                 kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
                 location: self.create_error_location(),
             })?;
         }
         // If char is high surrogate, expect Unicode-escaped low surrogate
-        if (0xD800..=0xDBFF).contains(&c) {
+        if matches!(c, 0xD800..=0xDBFF) {
             if !(self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'\\'
                 && self.read_byte(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence)? == b'u')
             {
@@ -1151,7 +1145,7 @@ trait UnicodeEscapeReader {
             }
             let c2 = self.read_unicode_escape()?;
             consumed_chars_count += 6; // \uXXXX
-            if !(0xDC00..=0xDFFF).contains(&c2) {
+            if !matches!(c2, 0xDC00..=0xDFFF) {
                 return Err(JsonSyntaxError {
                     kind: SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence,
                     location: self.create_error_location(),
