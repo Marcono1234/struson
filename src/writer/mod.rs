@@ -118,8 +118,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn begin_object(&mut self) -> Result<(), IoError>;
 
     /// Writes the closing bracket `}` of the current JSON object
@@ -160,8 +160,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn begin_array(&mut self) -> Result<(), IoError>;
 
     /// Writes the closing bracket `]` of the current JSON object
@@ -232,8 +232,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn null_value(&mut self) -> Result<(), IoError>;
 
     /// Writes a JSON boolean value
@@ -256,8 +256,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn bool_value(&mut self, value: bool) -> Result<(), IoError>;
 
     /// Writes a JSON string value
@@ -290,8 +290,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn string_value(&mut self, value: &str) -> Result<(), IoError>;
 
     /// Provides a writer for lazily writing a JSON string value
@@ -343,8 +343,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError>;
 
     /// Writes the string representation of a JSON number value
@@ -376,8 +376,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     /*
      * TODO (custom JSON writer support): Maybe either publicly expose function for validating
      *   that string is valid JSON number, or use wrapping struct whose constructor ensures that
@@ -411,8 +411,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError>;
 
     /// Writes a floating point JSON number value
@@ -446,8 +446,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     /*
      * TODO: Maybe give this method a better name?
      * TODO: Maybe also support writing in scientific notation? e.g. `4.1e20`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
@@ -511,8 +511,8 @@ pub trait JsonWriter {
     /// # Panics
     /// Panics when called on a JSON writer which currently expects a member name, or
     /// when called after the top-level value has already been written and multiple top-level
-    /// values are not enabled in the [`WriterSettings`]. Both cases indicate incorrect
-    /// usage by the user.
+    /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
+    /// Both cases indicate incorrect usage by the user.
     #[cfg(feature = "serde")]
     fn serialize_value<S: serde::ser::Serialize>(
         &mut self,
