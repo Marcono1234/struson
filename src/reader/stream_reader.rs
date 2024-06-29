@@ -554,8 +554,7 @@ impl<R: Read> JsonStreamReader<R> {
             if stop_predicate(byte) {
                 return Ok(());
             }
-            // Control chars 0x00..=0x1F; except for 0x09 (tab), 0x0A (LF) and 0x0D (CR)
-            if matches!(byte, 0x00..=0x08 | 0x0B..=0x0C | 0x0E..=0x1F) {
+            if matches!(byte, 0x00..=0x1F) && !matches!(byte, b'\t' | b'\n' | b'\r') {
                 return Err(JsonSyntaxError {
                     // This error kind is possibly a bit misleading for comments in JSON because
                     // escape sequences don't exist there, but probably not worth it having a
