@@ -243,12 +243,13 @@ pub struct ReaderSettings {
     /// When enabled the following two comment variants can be used where the JSON
     /// specification allows whitespace:
     /// - end of line comments: `// ...`\
-    ///   The comment spans to the end of the line (next `\r\n`, `\r` or `\n`)
+    ///   The comment spans to the end of the line (next _CR LF_, _CR_ or _LF_)
     /// - block comments: `/* ... */`\
     ///   The comment ends at the next `*/` and can include line breaks
     ///
-    /// Note that unlike for member names and string values, control characters in the range
-    /// `0x00` to `0x1F` (inclusive) are allowed in comments.
+    /// Similar to member names and string values, control characters in the range `0x00` to `0x1F`
+    /// (inclusive), except for the whitespace characters _tab_ (0x09), _LF_ (0x0A) and _CR_ (0x0D),
+    /// are not allowed in comments.
     ///
     /// # Examples
     /// ```json
@@ -553,6 +554,16 @@ impl<R: Read> JsonStreamReader<R> {
             if stop_predicate(byte) {
                 return Ok(());
             }
+            // Control chars 0x00..=0x1F; except for 0x09 (tab), 0x0A (LF) and 0x0D (CR)
+            if matches!(byte, 0x00..=0x08 | 0x0B..=0x0C | 0x0E..=0x1F) {
+                return Err(JsonSyntaxError {
+                    // This error kind is possibly a bit misleading for comments in JSON because
+                    // escape sequences don't exist there, but probably not worth it having a
+                    // separate error kind just for control chars in comments
+                    kind: SyntaxErrorKind::NotEscapedControlCharacter,
+                    location: self.create_error_location(),
+                })?;
+            }
             self.skip_peeked_byte();
 
             match byte {
@@ -592,7 +603,7 @@ impl<R: Read> JsonStreamReader<R> {
         }
     }
 
-    fn skip_to_line_end(
+    fn skip_to_line_comment_end(
         &mut self,
         eof_error_kind: Option<SyntaxErrorKind>,
     ) -> Result<(), ReaderError> {
@@ -667,7 +678,7 @@ impl<R: Read> JsonStreamReader<R> {
                     b'/' => {
                         self.column += 1;
                         self.byte_pos += 1;
-                        self.skip_to_line_end(eof_error_kind)?;
+                        self.skip_to_line_comment_end(eof_error_kind)?;
                     }
                     _ => {
                         return self.create_syntax_value_error(SyntaxErrorKind::IncompleteComment);
@@ -5006,13 +5017,13 @@ mod tests {
             "/**/1",
             "/***/1",
             "/* // */1",
-            "/* \n \r \r\n */1",
-            "/* \u{0000} */1", // unescaped control characters are allowed in comments
+            "/* \n \r \r\n \t */1",
+            "/* \x7F \u{0080} */1", // control chars 0x7F and 0x80 (outside range 0x00..=0x1F) are allowed
             "1/* 1 */",
             "//\n1",
             "// a\n1",
             "// /* a\n1",
-            "// a\n// b\r// c\r\n1",
+            "// a\n// b\r// \t c\r\n1",
             "1// a",
             "1// a\n",
             "1//",
@@ -5147,6 +5158,27 @@ mod tests {
 
         let mut json_reader = new_reader_with_comments("*/");
         assert_parse_error(None, json_reader.peek(), SyntaxErrorKind::MalformedJson, 0);
+
+        let control_chars = ['\x00', '\x08', '\x0B', '\x0C', '\x0E', '\x1F'];
+        for c in control_chars {
+            let json = format!("/* {c} */ true");
+            let mut json_reader = new_reader_with_comments(&json);
+            assert_parse_error(
+                None,
+                json_reader.peek(),
+                SyntaxErrorKind::NotEscapedControlCharacter,
+                3,
+            );
+
+            let json = format!("// {c} \n true");
+            let mut json_reader = new_reader_with_comments(&json);
+            assert_parse_error(
+                None,
+                json_reader.peek(),
+                SyntaxErrorKind::NotEscapedControlCharacter,
+                3,
+            );
+        }
 
         // Malformed single byte
         let mut json_reader = JsonStreamReader::new_custom(
@@ -5319,6 +5351,8 @@ mod tests {
         assert_location("//\n", 1, 0, 3);
         assert_location("//\n  ", 1, 2, 5);
         assert_location("//\n  //\r  // a", 2, 6, 14);
+        assert_location("// \r\n", 1, 0, 5);
+        assert_location("// \n\r", 2, 0, 5);
 
         assert_location("/* */", 0, 5, 5);
         assert_location("/* */\n ", 1, 1, 7);
