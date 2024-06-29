@@ -45,6 +45,8 @@ pub struct WriterSettings {
     /// {"a":[1,2]}
     /// ```
     ///
+    /// The exact format of the pretty printed output depends on the JSON writer implementation.
+    ///
     /// This setting does not have any effect on the validity of the JSON output.
     /// Pretty printed JSON is allowed by the JSON specification.
     pub pretty_print: bool,
@@ -85,7 +87,9 @@ pub struct WriterSettings {
     /// would yield: `123 ### true ### []`
     ///
     /// Normally a JSON document is expected to contain only a single top-level value, but there
-    /// might be use cases where supporting multiple top-level values can be useful.
+    /// might be use cases where supporting multiple top-level values can be useful, for example
+    /// when writing JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
+    /// that is, a stream of multiple JSON values separated by line breaks.
     pub multi_top_level_value_separator: Option<String>,
 }
 

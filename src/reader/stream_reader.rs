@@ -289,7 +289,9 @@ pub struct ReaderSettings {
     /// Whether to allow multiple top-level values, for example `true [] 1` (3 top-level values)
     ///
     /// Normally a JSON document is expected to contain only a single top-level value, but there
-    /// might be use cases where supporting multiple top-level values can be useful.
+    /// might be use cases where supporting multiple top-level values can be useful, for example
+    /// when reading JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
+    /// that is, a stream of multiple JSON values separated by line breaks.
     ///
     /// It is recommended to separate the values using whitespace (space, tab or line breaks).
     /// If there is no whitespace between the values it is unspecified whether parsing will succeed.
