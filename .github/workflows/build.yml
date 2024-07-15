@@ -38,7 +38,7 @@ jobs:
         run: cargo make
 
       - name: Install cargo-hack
-        uses: taiki-e/install-action@331a600f1b10a3fed8dc56f925012bede91ae51f  #v2.41.7
+        uses: taiki-e/install-action@3e71e7135de310b70bc22dccb4d275acde8e055a  #v2.42.0
         with:
           tool: cargo-hack@0.6.28
       # See https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version
