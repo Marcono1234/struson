@@ -5,9 +5,14 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    ignore:
+      # Ignore patch updates for 'taiki-e/install-action' because they seem to only update the tool
+      # versions; however GitHub workflow here has intentionally pinned tool version
+      - dependency-name: "taiki-e/install-action"
+        update-types: ["version-update:semver-patch"]
