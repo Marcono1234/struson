@@ -1,6 +1,6 @@
 //! Tests for [`struson::reader::simple`]
 
-#![cfg(feature = "experimental")]
+#![cfg(feature = "simple-api")]
 #![cfg(feature = "serde")]
 
 use std::{

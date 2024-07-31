@@ -445,7 +445,7 @@ use crate::writer::JsonWriter;
 mod stream_reader;
 // Re-export streaming implementation under `reader` module
 pub use stream_reader::*;
-#[cfg(feature = "experimental")]
+#[cfg(feature = "simple-api")]
 pub mod simple;
 
 type IoError = std::io::Error;

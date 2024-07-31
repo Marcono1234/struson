@@ -13,7 +13,7 @@ use crate::json_number::is_valid_json_number;
 mod stream_writer;
 // Re-export streaming implementation under `writer` module
 pub use stream_writer::*;
-#[cfg(feature = "experimental")]
+#[cfg(feature = "simple-api")]
 pub mod simple;
 
 // TODO (custom JSON writer support): Remove this type alias? rust-analyzer otherwise uses that in generated
