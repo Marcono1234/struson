@@ -45,10 +45,10 @@
 //!
 //! **🔬 Experimental**\
 //! The simple API and its naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
-//! It has to be enabled by specifying the `experimental` feature in `Cargo.toml`:
+//! It has to be enabled by specifying the `simple-api` feature in `Cargo.toml`:
 //! ```toml
 //! [dependencies]
-//! struson = { version = "...", features = ["experimental"] }
+//! struson = { version = "...", features = ["simple-api"] }
 //! ```
 //! Any feedback is appreciated!
 //!
@@ -56,7 +56,7 @@
 //! See [`SimpleJsonReader`](crate::reader::simple::SimpleJsonReader).
 //!
 //! ```
-//! # #[cfg(feature = "experimental")]
+//! # #[cfg(feature = "simple-api")]
 //! # {
 //! use struson::reader::simple::*;
 //!
@@ -77,7 +77,7 @@
 //! For reading nested values, the methods [`read_seeked`](crate::reader::simple::ValueReader::read_seeked)
 //! and [`read_seeked_multi`](crate::reader::simple::ValueReader::read_seeked_multi) can be used:
 //! ```
-//! # #[cfg(feature = "experimental")]
+//! # #[cfg(feature = "simple-api")]
 //! # {
 //! use struson::reader::simple::*;
 //! use struson::reader::simple::multi_json_path::multi_json_path;
@@ -109,7 +109,7 @@
 //! See [`SimpleJsonWriter`](crate::writer::simple::SimpleJsonWriter).
 //!
 //! ```
-//! # #[cfg(feature = "experimental")]
+//! # #[cfg(feature = "simple-api")]
 //! # {
 //! use struson::writer::simple::*;
 //!
