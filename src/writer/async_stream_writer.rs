@@ -1,6 +1,11 @@
 #![allow(missing_docs)]
 //! Async streaming implementation of [`JsonWriter`]
-use std::{io::Write, pin::Pin};
+use crate::utf8;
+use std::{
+    io::{ErrorKind, Write},
+    pin::Pin,
+    str::Utf8Error,
+};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::*;
@@ -415,6 +420,162 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
             panic!("Incorrect writer usage: Cannot finish document when top-level value is not finished");
         }
         self.flush().await
+    }
+
+    pub async fn string_value_writer(
+        &mut self,
+    ) -> Result<AsyncStringValueWriterImpl<'_, W>, IoError> {
+        self.before_value().await?;
+        self.write_bytes(b"\"").await?;
+        self.is_string_value_writer_active = true;
+        Ok(AsyncStringValueWriterImpl {
+            json_writer: self,
+            utf8_buf: [0_u8; utf8::MAX_BYTES_PER_CHAR],
+            utf8_pos: 0,
+            utf8_expected_len: 0,
+            error: None,
+        })
+    }
+}
+
+pub struct AsyncStringValueWriterImpl<'j, W: AsyncWrite + Send + Unpin> {
+    json_writer: &'j mut AsyncJsonStreamWriter<W>,
+    /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
+    /// a user of this writer
+    ///
+    /// Buffering it is necessary to make sure it is valid UTF-8 data before writing it to the
+    /// underlying `Write`.
+    utf8_buf: [u8; utf8::MAX_BYTES_PER_CHAR],
+    /// Index (0-based) within [utf8_buf] where the next byte should be written, respectively
+    /// number of already written bytes
+    utf8_pos: usize,
+    /// Expected number of total bytes for the character whose bytes are currently in [utf8_buf]
+    utf8_expected_len: usize,
+    /// The last error which occurred, and which should be returned for every subsequent `write` call
+    // `io::Error` does not implement Clone, so this only contains some of its data
+    error: Option<(ErrorKind, String)>,
+}
+
+fn map_utf8_error(e: Utf8Error) -> IoError {
+    IoError::new(ErrorKind::InvalidData, e)
+}
+
+fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
+    match std::str::from_utf8(bytes) {
+        Err(e) => Err(map_utf8_error(e)),
+        Ok(s) => {
+            debug_assert!(s.chars().count() == 1);
+            Ok(s)
+        }
+    }
+}
+
+impl<W: AsyncWrite + Send + Unpin> AsyncStringValueWriterImpl<'_, W> {
+    pub async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        if buf.is_empty() {
+            return Ok(());
+        }
+
+        let mut start_pos = 0;
+        if self.utf8_pos > 0 {
+            let copy_count = (self.utf8_expected_len - self.utf8_pos).min(buf.len());
+            self.utf8_buf[self.utf8_pos..(self.utf8_pos + copy_count)]
+                .copy_from_slice(&buf[..copy_count]);
+            self.utf8_pos += copy_count;
+
+            if self.utf8_pos >= self.utf8_expected_len {
+                self.utf8_pos = 0;
+                let s = decode_utf8_char(&self.utf8_buf[..self.utf8_expected_len])?;
+                self.json_writer.write_string_value_piece(s).await?;
+            }
+            start_pos += copy_count;
+        }
+
+        fn max_or_offset_negative(a: usize, b: usize, b_neg_off: usize) -> usize {
+            debug_assert!(b >= a);
+            // Avoids numeric underflow compared to normal `a.max(b - b_neg_off)`
+            if b_neg_off > b {
+                a
+            } else {
+                b - b_neg_off
+            }
+        }
+
+        // Checks for incomplete UTF-8 data and converts the bytes with str::from_utf8
+        let mut i = max_or_offset_negative(start_pos, buf.len(), utf8::MAX_BYTES_PER_CHAR);
+        while i < buf.len() {
+            let byte = buf[i];
+
+            if !utf8::is_1byte(byte) {
+                let expected_bytes_count;
+                if utf8::is_2byte_start(byte) {
+                    expected_bytes_count = 2;
+                } else if utf8::is_3byte_start(byte) {
+                    expected_bytes_count = 3;
+                } else if utf8::is_4byte_start(byte) {
+                    expected_bytes_count = 4;
+                } else if utf8::is_continuation(byte) {
+                    // Matched UTF-8 multi-byte continuation byte; continue to find start of next char
+                    i += 1;
+                    continue;
+                } else {
+                    return Err(IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"));
+                }
+
+                let remaining_count = buf.len() - i;
+                if remaining_count < expected_bytes_count {
+                    self.json_writer
+                        .write_string_value_piece(
+                            std::str::from_utf8(&buf[start_pos..i]).map_err(map_utf8_error)?,
+                        )
+                        .await?;
+
+                    // Store the incomplete UTF-8 bytes in buffer
+                    self.utf8_expected_len = expected_bytes_count;
+                    self.utf8_pos = remaining_count;
+                    self.utf8_buf[..remaining_count].copy_from_slice(&buf[i..]);
+                    return Ok(());
+                } else {
+                    // Skip over the bytes; - 1 because loop iteration will perform + 1
+                    i += expected_bytes_count - 1;
+                }
+            }
+            // Check next byte (if any)
+            i += 1;
+        }
+
+        self.json_writer
+            .write_string_value_piece(
+                std::str::from_utf8(&buf[start_pos..]).map_err(map_utf8_error)?,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn finish_value(self) -> Result<(), IoError> {
+        self.check_previous_error()?;
+        if self.utf8_pos > 0 {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "incomplete multi-byte UTF-8 data",
+            ));
+        }
+        self.json_writer.write_bytes(b"\"").await?;
+        self.json_writer.is_string_value_writer_active = false;
+        Ok(())
+    }
+
+    fn check_previous_error(&self) -> std::io::Result<()> {
+        match &self.error {
+            None => Ok(()),
+            // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
+            // because it considers the original error kind as safe to retry
+            Some(e) => Err(IoError::other(format!(
+                "previous error '{}': {}",
+                e.0,
+                e.1.clone()
+            ))),
+        }
     }
 }
 
