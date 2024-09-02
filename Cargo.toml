@@ -18,6 +18,9 @@ strum = { version = "0.26.3", features = ["derive"] }
 duplicate = "1.0.0"
 
 serde = { version = "1.0.204", optional = true }
+tokio = { version = "1.40", default-features = false, features = [
+    "full",
+], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -32,8 +35,10 @@ assert_no_alloc = { git = "https://github.com/Windfisch/rust-assert-no-alloc.git
 ] }
 
 [features]
+default = ["tokio"]
 # Optional Serde integration
 serde = ["dep:serde"]
+tokio = ["dep:tokio"]
 # Feature for all experimental functionality of Struson which is likely going to change in the future,
 # or might even be removed again
 # Note: Might be better to use standard Rust attributes for this once they are available, see https://github.com/rust-lang/rfcs/issues/1491
@@ -94,3 +99,4 @@ required-features = ["serde"]
 name = "serde_deserialize_benchmark"
 harness = false
 required-features = ["serde"]
+# Optional Tokio integration

@@ -10,6 +10,9 @@ use thiserror::Error;
 
 use crate::json_number::is_valid_json_number;
 
+#[cfg(feature = "tokio")]
+pub mod async_stream_writer;
+
 mod stream_writer;
 // Re-export streaming implementation under `writer` module
 pub use stream_writer::*;
@@ -635,6 +638,10 @@ pub trait FiniteNumber: private::Sealed {
         consumer: C,
     ) -> Result<(), IoError>;
 
+    /// Directly get the json number as string
+    /// (might involve an extra copy for `transfered` number)
+    fn get_json_number(&self) -> Result<String, IoError>;
+
     /// Gets this number as `u64`
     ///
     /// If this number can be losslessly and relatively efficiently converted
@@ -670,6 +677,10 @@ pub trait FloatingPointNumber: private::Sealed {
         consumer: C,
     ) -> Result<(), JsonNumberError>;
 
+    /// Directly get the json number as string
+    /// (might involve an extra copy for `transfered` number)
+    fn get_json_number(&self) -> Result<String, JsonNumberError>;
+
     /// Gets this number as `f64`
     ///
     /// If this number can be losslessly and relatively efficiently converted
@@ -683,7 +694,7 @@ pub trait FloatingPointNumber: private::Sealed {
     fn as_f64(&self) -> Option<f64>;
 }
 
-mod private {
+pub(crate) mod private {
     use super::*;
 
     // Sealed trait, see https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
@@ -724,6 +735,15 @@ impl FiniteNumber for type_template {
         consumer(&string)
     }
 
+    fn get_json_number(&self) -> Result<String, IoError> {
+        let string = self.to_string();
+        debug_assert!(
+            is_valid_json_number(&string),
+            "Unexpected: Not a valid JSON number: {string}"
+        );
+        Ok(string)
+    }
+
     fn as_u64(&self) -> Option<u64> {
         // TODO: Should this only use `into()` and for all unsupported types (e.g. signed or u128, ...) always return None?
         #[allow(clippy::useless_conversion, clippy::unnecessary_fallible_conversions /* reason = "for u64 -> u64" */)]
@@ -761,6 +781,23 @@ impl FloatingPointNumber for type_template {
         }
     }
 
+    fn get_json_number(&self) -> Result<String, JsonNumberError> {
+        if self.is_finite() {
+            // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
+            //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
+            let string = self.to_string();
+            debug_assert!(
+                is_valid_json_number(&string),
+                "Unexpected: Not a valid JSON number: {string}"
+            );
+            Ok(string)
+        } else {
+            Err(JsonNumberError::InvalidNumber(format!(
+                "non-finite number: {self}"
+            )))
+        }
+    }
+
     fn as_f64(&self) -> Option<f64> {
         #[allow(clippy::useless_conversion)] // for f64 -> f64
         Some((*self).into())
@@ -778,6 +815,15 @@ impl FiniteNumber for TransferredNumber<'_> {
         consumer: C,
     ) -> Result<(), IoError> {
         consumer(self.0)
+    }
+
+    fn get_json_number(&self) -> Result<String, IoError> {
+        let string = self.0.to_string();
+        debug_assert!(
+            is_valid_json_number(&string),
+            "Unexpected: Not a valid JSON number: {string}"
+        );
+        Ok(string)
     }
 
     fn as_u64(&self) -> Option<u64> {

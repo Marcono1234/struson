@@ -110,12 +110,12 @@ impl Default for WriterSettings {
 }
 
 #[derive(PartialEq, Debug)]
-enum StackValue {
+pub(crate) enum StackValue {
     Array,
     Object,
 }
 
-const WRITER_BUF_SIZE: usize = 1024;
+pub(crate) const WRITER_BUF_SIZE: usize = 1024;
 
 /// A JSON writer implementation which writes data to a [`Write`]
 ///
