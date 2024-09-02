@@ -169,6 +169,11 @@ impl<W: Write> JsonStreamWriter<W> {
             writer_settings,
         }
     }
+
+    /// Unwrap the inner writer.
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
 }
 
 // Implementation with low level byte writing methods
