@@ -33,7 +33,7 @@ pub struct AsyncJsonStreamWriter<W> {
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
-    is_string_value_writer_active: Option<AsyncStringValueWriterImpl>,
+    is_string_value_writer_active: bool,
     indentation_level: u32,
 
     writer_settings: WriterSettings,
@@ -57,7 +57,7 @@ impl<W: AsyncWrite + Unpin> AsyncJsonStreamWriter<W> {
             is_empty: true,
             expects_member_name: false,
             stack: Vec::with_capacity(16),
-            is_string_value_writer_active: None,
+            is_string_value_writer_active: false,
             indentation_level: 0,
             writer_settings,
         }
@@ -148,7 +148,7 @@ impl<W: AsyncWrite + Unpin> AsyncJsonStreamWriter<W> {
     }
 
     async fn before_value(&mut self) -> Result<(), IoError> {
-        if self.is_string_value_writer_active.is_some() {
+        if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
         if self.expects_member_name {
@@ -312,7 +312,7 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
         if !self.expects_member_name {
             panic!("Incorrect writer usage: Cannot write name when name is not expected");
         }
-        if self.is_string_value_writer_active.is_some() {
+        if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
         self.before_container_element().await?;
@@ -332,7 +332,7 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
         if !self.is_in_object() {
             panic!("Incorrect writer usage: Cannot end object when not inside object");
         }
-        if self.is_string_value_writer_active.is_some() {
+        if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot end object when string value writer is still active");
         }
         if !self.expects_member_name {
@@ -357,7 +357,7 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
         if !self.is_in_array() {
             panic!("Incorrect writer usage: Cannot end array when not inside array");
         }
-        if self.is_string_value_writer_active.is_some() {
+        if self.is_string_value_writer_active {
             panic!(
                 "Incorrect writer usage: Cannot end array when string value writer is still active"
             );
@@ -406,7 +406,7 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
     }
 
     pub async fn finish_document(mut self) -> Result<(), IoError> {
-        if self.is_string_value_writer_active.is_some() {
+        if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
         if self.expects_member_name {
@@ -425,165 +425,28 @@ impl<W: AsyncWrite + Unpin + Send> AsyncJsonStreamWriter<W> {
     pub async fn start_string_value_writer(&mut self) -> Result<(), IoError> {
         self.before_value().await?;
         self.write_bytes(b"\"").await?;
-        self.is_string_value_writer_active = Some(AsyncStringValueWriterImpl {
-            utf8_buf: [0_u8; utf8::MAX_BYTES_PER_CHAR],
-            utf8_pos: 0,
-            utf8_expected_len: 0,
-            error: None,
-        });
+        self.is_string_value_writer_active = true;
         Ok(())
     }
 
     pub async fn write_string_value_writer(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        let Some(mut this) = self.is_string_value_writer_active.take() else {
+        if !self.is_string_value_writer_active {
             panic!("string value writer not active, wrong API usage");
         };
-
         if buf.is_empty() {
-            // always place string value writer back on return
-            self.is_string_value_writer_active.replace(this);
             return Ok(());
         }
-
-        let mut start_pos = 0;
-        if this.utf8_pos > 0 {
-            let copy_count = (this.utf8_expected_len - this.utf8_pos).min(buf.len());
-            this.utf8_buf[this.utf8_pos..(this.utf8_pos + copy_count)]
-                .copy_from_slice(&buf[..copy_count]);
-            this.utf8_pos += copy_count;
-
-            if this.utf8_pos >= this.utf8_expected_len {
-                this.utf8_pos = 0;
-                let s = decode_utf8_char(&this.utf8_buf[..this.utf8_expected_len])?;
-                self.write_string_value_piece(s).await?;
-            }
-            start_pos += copy_count;
-        }
-
-        fn max_or_offset_negative(a: usize, b: usize, b_neg_off: usize) -> usize {
-            debug_assert!(b >= a);
-            // Avoids numeric underflow compared to normal `a.max(b - b_neg_off)`
-            if b_neg_off > b {
-                a
-            } else {
-                b - b_neg_off
-            }
-        }
-
-        // Checks for incomplete UTF-8 data and converts the bytes with str::from_utf8
-        let mut i = max_or_offset_negative(start_pos, buf.len(), utf8::MAX_BYTES_PER_CHAR);
-        while i < buf.len() {
-            let byte = buf[i];
-
-            if !utf8::is_1byte(byte) {
-                let expected_bytes_count;
-                if utf8::is_2byte_start(byte) {
-                    expected_bytes_count = 2;
-                } else if utf8::is_3byte_start(byte) {
-                    expected_bytes_count = 3;
-                } else if utf8::is_4byte_start(byte) {
-                    expected_bytes_count = 4;
-                } else if utf8::is_continuation(byte) {
-                    // Matched UTF-8 multi-byte continuation byte; continue to find start of next char
-                    i += 1;
-                    continue;
-                } else {
-                    return Err(IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"));
-                }
-
-                let remaining_count = buf.len() - i;
-                if remaining_count < expected_bytes_count {
-                    self.write_string_value_piece(
-                        std::str::from_utf8(&buf[start_pos..i]).map_err(map_utf8_error)?,
-                    )
-                    .await?;
-
-                    // Store the incomplete UTF-8 bytes in buffer
-                    this.utf8_expected_len = expected_bytes_count;
-                    this.utf8_pos = remaining_count;
-                    this.utf8_buf[..remaining_count].copy_from_slice(&buf[i..]);
-
-                    self.is_string_value_writer_active.replace(this);
-                    return Ok(());
-                } else {
-                    // Skip over the bytes; - 1 because loop iteration will perform + 1
-                    i += expected_bytes_count - 1;
-                }
-            }
-            // Check next byte (if any)
-            i += 1;
-        }
-
-        self.write_string_value_piece(
-            std::str::from_utf8(&buf[start_pos..]).map_err(map_utf8_error)?,
-        )
-        .await?;
-
-        self.is_string_value_writer_active.replace(this);
+        self.write_bytes(buf).await?;
         Ok(())
     }
 
     pub async fn finish_string_value_writer(&mut self) -> Result<(), IoError> {
-        let Some(this) = self.is_string_value_writer_active.as_mut() else {
+        if !self.is_string_value_writer_active {
             panic!("string value writer not active, wrong API usage");
         };
-        this.check_previous_error()?;
-        if this.utf8_pos > 0 {
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                "incomplete multi-byte UTF-8 data",
-            ));
-        }
         self.write_bytes(b"\"").await?;
-        self.is_string_value_writer_active = None;
+        self.is_string_value_writer_active = false;
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct AsyncStringValueWriterImpl {
-    /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
-    /// a user of this writer
-    ///
-    /// Buffering it is necessary to make sure it is valid UTF-8 data before writing it to the
-    /// underlying `Write`.
-    utf8_buf: [u8; utf8::MAX_BYTES_PER_CHAR],
-    /// Index (0-based) within [utf8_buf] where the next byte should be written, respectively
-    /// number of already written bytes
-    utf8_pos: usize,
-    /// Expected number of total bytes for the character whose bytes are currently in [utf8_buf]
-    utf8_expected_len: usize,
-    /// The last error which occurred, and which should be returned for every subsequent `write` call
-    // `io::Error` does not implement Clone, so this only contains some of its data
-    error: Option<(ErrorKind, String)>,
-}
-
-fn map_utf8_error(e: Utf8Error) -> IoError {
-    IoError::new(ErrorKind::InvalidData, e)
-}
-
-fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
-    match std::str::from_utf8(bytes) {
-        Err(e) => Err(map_utf8_error(e)),
-        Ok(s) => {
-            debug_assert!(s.chars().count() == 1);
-            Ok(s)
-        }
-    }
-}
-
-impl AsyncStringValueWriterImpl {
-    fn check_previous_error(&self) -> std::io::Result<()> {
-        match &self.error {
-            None => Ok(()),
-            // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
-            // because it considers the original error kind as safe to retry
-            Some(e) => Err(IoError::other(format!(
-                "previous error '{}': {}",
-                e.0,
-                e.1.clone()
-            ))),
-        }
     }
 }
 
