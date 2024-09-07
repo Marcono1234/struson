@@ -29,37 +29,25 @@ mod custom_writer {
         Object(Map<String, Value>),
     }
 
-    pub struct JsonValueWriter<'a> {
+    pub struct JsonValueWriter {
         stack: Vec<StackValue>,
         pending_name: Option<String>,
         is_string_value_writer_active: bool,
         /// Holds the final value until `finish_document` is called
-        final_value_temp: Option<Value>,
-        /// Holds the final value after `finish_document` is called, and which is accessible
-        /// to creator of `JsonValueWriter` (who should still have a reference to this `Option`)
-        final_value_holder: &'a mut Option<Value>,
+        final_value: Option<Value>,
     }
-    impl<'a> JsonValueWriter<'a> {
-        /*
-         * TODO: This approach of taking an `Option` reference and storing the final value in it
-         * matches the current JsonWriter API, however a cleaner approach might be if `finish_document`
-         * could return the result instead, see TODO comment on `JsonWriter::finish_document`
-         */
-        pub fn new(final_value_holder: &'a mut Option<Value>) -> Self {
-            if final_value_holder.is_some() {
-                panic!("Final value holder should be None");
-            }
+    impl JsonValueWriter {
+        pub fn new() -> Self {
             JsonValueWriter {
                 stack: Vec::new(),
                 pending_name: None,
                 is_string_value_writer_active: false,
-                final_value_temp: None,
-                final_value_holder,
+                final_value: None,
             }
         }
     }
 
-    impl JsonValueWriter<'_> {
+    impl JsonValueWriter {
         fn verify_string_writer_inactive(&self) {
             if self.is_string_value_writer_active {
                 panic!("Incorrect writer usage: String value writer is active");
@@ -68,7 +56,7 @@ mod custom_writer {
 
         fn check_before_value(&self) {
             self.verify_string_writer_inactive();
-            if self.final_value_temp.is_some() || self.final_value_holder.is_some() {
+            if self.final_value.is_some() {
                 panic!("Incorrect writer usage: Top-level value has already been written")
             }
             if let Some(StackValue::Object(_)) = self.stack.last() {
@@ -88,10 +76,10 @@ mod custom_writer {
                 };
             } else {
                 debug_assert!(
-                    self.final_value_temp.is_none(),
+                    self.final_value.is_none(),
                     "caller should have verified that final value is not set yet"
                 );
-                self.final_value_temp = Some(value);
+                self.final_value = Some(value);
             }
         }
     }
@@ -101,7 +89,9 @@ mod custom_writer {
             .ok_or_else(|| JsonNumberError::InvalidNumber(format!("non-finite number: {f}")))
     }
 
-    impl JsonWriter for JsonValueWriter<'_> {
+    impl JsonWriter for JsonValueWriter {
+        type WriterResult = Value;
+
         fn begin_object(&mut self) -> Result<(), IoError> {
             self.check_before_value();
             self.stack.push(StackValue::Object(Map::new()));
@@ -253,22 +243,21 @@ mod custom_writer {
             // might not be necessary because Serde's Serialize API enforces this
         }
 
-        fn finish_document(mut self) -> Result<(), IoError> {
+        fn finish_document(self) -> Result<Self::WriterResult, IoError> {
             self.verify_string_writer_inactive();
-            if let Some(value) = self.final_value_temp.take() {
-                *self.final_value_holder = Some(value);
-                Ok(())
+            if let Some(value) = self.final_value {
+                Ok(value)
             } else {
                 panic!("Incorrect writer usage: Top-level value is incomplete")
             }
         }
     }
 
-    struct StringValueWriterImpl<'j, 'a> {
+    struct StringValueWriterImpl<'j> {
         buf: Vec<u8>,
-        json_writer: &'j mut JsonValueWriter<'a>,
+        json_writer: &'j mut JsonValueWriter,
     }
-    impl Write for StringValueWriterImpl<'_, '_> {
+    impl Write for StringValueWriterImpl<'_> {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.buf.extend_from_slice(buf);
             Ok(buf.len())
@@ -279,7 +268,7 @@ mod custom_writer {
             Ok(())
         }
     }
-    impl StringValueWriter for StringValueWriterImpl<'_, '_> {
+    impl StringValueWriter for StringValueWriterImpl<'_> {
         fn finish_value(self) -> Result<(), IoError> {
             let string =
                 String::from_utf8(self.buf).map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
@@ -303,8 +292,7 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut final_value_holder = None;
-    let mut json_writer = JsonValueWriter::new(&mut final_value_holder);
+    let mut json_writer = JsonValueWriter::new();
 
     json_writer.begin_array()?;
 
@@ -343,7 +331,7 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     json_writer.end_array()?;
-    json_writer.finish_document()?;
+    let written_value = json_writer.finish_document()?;
 
     let expected_json = json!([
         {
@@ -361,15 +349,14 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
         -67,
         8.9,
     ]);
-    assert_eq!(expected_json, final_value_holder.unwrap());
+    assert_eq!(expected_json, written_value);
 
     Ok(())
 }
 
 #[test]
 fn transfer() -> Result<(), Box<dyn std::error::Error>> {
-    let mut final_value_holder = None;
-    let mut json_writer = JsonValueWriter::new(&mut final_value_holder);
+    let mut json_writer = JsonValueWriter::new();
 
     let mut json_reader = JsonStreamReader::new(
         "[true, 123, {\"name1\": \"value1\", \"name2\": null}, false]".as_bytes(),
@@ -377,7 +364,7 @@ fn transfer() -> Result<(), Box<dyn std::error::Error>> {
     json_reader.transfer_to(&mut json_writer)?;
     json_reader.consume_trailing_whitespace()?;
 
-    json_writer.finish_document()?;
+    let written_value = json_writer.finish_document()?;
 
     let expected_json = json!([
         true,
@@ -389,7 +376,7 @@ fn transfer() -> Result<(), Box<dyn std::error::Error>> {
         },
         false,
     ]);
-    assert_eq!(expected_json, final_value_holder.unwrap());
+    assert_eq!(expected_json, written_value);
 
     Ok(())
 }
@@ -405,16 +392,15 @@ fn serialize() -> Result<(), Box<dyn std::error::Error>> {
         b: &'static str,
     }
 
-    let mut final_value_holder = None;
-    let mut json_writer = JsonValueWriter::new(&mut final_value_holder);
+    let mut json_writer = JsonValueWriter::new();
     json_writer.serialize_value(&CustomStruct { a: 123, b: "test" })?;
-    json_writer.finish_document()?;
+    let written_value = json_writer.finish_document()?;
 
     let expected_json = json!({
         "a": 123,
         "b": "test",
     });
-    assert_eq!(expected_json, final_value_holder.unwrap());
+    assert_eq!(expected_json, written_value);
 
     Ok(())
 }

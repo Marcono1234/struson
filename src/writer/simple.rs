@@ -287,6 +287,8 @@ mod error_safe_writer {
     }
 
     impl<J: JsonWriter> JsonWriter for ErrorSafeJsonWriter<J> {
+        type WriterResult = J::WriterResult;
+
         fn begin_object(&mut self) -> Result<(), IoError> {
             use_delegate!(self, |w| w.begin_object())
         }
@@ -377,7 +379,7 @@ mod error_safe_writer {
             )
         }
 
-        fn finish_document(self) -> Result<(), IoError> {
+        fn finish_document(self) -> Result<Self::WriterResult, IoError> {
             // Special code instead of `use_delegate!(...)` because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error_from_stored(&error));
@@ -516,17 +518,20 @@ impl<W: Write> SimpleJsonWriter<JsonStreamWriter<W>> {
 impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
     fn write_null(mut self) -> Result<(), IoError> {
         self.json_writer.null_value()?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_bool(mut self, value: bool) -> Result<(), IoError> {
         self.json_writer.bool_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_string(mut self, value: &str) -> Result<(), IoError> {
         self.json_writer.string_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_string_with_writer(
@@ -540,7 +545,8 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
 
     fn write_number<N: FiniteNumber>(mut self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_fp_number<N: FloatingPointNumber>(mut self, value: N) -> Result<(), JsonNumberError> {

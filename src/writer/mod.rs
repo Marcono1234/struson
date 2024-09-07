@@ -89,6 +89,11 @@ type IoError = std::io::Error;
 /// related to incorrect usage by the user (such as trying to call [`end_object`](Self::end_object) when currently
 /// writing a JSON array).
 pub trait JsonWriter {
+    /// Result returned by [`finish_document`](Self::finish_document)
+    ///
+    /// The type of the result and its meaning depends on the JSON writer implementation.
+    type WriterResult;
+
     // TODO: Should these methods all return &mut Self to allow chaining?
 
     /// Begins writing a JSON object
@@ -521,6 +526,12 @@ pub trait JsonWriter {
 
     /// Verifies that the JSON document is complete and flushes the buffer
     ///
+    /// Returns the [`WriterResult`](Self::WriterResult) on success. Depending on the
+    /// JSON writer implementation this can for example be the written JSON value.
+    /// The result might not be relevant for all JSON writer implementations, for example
+    /// a JSON writer writing to a `Write` will already produce the JSON document during
+    /// usage, so the `WriterResult` returned by this method can be ignored.
+    ///
     /// This method **must** be called explicitly. Dropping the JSON writer will not
     /// automatically flush the buffer.
     ///
@@ -537,12 +548,7 @@ pub trait JsonWriter {
      * Note: Dropping writer will not automatically finish document since that would silently discard errors which might occur
      * TODO: Does consuming 'self' here really guarantee that writer cannot be used afterwards anymore; can this be bypassed with reference somehow?
      */
-    /*
-     * TODO (custom JSON writer support): Instead of returning `()` maybe use an associated type
-     * on JsonWriter as result type; then custom JsonWriter implementations which produce a
-     * value can return it here.
-     */
-    fn finish_document(self) -> Result<(), IoError>;
+    fn finish_document(self) -> Result<Self::WriterResult, IoError>;
 }
 
 /// Writer for lazily writing a JSON string value

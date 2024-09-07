@@ -4433,6 +4433,8 @@ mod tests {
         /* Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test */
         struct FailingJsonWriter;
         impl JsonWriter for FailingJsonWriter {
+            type WriterResult = ();
+
             fn begin_object(&mut self) -> Result<(), IoError> {
                 Err(err())
             }
