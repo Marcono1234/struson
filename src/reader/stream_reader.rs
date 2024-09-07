@@ -3194,7 +3194,7 @@ mod tests {
             }
         }
 
-        // Subsequent read attemps should fail with same error, but use custom message and kind `Other`
+        // Subsequent read attempts should fail with same error, but use custom message and kind `Other`
         match reader.read(&mut buf) {
             Ok(_) => panic!("Should have failed"),
             Err(e) => {
@@ -4433,6 +4433,8 @@ mod tests {
         /* Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test */
         struct FailingJsonWriter;
         impl JsonWriter for FailingJsonWriter {
+            type WriterResult = ();
+
             fn begin_object(&mut self) -> Result<(), IoError> {
                 Err(err())
             }
@@ -5635,7 +5637,7 @@ mod tests {
             // Current implementation should have filled complete buf (this is not a requirement of `Read::read` though)
             Ok(n) => assert_eq!(buf.len(), n),
             // For current implementation no error should have occurred
-            // Especially regardless of implemention, `ErrorKind::Interrupted` must not have been returned
+            // Especially regardless of implementation, `ErrorKind::Interrupted` must not have been returned
             r => panic!("Unexpected result: {r:?}"),
         }
         assert_eq!("test \" \u{10FFFF}", std::str::from_utf8(&buf)?);

@@ -388,6 +388,14 @@ impl<W: Write> JsonStreamWriter<W> {
 }
 
 impl<W: Write> JsonWriter for JsonStreamWriter<W> {
+    /// Result returned by [`finish_document`](Self::finish_document)
+    ///
+    /// This JSON writer implementation returns the underlying `Write` to allow for
+    /// example to reuse it for other purposes. However, the JSON document is already
+    /// written during JSON writer usage, so the returned `Write` can be ignored in
+    /// case it is not needed for anything else.
+    type WriterResult = W;
+
     fn begin_object(&mut self) -> Result<(), IoError> {
         self.before_value()?;
         self.stack.push(StackValue::Object);
@@ -509,7 +517,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         // might not be necessary because Serde's Serialize API enforces this
     }
 
-    fn finish_document(mut self) -> Result<(), IoError> {
+    fn finish_document(mut self) -> Result<Self::WriterResult, IoError> {
         if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
@@ -523,7 +531,8 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         } else {
             panic!("Incorrect writer usage: Cannot finish document when top-level value is not finished");
         }
-        self.flush()
+        self.flush()?;
+        Ok(self.writer)
     }
 
     fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
@@ -1585,6 +1594,17 @@ mod tests {
         Ok(())
     }
 
+    /// Verify that `finish_document` returns the wrapped writer.
+    #[test]
+    fn finish_document_result() -> TestResult {
+        let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
+        json_writer.string_value("text")?;
+        let written_bytes = json_writer.finish_document()?;
+        assert_eq!("\"text\"", String::from_utf8(written_bytes)?);
+
+        Ok(())
+    }
+
     #[test]
     #[should_panic(
         expected = "Incorrect writer usage: Cannot finish document when no value has been written yet"
@@ -1664,7 +1684,7 @@ mod tests {
             // Current implementation should have written complete buf content (this is not a requirement of `Write::write` though)
             Ok(n) => assert_eq!(string_bytes.len(), n),
             // For current implementation no error should have occurred
-            // Especially regardless of implemention, `ErrorKind::Interrupted` must not have been returned
+            // Especially regardless of implementation, `ErrorKind::Interrupted` must not have been returned
             r => panic!("Unexpected result: {r:?}"),
         }
 

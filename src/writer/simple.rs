@@ -283,6 +283,8 @@ mod error_safe_writer {
     }
 
     impl<J: JsonWriter> JsonWriter for ErrorSafeJsonWriter<J> {
+        type WriterResult = J::WriterResult;
+
         fn begin_object(&mut self) -> Result<(), IoError> {
             use_delegate!(self, |w| w.begin_object())
         }
@@ -373,7 +375,7 @@ mod error_safe_writer {
             )
         }
 
-        fn finish_document(self) -> Result<(), IoError> {
+        fn finish_document(self) -> Result<Self::WriterResult, IoError> {
             // Special code because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error_from_stored(&error));
@@ -437,7 +439,7 @@ mod error_safe_writer {
 /// This JSON writer variant ensures correct usage at compile-time making it easier and less
 /// error-prone to use than [`JsonWriter`], which validates correct usage at runtime and panics
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonWriter` being less flexible
-/// to use, and it not offerring all features of [`JsonWriter`].
+/// to use, and it not offering all features of [`JsonWriter`].
 ///
 /// When an error is returned by one of the methods of the writer, the error should be propagated
 /// (for example by using Rust's `?` operator), processing should be aborted and the writer should
@@ -512,17 +514,20 @@ impl<W: Write> SimpleJsonWriter<JsonStreamWriter<W>> {
 impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
     fn write_null(mut self) -> Result<(), IoError> {
         self.json_writer.null_value()?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_bool(mut self, value: bool) -> Result<(), IoError> {
         self.json_writer.bool_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_string(mut self, value: &str) -> Result<(), IoError> {
         self.json_writer.string_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_string_with_writer(
@@ -536,7 +541,8 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
 
     fn write_number<N: FiniteNumber>(mut self, value: N) -> Result<(), IoError> {
         self.json_writer.number_value(value)?;
-        self.json_writer.finish_document()
+        self.json_writer.finish_document()?;
+        Ok(())
     }
 
     fn write_fp_number<N: FloatingPointNumber>(mut self, value: N) -> Result<(), JsonNumberError> {
