@@ -14,8 +14,7 @@
 /// JSON reader functionality, most notably for reporting the location of errors and for [`JsonReader::seek_to`].
 /// If you need more functionality, prefer a library which fully implements the JSONPath standard.
 ///
-/// The macro [`json_path!`](json_path::json_path) and the function [`parse_json_path`](json_path::parse_json_path)
-/// can be used to create a JSON path in a concise way.
+/// The macro [`json_path!`](json_path::json_path) can be used to create a JSON path in a concise way.
 ///
 /// Consider for example the following code:
 /// ```
@@ -30,11 +29,7 @@
 /// a JSON array, of that array the item at index 2 (starting at 0). The string representation of the
 /// path in dot-notation would be `a[2]`.\
 /// For example in the JSON string `{"a": [0.5, 1.5, 2.5]}` it would point to the value `2.5`.
-#[allow(deprecated)] // TODO: Only for JsonPathParseError, remove this allow(deprecated) attribute once JsonPathParseError was removed
 pub mod json_path {
-    use std::str::FromStr;
-    use thiserror::Error;
-
     /// A piece of a JSON path
     ///
     /// A piece can either represent the index of a JSON array item or the name of a JSON object member.
@@ -70,8 +65,7 @@ pub mod json_path {
     /// A JSON path
     ///
     /// A JSON path as represented by this module are zero or more [`JsonPathPiece`] elements.
-    /// The macro [`json_path!`] and the function [`parse_json_path`] can be used to create
-    /// a JSON path in a concise way.
+    /// The macro [`json_path!`] can be used to create a JSON path in a concise way.
     /* TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then) */
     pub type JsonPath = [JsonPathPiece];
 
@@ -85,166 +79,6 @@ pub mod json_path {
                 })
                 .collect::<String>()
                 .as_str()
-    }
-
-    /// Error which occurred while [parsing a JSON path](parse_json_path)
-    #[deprecated = "Only used by parse_json_path, which is deprecated"]
-    #[derive(Error, Clone, Debug)]
-    #[error("parse error at index {index}: {message}")]
-    pub struct JsonPathParseError {
-        /// Index (starting at 0) where the error occurred within the string
-        pub index: usize,
-        /// Message describing why the error occurred
-        pub message: String,
-    }
-
-    /// Parses a JSON path in dot-notation, for example `outer[4].inner`
-    ///
-    /// This is a convenience function which allows obtaining a vector of [`JsonPathPiece`] from a string form.
-    /// The path string must not start with `$` (respectively `$.`) and member names are limited to contain only
-    /// `a`-`z`, `A`-`Z`, `0`-`9`, `-` and `_`. The path string must not be empty. For malformed path strings
-    /// an error is returned.
-    ///
-    /// # Examples
-    /// ```
-    /// # #![allow(deprecated)]
-    /// # use struson::reader::json_path::*;
-    /// # use struson::reader::json_path::JsonPathPiece::*;
-    /// let json_path = parse_json_path("outer[1].inner[2][3]")?;
-    /// assert_eq!(
-    ///     json_path,
-    ///     vec![
-    ///         ObjectMember("outer".to_owned()),
-    ///         ArrayItem(1),
-    ///         ObjectMember("inner".to_owned()),
-    ///         ArrayItem(2),
-    ///         ArrayItem(3),
-    ///     ]
-    /// );
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    /* Note: This might not follow the JSONPath RFC 9535 syntax; but module doc mentions that this is not a JSONPath implementation */
-    #[deprecated = "Use json_path! instead"]
-    #[allow(deprecated)] // Allow usage of deprecated JsonPathParseError
-    pub fn parse_json_path(path: &str) -> Result<Vec<JsonPathPiece>, JsonPathParseError> {
-        if path.is_empty() {
-            return Err(JsonPathParseError {
-                index: 0,
-                message: "empty path".to_owned(),
-            });
-        }
-
-        fn find<T: PartialEq>(slice: &[T], t: T, start: usize) -> Option<usize> {
-            (start..slice.len()).find(|&i| slice[i] == t)
-        }
-        /// Finds the first occurrence of [t1] or [t2]
-        fn find_any<T: PartialEq>(slice: &[T], t1: T, t2: T, start: usize) -> Option<usize> {
-            (start..slice.len()).find(|&i| slice[i] == t1 || slice[i] == t2)
-        }
-
-        let path_bytes = path.as_bytes();
-
-        if path_bytes[0] == b'.' {
-            return Err(JsonPathParseError {
-                index: 0,
-                message: "leading '.' is not allowed".to_owned(),
-            });
-        }
-
-        let mut parsed_path = Vec::new();
-        let mut index = 0;
-        // Perform this check here because first member name cannot have leading '.'
-        let mut is_array_item = path_bytes[0] == b'[';
-
-        loop {
-            if is_array_item {
-                index += 1;
-                let end_index = match find(path_bytes, b']', index) {
-                    None => {
-                        return Err(JsonPathParseError {
-                            index,
-                            message: "missing ']' for array index".to_owned(),
-                        })
-                    }
-                    Some(i) => i,
-                };
-                if end_index == index {
-                    return Err(JsonPathParseError {
-                        index,
-                        message: "missing index value".to_owned(),
-                    });
-                }
-                if path_bytes[index] == b'0' && end_index != index + 1 {
-                    return Err(JsonPathParseError {
-                        index,
-                        message: "leading 0 is not allowed".to_owned(),
-                    });
-                }
-
-                #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
-                for i in index..end_index {
-                    if !path_bytes[i].is_ascii_digit() {
-                        return Err(JsonPathParseError {
-                            index: i,
-                            message: "invalid index digit".to_owned(),
-                        });
-                    }
-                }
-                let path_index =
-                    u32::from_str(&path[index..end_index]).map_err(|e| JsonPathParseError {
-                        index,
-                        message: format!("invalid index value: {e}"),
-                    })?;
-                parsed_path.push(JsonPathPiece::ArrayItem(path_index));
-                index = end_index + 1;
-            } else {
-                let end_index = find_any(path_bytes, b'.', b'[', index).unwrap_or(path_bytes.len());
-                if end_index == index {
-                    return Err(JsonPathParseError {
-                        index,
-                        message: "missing member name".to_owned(),
-                    });
-                }
-
-                #[allow(clippy::needless_range_loop)] // Suggested replacement is too verbose
-                for i in index..end_index {
-                    let b = path_bytes[i];
-                    if !(b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')) {
-                        return Err(JsonPathParseError {
-                            index: i,
-                            message: "unsupported char in member name".to_owned(),
-                        });
-                    }
-                }
-
-                parsed_path.push(JsonPathPiece::ObjectMember(
-                    path[index..end_index].to_string(),
-                ));
-                index = end_index;
-            }
-
-            if index >= path_bytes.len() {
-                break;
-            }
-            match path_bytes[index] {
-                b'.' => {
-                    is_array_item = false;
-                    index += 1;
-                }
-                b'[' => {
-                    is_array_item = true;
-                    // Don't have to skip '[' here, that is done at the beginning of the loop
-                }
-                _ => {
-                    return Err(JsonPathParseError {
-                        index,
-                        message: "expecting either '.' or '['".to_owned(),
-                    })
-                }
-            }
-        }
-
-        Ok(parsed_path)
     }
 
     /// Creates a JSON path from path pieces, separated by commas
@@ -298,8 +132,6 @@ pub mod json_path {
     mod tests {
         use super::*;
 
-        type TestResult = Result<(), Box<dyn std::error::Error>>;
-
         #[test]
         fn test_format_abs_json_path() {
             assert_eq!("$", format_abs_json_path(&Vec::new()));
@@ -335,66 +167,6 @@ pub mod json_path {
                     JsonPathPiece::ArrayItem(2)
                 ])
             );
-        }
-
-        #[test]
-        #[allow(deprecated)]
-        fn test_parse_json_path() -> TestResult {
-            assert_eq!(
-                vec![JsonPathPiece::ObjectMember("abc".to_owned())],
-                parse_json_path("abc")?
-            );
-            assert_eq!(vec![JsonPathPiece::ArrayItem(0)], parse_json_path("[0]")?);
-            assert_eq!(vec![JsonPathPiece::ArrayItem(34)], parse_json_path("[34]")?);
-
-            assert_eq!(
-                vec![
-                    JsonPathPiece::ObjectMember("ab".to_owned()),
-                    JsonPathPiece::ObjectMember("cd".to_owned()),
-                    JsonPathPiece::ArrayItem(12),
-                    JsonPathPiece::ObjectMember("34".to_owned()),
-                    JsonPathPiece::ArrayItem(56),
-                    JsonPathPiece::ArrayItem(78)
-                ],
-                parse_json_path("ab.cd[12].34[56][78]")?
-            );
-
-            fn assert_parse_error(path: &str, expected_index: usize, expected_message: &str) {
-                match parse_json_path(path) {
-                    Err(e) => {
-                        assert_eq!(expected_index, e.index);
-                        assert_eq!(expected_message, e.message);
-                    }
-                    Ok(_) => panic!("Should have failed for: {path}"),
-                }
-            }
-
-            assert_parse_error("", 0, "empty path");
-            assert_parse_error(".a", 0, "leading '.' is not allowed");
-            assert_parse_error("[", 1, "missing ']' for array index");
-            assert_parse_error("[1", 1, "missing ']' for array index");
-            assert_parse_error("[1.a]", 2, "invalid index digit");
-            assert_parse_error("[1a2]", 2, "invalid index digit");
-            assert_parse_error("[01]", 1, "leading 0 is not allowed");
-            assert_parse_error("[00]", 1, "leading 0 is not allowed");
-            assert_parse_error("[-1]", 1, "invalid index digit");
-            assert_parse_error(
-                "[99999999999999999999999999999999999999999999]",
-                1,
-                // TODO: Should this test really check for specific Rust library message?
-                "invalid index value: number too large to fit in target type",
-            );
-            assert_parse_error("[1[0]]", 2, "invalid index digit");
-            assert_parse_error("[a]", 1, "invalid index digit");
-            assert_parse_error("[1]1]", 3, "expecting either '.' or '['");
-            assert_parse_error("[1]a", 3, "expecting either '.' or '['");
-            assert_parse_error("a.", 2, "missing member name");
-            assert_parse_error("a..b", 2, "missing member name");
-            assert_parse_error("a.[1]", 2, "missing member name");
-            assert_parse_error("%a", 0, "unsupported char in member name");
-            assert_parse_error("a%", 1, "unsupported char in member name");
-
-            Ok(())
         }
 
         #[test]
