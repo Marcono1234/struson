@@ -1678,17 +1678,17 @@ impl<R: Read> JsonStreamReader<R> {
                         b'n' => {
                             // Skip the 'n' and instead push the represented char
                             bytes_reader.skip_previous_byte();
-                            bytes_reader.push_bytes(&[b'\n']);
+                            bytes_reader.push_bytes(b"\n");
                         }
                         b'r' => {
                             // Skip the 'r' and instead push the represented char
                             bytes_reader.skip_previous_byte();
-                            bytes_reader.push_bytes(&[b'\r']);
+                            bytes_reader.push_bytes(b"\r");
                         }
                         b't' => {
                             // Skip the 't' and instead push the represented char
                             bytes_reader.skip_previous_byte();
-                            bytes_reader.push_bytes(&[b'\t']);
+                            bytes_reader.push_bytes(b"\t");
                         }
                         b'u' => {
                             // Skip the 'u'
