@@ -983,6 +983,7 @@ pub trait JsonReader {
     /// ```
     /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("true".as_bytes());
+    /// # assert_eq!(json_reader.peek()?, ValueType::Boolean);
     /// match json_reader.peek()? {
     ///     ValueType::Boolean => println!("A boolean: {}", json_reader.next_bool()?),
     ///     ValueType::String => println!("A string: {}", json_reader.next_str()?),
@@ -2025,6 +2026,7 @@ pub trait JsonReader {
     ///     } else {
     ///         // Includes the JSON reader position for easier troubleshooting
     ///         println!("Malformed point '{encoded_point}', at {pos}");
+    /// #       assert_eq!(pos.to_string(), "path '$[2]', line 0, column 15 (data pos 15)");
     ///     }
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())

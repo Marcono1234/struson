@@ -701,7 +701,7 @@ pub trait ValueReader<J: JsonReader> {
     ///     }
     ///     Ok(())
     /// })?;
-    /// println!("a = {a:?}");
+    /// assert_eq!(a, Some(1));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn read_object_borrowed_names(
@@ -1795,6 +1795,7 @@ impl<J: JsonReader> ArrayReader<'_, J> {
     ///         let value = array_reader.read_number_as_string()?;
     ///         println!("{value}");
     ///     }
+    /// #   assert!(!array_reader.has_next()?);
     ///     Ok(())
     /// })?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
