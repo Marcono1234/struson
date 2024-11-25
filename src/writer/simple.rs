@@ -437,7 +437,7 @@ mod error_safe_writer {
 /// This JSON writer variant ensures correct usage at compile-time making it easier and less
 /// error-prone to use than [`JsonWriter`], which validates correct usage at runtime and panics
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonWriter` being less flexible
-/// to use, and it not offerring all features of [`JsonWriter`].
+/// to use, and it not offering all features of [`JsonWriter`].
 ///
 /// When an error is returned by one of the methods of the writer, the error should be propagated
 /// (for example by using Rust's `?` operator), processing should be aborted and the writer should

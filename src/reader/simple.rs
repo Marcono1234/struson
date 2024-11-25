@@ -1307,7 +1307,7 @@ mod error_safe_reader {
                         },
                         // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
                         // therefore use a dummy error
-                        // Technically `JsonReader` allows retrying for these errors, but that would be error-prone when they ocurred during a
+                        // Technically `JsonReader` allows retrying for these errors, but that would be error-prone when they occurred during a
                         // `seek_to` or similar where the reader position is uncertain afterwards; therefore don't allow retrying
                         ReaderError::UnexpectedValueType { location, .. } => create_dummy_error(location),
                         ReaderError::UnexpectedStructure { location, .. } => create_dummy_error(location),
@@ -1519,7 +1519,7 @@ mod error_safe_reader {
 /// This JSON reader variant ensures correct usage at compile-time making it easier and less
 /// error-prone to use than [`JsonReader`], which validates correct usage at runtime and panics
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonReader` being less flexible
-/// to use, and it not offerring all features of [`JsonReader`].
+/// to use, and it not offering all features of [`JsonReader`].
 ///
 /// When an error is returned by one of the methods of the reader, the error should be propagated
 /// (for example by using Rust's `?` operator), processing should be aborted and the reader should

@@ -1664,7 +1664,7 @@ mod tests {
             // Current implementation should have written complete buf content (this is not a requirement of `Write::write` though)
             Ok(n) => assert_eq!(string_bytes.len(), n),
             // For current implementation no error should have occurred
-            // Especially regardless of implemention, `ErrorKind::Interrupted` must not have been returned
+            // Especially regardless of implementation, `ErrorKind::Interrupted` must not have been returned
             r => panic!("Unexpected result: {r:?}"),
         }
 
