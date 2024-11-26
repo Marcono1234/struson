@@ -550,13 +550,16 @@ pub trait JsonWriter {
 /// A string value writer can be obtained from [`JsonWriter::string_value_writer`].
 ///
 /// Characters are automatically escaped in the JSON output if necessary. For example
-/// the character U+0000 is written as `\u0000`. Writing invalid UTF-8 data will cause
-/// a [`std::io::Error`].
+/// the character U+0000 is written as `\u0000`.
 ///
 /// **Important:** Once the string value is finished, [`finish_value`](StringValueWriter::finish_value) must be called.
 /// Otherwise the string value writer will still be considered 'active' and all
 /// methods of the original JSON writer will panic. Dropping the writer will not
 /// automatically finish the value.
+///
+/// # Errors
+/// A [`std::io::Error`] is returned when the underlying writer encounters an error, or
+/// when invalid or incomplete UTF-8 data is written.
 ///
 /// # Error behavior
 /// The error behavior of this string writer differs from the guarantees made by [`Write`]:
@@ -614,6 +617,10 @@ pub trait StringValueWriter: Write {
     ///
     /// This method must be called when writing the string value is done to allow
     /// using the original JSON writer again.
+    ///
+    /// # Errors
+    /// If the last writing call has started a multi-byte UTF-8 character but has not completed
+    /// it, an error is returned.
     /* Consumes 'self' */
     fn finish_value(self) -> Result<(), IoError>;
 }

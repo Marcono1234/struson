@@ -65,6 +65,10 @@ pub trait ValueWriter<J: JsonWriter> {
     /// ```
     ///
     /// # Writer errors
+    /// When the underlying writer encounters an error, or when writing invalid UTF-8 data
+    /// the writer will return a [`std::io::Error`]. If the function `f` returns `Ok` but
+    /// wrote an incomplete multi-byte UTF-8 character an error is returned as well.
+    ///
     /// The error behavior of the string writer differs from the guarantees made by [`Write`]:
     /// - if an error is returned there are no guarantees about if or how many bytes have been
     ///   written
@@ -374,7 +378,7 @@ mod error_safe_writer {
         }
 
         fn finish_document(self) -> Result<(), IoError> {
-            // Special code because this method consumes `self`
+            // Special code instead of `use_delegate!(...)` because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error_from_stored(&error));
             }
@@ -419,7 +423,7 @@ mod error_safe_writer {
         }
 
         fn finish_value(self) -> Result<(), IoError> {
-            // Special code because this method consumes `self`
+            // Special code instead of `self.use_delegate(...)` because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error_from_stored(error));
             }
@@ -913,10 +917,13 @@ impl<J: JsonWriter> ValueWriter<J> for MemberValueWriter<'_, J> {
 
 /// Writer for a JSON string value
 ///
-/// Characters are automatically escaped in the JSON output if necessary. Writing invalid
-/// UTF-8 data will cause a [`std::io::Error`].
+/// Characters are automatically escaped in the JSON output if necessary.
 ///
 /// This struct is used by [`ValueWriter::write_string_with_writer`].
+///
+/// # Errors
+/// A [`std::io::Error`] is returned when the underlying writer encounters an error, or
+/// when invalid UTF-8 data is written.
 ///
 /// # Error behavior
 /// The error behavior of this string writer differs from the guarantees made by [`Write`]:

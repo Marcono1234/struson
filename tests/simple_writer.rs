@@ -147,11 +147,11 @@ fn write_string_with_writer() -> Result<(), Box<dyn Error>> {
     assert_written(
         |f| {
             f.write_string_with_writer(|mut w| {
-                w.write_str("test")?;
+                w.write_str("test \u{1F600}")?;
                 Ok(())
             })
         },
-        "\"test\"",
+        "\"test \u{1F600}\"",
     );
 
     assert_written(
@@ -166,6 +166,28 @@ fn write_string_with_writer() -> Result<(), Box<dyn Error>> {
         },
         "\"first \\\" second third \\\" fourth\"",
     );
+
+    let json_writer = SimpleJsonWriter::new(std::io::sink());
+    let result = json_writer.write_string_with_writer(|mut w| {
+        // Write malformed UTF-8 data
+        w.write_all(b"\xFF")?;
+        Ok(())
+    });
+    match result {
+        Err(e) => assert_eq!("invalid UTF-8 data", e.to_string()),
+        _ => panic!("unexpected result: {result:?}"),
+    };
+
+    let json_writer = SimpleJsonWriter::new(std::io::sink());
+    let result = json_writer.write_string_with_writer(|mut w| {
+        // Write incomplete UTF-8 data
+        w.write_all(b"\xF0")?;
+        Ok(())
+    });
+    match result {
+        Err(e) => assert_eq!("incomplete multi-byte UTF-8 data", e.to_string()),
+        _ => panic!("unexpected result: {result:?}"),
+    };
 
     #[derive(Debug, PartialEq)]
     enum WriterAction {
@@ -190,8 +212,7 @@ fn write_string_with_writer() -> Result<(), Box<dyn Error>> {
     let mut tracking_writer = TrackingWriter {
         actions: Vec::new(),
     };
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(&mut tracking_writer));
+    let json_writer = SimpleJsonWriter::new(&mut tracking_writer);
     // Test usage of `flush()`
     json_writer.write_string_with_writer(|mut string_writer| {
         string_writer.flush()?;
@@ -399,10 +420,9 @@ fn discarded_error_handling() {
             Ok(())
         }
     }
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_array(|array_writer| {
         // Must write long enough value to trigger flushing of JsonStreamWriter's buffer
         let value = "a".repeat(1024 + 10);
@@ -450,10 +470,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_string_with_writer(|mut writer| {
         // Must write long enough value to trigger flushing of JsonStreamWriter's buffer
         let value = "a".repeat(1024 + 10);
@@ -465,10 +484,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_string_with_writer(|mut writer| {
         // `write_str` should not fail because bytes have not been flushed to underlying writer yet
         writer.write_str("test value").unwrap();
@@ -480,10 +498,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_string_with_writer(|mut writer| {
         // `write_str` should not fail because bytes have not been flushed to underlying writer yet
         writer.write_str("test value").unwrap();
@@ -497,10 +514,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_array(|array_writer| {
         array_writer
             .write_string_with_writer(|mut writer| {
@@ -519,10 +535,9 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer =
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(MaxCapacityWriter {
-            remaining_capacity: 4,
-        }));
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 4,
+    });
     let result = json_writer.write_object(|object_writer| {
         object_writer
             .write_string_member_with_writer("name", |mut writer| {

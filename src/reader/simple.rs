@@ -517,6 +517,9 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     ///
     /// # Reader errors
+    /// When the underlying reader encounters an error, or when malformed JSON data is encountered
+    /// the reader will return a [`std::io::Error`].
+    ///
     /// The error behavior of the string reader differs from the guarantees made by [`Read`]:
     /// - if an error is returned there are no guarantees about if or how many data has been
     ///   consumed from the underlying data source and been stored in the provided `buf`
@@ -1466,7 +1469,7 @@ mod error_safe_reader {
         }
 
         fn consume_trailing_whitespace(self) -> Result<(), ReaderError> {
-            // Special code because this method consumes `self`
+            // Special code instead of `use_delegate!(...)` because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error);
             }
@@ -2182,10 +2185,11 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
 
 /// Reader for a JSON string value
 ///
-/// JSON syntax errors and invalid UTF-8 data which occurs while consuming the JSON string
-/// value are reported as [`std::io::Error`].
-///
 /// This struct is used by [`ValueReader::read_string_with_reader`].
+///
+/// # Errors
+/// A [`std::io::Error`] is returned when the underlying reader encounters an error, or
+/// when malformed JSON data is encountered.
 ///
 /// # Error behavior
 /// The error behavior of this string reader differs from the guarantees made by [`Read`]:

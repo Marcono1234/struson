@@ -95,6 +95,21 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
     })?;
     assert_eq!(b"test" as &[u8], value);
 
+    let json_reader = new_reader("\"\u{1F600}\"");
+    let value = json_reader.read_string_with_reader(|mut reader| {
+        let mut value = Vec::new();
+
+        let mut buf = [0_u8; 1];
+        let read_count = reader.read(&mut buf)?;
+        assert_eq!(1, read_count);
+        value.push(buf[0]);
+
+        // Implicitly skip remainder of multi-byte UTF-8 char
+
+        Ok(value)
+    })?;
+    assert_eq!(b"\xF0" as &[u8], value);
+
     let json_reader = new_reader("[\"some string\", 12]");
     let value = json_reader.read_array(|array_reader| {
         let value = array_reader.read_string_with_reader(|mut reader| {
@@ -1639,9 +1654,9 @@ fn discarded_error_handling() {
             Ok(copy_count)
         }
     }
-    let json_reader = SimpleJsonReader::from_json_reader(JsonStreamReader::new(EofReader {
+    let json_reader = SimpleJsonReader::new(EofReader {
         data: r#"{"test"#.as_bytes(),
-    }));
+    });
     let result = json_reader.read_object_borrowed_names(|mut member_reader| {
         let result = member_reader.read_name();
         assert_eq!(
