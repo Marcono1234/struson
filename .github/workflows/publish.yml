@@ -34,7 +34,7 @@ jobs:
         shell: bash
         # https://github.com/killercup/cargo-edit
         run: |
-          cargo install --no-default-features --features set-version cargo-edit
+          cargo install --no-default-features --features set-version cargo-edit@0.13.0
           cargo set-version --bump ${{ inputs.versionBump }}
 
       # There is currently no easy way to get the new version number (see also https://github.com/killercup/cargo-edit/issues/524),
