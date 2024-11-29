@@ -61,7 +61,7 @@ jobs:
       - name: Install cargo-make
         uses: davidB/rust-cargo-make@689ca68d60478a0ba51fb79b2c739219d7daf6a2  # v1.10.1
         with:
-          version: '0.37.11'
+          version: '0.37.23'
 
       # Perform full build to make sure there are no issues
       - name: Build project
