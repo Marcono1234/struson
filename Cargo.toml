@@ -17,12 +17,12 @@ thiserror = "1.0.66"
 strum = { version = "0.26.3", features = ["derive"] }
 duplicate = "2.0.0"
 
-serde = { version = "1.0.214", optional = true }
+serde = { version = "1.0.216", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
-serde = "1.0.214"
+serde = "1.0.216"
 # When updating serde_json, adjust Struson Serde integration behavior to match serde_json
 serde_json = "1.0.132"
 # Used for verifying in allocation tests that no allocations occur in certain situations
