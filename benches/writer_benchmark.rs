@@ -1,7 +1,7 @@
 use std::{error::Error, io::Sink};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{JsonStreamWriter, JsonWriter};
 
 use serde::ser::Serializer;
 
@@ -18,23 +18,22 @@ fn bench_compare<SF: Fn(&mut JsonStreamWriter<Sink>) -> Result<(), Box<dyn Error
             json_writer.finish_document().unwrap();
         })
     });
-    group.bench_with_input(
-        "struson-write (pretty)",
-        &struson_function,
-        |b, write_function| {
-            b.iter(|| {
-                let mut json_writer = JsonStreamWriter::new_custom(
-                    std::io::sink(),
-                    WriterSettings {
-                        pretty_print: true,
-                        ..Default::default()
-                    },
-                );
-                write_function(&mut json_writer).unwrap();
-                json_writer.finish_document().unwrap();
-            })
-        },
-    );
+    // TODO: Needs larger rewriting (respectively conversion to macro) so that `struson_function` is agnostic about used pretty printer?
+    // group.bench_with_input(
+    //     "struson-write (pretty)",
+    //     &struson_function,
+    //     |b, write_function| {
+    //         b.iter(|| {
+    //             let mut json_writer = JsonStreamWriter::new_custom(
+    //                 std::io::sink(),
+    //                 WriterSettings::default(),
+    //                 SimplePrettyPrinter,
+    //             );
+    //             write_function(&mut json_writer).unwrap();
+    //             json_writer.finish_document().unwrap();
+    //         })
+    //     },
+    // );
 
     // TODO: Maybe also try to support Serde, but Serializer API cannot be easily used for arbitrary data?
     //   Could test against serde_json's Formatter, but that might be too low level (especially string value writing)?

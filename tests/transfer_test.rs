@@ -2,7 +2,7 @@ use std::{error::Error, fs::read_to_string};
 
 use struson::{
     reader::{json_path::json_path, JsonReader, JsonStreamReader},
-    writer::{JsonStreamWriter, JsonWriter, WriterSettings},
+    writer::{JsonStreamWriter, JsonWriter, SimplePrettyPrinter, WriterSettings},
 };
 
 use crate::test_lib::get_test_data_file_path;
@@ -21,13 +21,8 @@ fn transfer_test() -> Result<(), Box<dyn Error>> {
     let mut json_reader = JsonStreamReader::new(expected_json.as_bytes());
 
     let mut writer = Vec::<u8>::new();
-    let mut json_writer = JsonStreamWriter::new_custom(
-        &mut writer,
-        WriterSettings {
-            pretty_print: true,
-            ..Default::default()
-        },
-    );
+    let mut json_writer =
+        JsonStreamWriter::new_custom(&mut writer, WriterSettings::default(), SimplePrettyPrinter);
 
     // First wrap and transfer JSON document
     json_writer.begin_object()?;
@@ -46,13 +41,8 @@ fn transfer_test() -> Result<(), Box<dyn Error>> {
     let mut json_reader = JsonStreamReader::new(intermediate_json.as_bytes());
 
     let mut writer = Vec::<u8>::new();
-    let mut json_writer = JsonStreamWriter::new_custom(
-        &mut writer,
-        WriterSettings {
-            pretty_print: true,
-            ..Default::default()
-        },
-    );
+    let mut json_writer =
+        JsonStreamWriter::new_custom(&mut writer, WriterSettings::default(), SimplePrettyPrinter);
 
     // Then unwrap it again
     json_reader.seek_to(&json_path!["nested", 0])?;

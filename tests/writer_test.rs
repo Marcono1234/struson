@@ -1,6 +1,6 @@
 use std::{error::Error, fs::read_to_string};
 
-use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{JsonStreamWriter, JsonWriter, SimplePrettyPrinter, WriterSettings};
 
 use crate::test_lib::{get_expected_events, get_test_data_file_path, JsonEvent};
 
@@ -14,13 +14,8 @@ fn writer_test() -> Result<(), Box<dyn Error>> {
     let expected_json = expected_json.trim_end();
 
     let mut writer = Vec::<u8>::new();
-    let mut json_writer = JsonStreamWriter::new_custom(
-        &mut writer,
-        WriterSettings {
-            pretty_print: true,
-            ..Default::default()
-        },
-    );
+    let mut json_writer =
+        JsonStreamWriter::new_custom(&mut writer, WriterSettings::default(), SimplePrettyPrinter);
 
     for event in get_expected_events() {
         match event {

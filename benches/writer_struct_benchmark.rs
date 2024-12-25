@@ -2,7 +2,9 @@ use std::{error::Error, io::Sink, iter};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use serde::Serialize;
-use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+use struson::writer::{
+    JsonStreamWriter, JsonWriter, PrettyPrinter, SimplePrettyPrinter, WriterSettings,
+};
 
 #[derive(Serialize, Clone)]
 struct StructValue {
@@ -23,8 +25,8 @@ fn benchmark_struct(c: &mut Criterion) {
     .take(10_000)
     .collect();
 
-    fn struson_write(
-        mut json_writer: JsonStreamWriter<Sink>,
+    fn struson_write<P: PrettyPrinter>(
+        mut json_writer: JsonStreamWriter<Sink, P>,
         values: &Vec<StructValue>,
     ) -> Result<(), Box<dyn Error>> {
         // Hopefully this is a fair comparison with how Serde behaves
@@ -62,10 +64,8 @@ fn benchmark_struct(c: &mut Criterion) {
         b.iter(|| {
             let json_writer = JsonStreamWriter::new_custom(
                 std::io::sink(),
-                WriterSettings {
-                    pretty_print: true,
-                    ..Default::default()
-                },
+                WriterSettings::default(),
+                SimplePrettyPrinter,
             );
             struson_write(json_writer, values).unwrap()
         })

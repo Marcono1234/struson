@@ -4,7 +4,10 @@ use assert_no_alloc::permit_alloc;
 // Only use import when creating debug builds, see also configuration below
 #[cfg(debug_assertions)]
 use assert_no_alloc::AllocDisabler;
-use struson::writer::{JsonStreamWriter, JsonWriter, StringValueWriter, WriterSettings};
+use struson::writer::{
+    CompactPrettyPrinter, JsonStreamWriter, JsonWriter, SimplePrettyPrinter, StringValueWriter,
+    WriterSettings,
+};
 
 // Only enable when creating debug builds
 #[cfg(debug_assertions)]
@@ -35,6 +38,7 @@ fn write_values() {
             escape_all_non_ascii: true,
             ..Default::default()
         },
+        CompactPrettyPrinter,
     );
 
     let large_string = "abcd".repeat(500);
@@ -73,13 +77,8 @@ fn write_values() {
 #[test]
 fn pretty_print() {
     let mut writer = new_byte_writer();
-    let mut json_writer = JsonStreamWriter::new_custom(
-        &mut writer,
-        WriterSettings {
-            pretty_print: true,
-            ..Default::default()
-        },
-    );
+    let mut json_writer =
+        JsonStreamWriter::new_custom(&mut writer, WriterSettings::default(), SimplePrettyPrinter);
 
     assert_no_alloc(|| {
         json_writer.begin_object()?;

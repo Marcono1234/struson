@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::*;
-use crate::utf8;
+use crate::{reader::ValueType, utf8};
 
 /// Settings to customize the JSON writer behavior
 ///
@@ -19,7 +19,7 @@ use crate::utf8;
 /// ```
 /// # use struson::writer::WriterSettings;
 /// WriterSettings {
-///     pretty_print: true,
+///     escape_all_control_chars: true,
 ///     // For all other settings use the default
 ///     ..Default::default()
 /// }
@@ -49,6 +49,7 @@ pub struct WriterSettings {
     ///
     /// This setting does not have any effect on the validity of the JSON output.
     /// Pretty printed JSON is allowed by the JSON specification.
+    #[deprecated = "has no effect, use PrettyPrinter instead"]
     pub pretty_print: bool,
 
     /// Whether to escape all control characters
@@ -90,6 +91,10 @@ pub struct WriterSettings {
     /// might be use cases where supporting multiple top-level values can be useful, for example
     /// when writing JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
     /// that is, a stream of multiple JSON values separated by line breaks.
+    /*
+     * TODO: Only have a bool here and let PrettyPrinter perform the formatting?
+     * But separator has more meaning than just "pretty printing"
+     */
     pub multi_top_level_value_separator: Option<String>,
 }
 
@@ -100,12 +105,486 @@ impl Default for WriterSettings {
     /// - escape all control chars: false (= only control characters `0x00` to `0x1F` are escaped)
     /// - multiple top-level values: disallowed
     fn default() -> Self {
+        #[allow(deprecated)] // for `pretty_print`
         WriterSettings {
             pretty_print: false,
             escape_all_control_chars: false,
             escape_all_non_ascii: false,
             multi_top_level_value_separator: None,
         }
+    }
+}
+
+/// Pretty printer for [`JsonStreamWriter`]
+///
+/// Allows customizing the formatting of the written JSON data, such as where to add
+/// line breaks and how much indentation to use. Two standard implementations are
+/// provided:
+/// - [`CompactPrettyPrinter`]: Does not perform any pretty printing; writes the JSON
+///   data without any additional whitespace
+/// - [`SimplePrettyPrinter`]: Pretty printer which writes values in separates lines
+///   and adds indentation based on the nesting depth
+///
+/// Use [`JsonStreamWriter::new_custom`] to specify the pretty printer for a JSON writer.
+///
+/// ----
+///
+/// **🔬 Experimental**\
+/// The pretty printer functionality is currently experimental, please provide feedback about
+/// it [here](https://github.com/Marcono1234/struson/<TODO>).
+///
+/// # Method call sequence
+/// The following describes in which sequence the methods of the pretty printer are
+/// called by the JSON writer. Note that the pretty printer is only responsible for
+/// writing whitespace; tokens of the JSON data such as `[` for a JSON array are
+/// written by the JSON writer itself.
+///
+/// The `write` function argument of the methods is for writing the whitespace (if any),
+/// it can be called multiple times, or not at all.\
+/// The `nesting_depth` argument is the number of how many JSON arrays or objects
+/// are currently open (starting at 0), and therefore how deeply the currently
+/// written value is nested.
+///
+/// To make sure the JSON data can be read again by JSON readers, pretty printers should
+/// only write whitespace permitted by the JSON specification:
+/// - space (` `, U+0020)
+/// - tab (`\t`, U+0009)
+/// - line feed (`\n`, U+000A)
+/// - carriage return (`\r`, U+000D)
+///
+/// ## Top-level values
+/// 1. [_top-level separator_](WriterSettings::multi_top_level_value_separator)\
+///    (if a previous top-level value has already been written)
+/// 2. [`before_top_level_value`](Self::before_top_level_value)
+/// 3. _value_
+/// 4. [`after_top_level_value`](Self::after_top_level_value)
+///
+/// ## Arrays
+/// 1. `[`
+/// 2. [`begin_array`](Self::begin_array)
+/// 3. For each array item:
+///     1. [`before_array_item`](Self::before_array_item)
+///     2. _value_
+///     3. [`after_array_item`](Self::after_array_item)
+///     4. `,` (if not last array item)
+/// 4. [`end_array`](Self::end_array)
+/// 5. `]`
+///
+/// ## Objects
+/// 1. `{`
+/// 2. [`begin_object`](Self::begin_object)
+/// 3. For each object member:
+///     1. [`before_member_name`](Self::before_member_name)
+///     2. _name_
+///     3. [`after_member_name`](Self::after_member_name)
+///     4. `:`
+///     5. [`before_member_value`](Self::before_member_value)
+///     6. _value_
+///     7. [`after_member_value`](Self::after_member_value)
+///     8. `,` (if not last object member)
+/// 4. [`end_object`](Self::end_object)
+/// 5. `}`
+/*
+ * Implementation notes:
+ * - PrettyPrinter is not nested inside the WriterSettings because it might be stateful,
+ *   and might not implement Clone
+ * - Some of the PrettyPrinter methods or their parameters are redundant and can be derived
+ *   by implementations, e.g. nesting depth can be tracked by implementations by counting how
+ *   often arrays and objects are opened and closed. However, it is less error-prone if
+ *   this information is directly provided, and also more convenient because it allows more
+ *   implementations to be stateless.
+ * - The methods take a `write` argument because
+ *   - It makes it independent of the underlying `Write` implementation of the JsonStreamWriter
+ *   - It is less error-prone than using a `Write`, which offers a lot of methods which are
+ *     probably not needed here, and depending on the method you have to make sure that it
+ *     fully wrote the data
+ *   - Compared to returning a `String` or `Vec` it can avoid heap allocations when writing
+ *     repeated indentation
+ */
+/*
+ * TODO: Maybe rename to something else, e.g. "Formatter" (same as Serde JSON) and then have
+ * "CompactFormatter" and "PrettyFormatter"; current naming with "CompactPrettyPrinter" and
+ * "SimplePrettyPrinter" is a bit irritating?
+ */
+/*
+ * TODO: Maybe consider also providing the JSON values to the pretty printer so that it can
+ * determine based on their length whether to wrap them. Though have to mention more explicitly
+ * that the pretty printer *must not* write the value itself.
+ * Also for string values (and names?) maybe use `Option<str>` for the case where the string
+ * value writer was used and the full string value is not available.
+ * Also have to mention that for string values and names no escaping has been done yet, so the
+ * value might be longer after escaping.
+ * So not sure if this is really worth it at the moment.
+ */
+pub trait PrettyPrinter {
+    /// Called immediately after the `[` of a JSON array
+    ///
+    /// The `nesting_depth` has already been increased for the current array.
+    fn begin_array(
+        &mut self,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately before the `]` of a JSON array
+    ///
+    /// The `nesting_depth` is still increased for the current array.
+    /// `is_empty` specifies whether the JSON array had no items.
+    fn end_array(
+        &mut self,
+        nesting_depth: u32,
+        is_empty: bool,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately after the `{` of a JSON object
+    ///
+    /// The `nesting_depth` has already been increased for the current object.
+    fn begin_object(
+        &mut self,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately before the `}` of a JSON object
+    ///
+    /// The `nesting_depth` is still increased for the current object.
+    /// `is_empty` specifies whether the JSON object had no members.
+    fn end_object(
+        &mut self,
+        nesting_depth: u32,
+        is_empty: bool,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /*
+     * TODO: `ValueType` used by the following methods is currently under `reader` module;
+     * should maybe move it to parent `struson::`?
+     * TODO: Do the `after_...` methods really need to provide the `value_type`?
+     */
+
+    /// Called immediately before a top-level value
+    ///
+    /// If [`WriterSettings::multi_top_level_value_separator`] is specified and there
+    /// is a previous top-level value, then the separator has already been written
+    /// before this method is called.
+    fn before_top_level_value(
+        &mut self,
+        value_type: ValueType,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        // Provide no-op default implementation because most pretty printers probably don't need this
+        let _ = value_type;
+        let _ = write;
+        Ok(())
+    }
+    /// Called immediately after a top-level value
+    fn after_top_level_value(
+        &mut self,
+        value_type: ValueType,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        // Provide no-op default implementation because most pretty printers probably don't need this
+        let _ = value_type;
+        let _ = write;
+        Ok(())
+    }
+
+    /// Called immediately before a JSON array item
+    ///
+    /// `value_type` is the type of the array item.
+    /// The separating `,` (in case there was a previous item) has already
+    /// been written.
+    fn before_array_item(
+        &mut self,
+        value_type: ValueType,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately after a JSON array item
+    ///
+    /// `value_type` is the type of the array item which had just been written.
+    /// The separating `,` (in case there is a subsequent item) has not been
+    /// written yet.
+    fn after_array_item(
+        &mut self,
+        value_type: ValueType,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately before a JSON object member name
+    ///
+    /// The separating `,` (in case there was a previous member) has already
+    /// been written.
+    fn before_member_name(
+        &mut self,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately after a JSON object member name
+    ///
+    /// The separating `:` has not been written yet.
+    fn after_member_name(
+        &mut self,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately before a JSON object member value
+    ///
+    /// `value_type` is the type of the member value.
+    /// The separating `:` has already been written.
+    fn before_member_value(
+        &mut self,
+        value_type: ValueType,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+
+    /// Called immediately after a JSON object member value
+    ///
+    /// `value_type` is the type of the member value which had just been written.
+    /// The separating `,` (in case there is a subsequent member) has not been
+    /// written yet.
+    fn after_member_value(
+        &mut self,
+        value_type: ValueType,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError>;
+}
+
+/// Pretty printer implementation which does not perform any pretty printing
+///
+/// The JSON data is written as compact as possible, without any whitespace or line breaks
+/// between values.
+///
+/// # Examples
+/// ```json
+/// [true,{"member":12}]
+/// ```
+#[derive(Debug)]
+pub struct CompactPrettyPrinter;
+impl PrettyPrinter for CompactPrettyPrinter {
+    fn begin_array(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn end_array(
+        &mut self,
+        _nesting_depth: u32,
+        _is_empty: bool,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn begin_object(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn end_object(
+        &mut self,
+        _nesting_depth: u32,
+        _is_empty: bool,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn before_array_item(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn after_array_item(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn before_member_name(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn after_member_name(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn before_member_value(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn after_member_value(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+}
+
+/// Standard pretty printer implementation
+///
+/// Values are written in separate lines (with `\n` as line break) and are indented
+/// with two spaces based on the nesting depth.\
+/// This pretty printing does not have any effect on the validity of the JSON output,
+/// the JSON specification permits whitespace between values.
+///
+/// # Examples
+/// ```json
+/// [
+///   true,
+///   {
+///     "member": 12
+///   }
+/// ]
+/// ```
+#[derive(Debug)]
+pub struct SimplePrettyPrinter;
+impl SimplePrettyPrinter {
+    const NEWLINE: &[u8] = b"\n";
+    const INDENTATION: &[u8] = b"  ";
+}
+impl PrettyPrinter for SimplePrettyPrinter {
+    fn begin_array(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        // Write nothing; indentation is written before each value
+        Ok(())
+    }
+
+    fn end_array(
+        &mut self,
+        nesting_depth: u32,
+        is_empty: bool,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        if !is_empty {
+            write(Self::NEWLINE)?;
+            for _ in 0..(nesting_depth - 1) {
+                write(Self::INDENTATION)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_object(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        // Write nothing; indentation is written before each member
+        Ok(())
+    }
+
+    fn end_object(
+        &mut self,
+        nesting_depth: u32,
+        is_empty: bool,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        if !is_empty {
+            write(Self::NEWLINE)?;
+            for _ in 0..(nesting_depth - 1) {
+                write(Self::INDENTATION)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn before_array_item(
+        &mut self,
+        _value_type: ValueType,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        write(Self::NEWLINE)?;
+        for _ in 0..nesting_depth {
+            write(Self::INDENTATION)?;
+        }
+        Ok(())
+    }
+
+    fn after_array_item(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn before_member_name(
+        &mut self,
+        nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        write(Self::NEWLINE)?;
+        for _ in 0..nesting_depth {
+            write(Self::INDENTATION)?;
+        }
+        Ok(())
+    }
+
+    fn after_member_name(
+        &mut self,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
+    }
+
+    fn before_member_value(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        write(b" ")
+    }
+
+    fn after_member_value(
+        &mut self,
+        _value_type: ValueType,
+        _nesting_depth: u32,
+        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        Ok(())
     }
 }
 
@@ -142,7 +621,7 @@ impl<W: Write> Writer<W> {
 /// If the underlying writer returns an error of kind [`ErrorKind::Interrupted`], this
 /// JSON writer will keep retrying to write the data.
 #[derive(Debug)]
-pub struct JsonStreamWriter<W: Write> {
+pub struct JsonStreamWriter<W: Write, P: PrettyPrinter = CompactPrettyPrinter> {
     writer: Writer<W>,
     /// Whether the current array or object is empty, or at top-level whether
     /// at least one value has been written already
@@ -152,19 +631,29 @@ pub struct JsonStreamWriter<W: Write> {
     is_string_value_writer_active: bool,
 
     writer_settings: WriterSettings,
+    pretty_printer: P,
 }
 
 // Implementation with public constructor methods
 impl<W: Write> JsonStreamWriter<W> {
-    /// Creates a JSON writer with [default settings](WriterSettings::default)
+    /// Creates a JSON writer with [default settings](WriterSettings::default) and [`CompactPrettyPrinter`]
     pub fn new(writer: W) -> Self {
-        JsonStreamWriter::new_custom(writer, WriterSettings::default())
+        JsonStreamWriter::new_custom(writer, WriterSettings::default(), CompactPrettyPrinter)
     }
-
+}
+impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
     /// Creates a JSON writer with custom settings
     ///
-    /// The settings can be used to customize how the JSON output will look like.
-    pub fn new_custom(writer: W, writer_settings: WriterSettings) -> Self {
+    /// The settings can be used to customize how the JSON output will look like. If only a custom
+    /// pretty printer should be used, then `WriterSettings::default()` can be specified for the
+    /// settings.
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// The pretty printer functionality is currently experimental, please provide feedback about
+    /// it [here](https://github.com/Marcono1234/struson/<TODO>).
+    pub fn new_custom(writer: W, writer_settings: WriterSettings, pretty_printer: P) -> Self {
         Self {
             writer: Writer(writer),
             is_empty: true,
@@ -172,12 +661,37 @@ impl<W: Write> JsonStreamWriter<W> {
             stack: Vec::with_capacity(16),
             is_string_value_writer_active: false,
             writer_settings,
+            pretty_printer,
         }
+    }
+
+    /// Gets a mutable reference to the pretty printer
+    ///
+    /// This is only intended for special use cases where the user of the JSON writer can provide
+    /// hints to the pretty printer about the next value. For example if a custom pretty printer
+    /// normally puts every JSON array item in a separate line but the user knows that the following
+    /// values will all be very short, then the pretty printer can be informed before starting
+    /// writing the values.
+    ///
+    /// In most cases the pretty printer should normally on its own determine how to format the
+    /// JSON data.
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// The pretty printer functionality is currently experimental, please provide feedback about
+    /// it [here](https://github.com/Marcono1234/struson/<TODO>).
+    pub fn pretty_printer(&mut self) -> &mut P {
+        &mut self.pretty_printer
     }
 }
 
 // Implementation with JSON structure state inspection methods, and general value methods
-impl<W: Write> JsonStreamWriter<W> {
+impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
+    fn nesting_depth(&self) -> u32 {
+        self.stack.len().try_into().unwrap()
+    }
+
     fn is_in_array(&self) -> bool {
         self.stack.last().map_or(false, |v| v == &StackValue::Array)
     }
@@ -188,27 +702,43 @@ impl<W: Write> JsonStreamWriter<W> {
             .map_or(false, |v| v == &StackValue::Object)
     }
 
-    fn write_indentation(&mut self) -> Result<(), IoError> {
-        let indentation_level = self.stack.len();
-        for _ in 0..indentation_level {
-            self.writer.write(b"  ")?;
+    /// Called for array items, and object member names and values
+    ///
+    /// For object member names `value_type` is `None`, for everything else it is `Some`.
+    fn before_container_element(&mut self, value_type: Option<ValueType>) -> Result<(), IoError> {
+        if self.is_in_array() {
+            if !self.is_empty {
+                self.writer.write(b",")?;
+            }
+
+            self.pretty_printer.before_array_item(
+                value_type.unwrap(),
+                self.nesting_depth(),
+                &mut |b| self.writer.write(b),
+            )?;
+        } else {
+            assert!(self.is_in_object());
+
+            if self.expects_member_name {
+                if !self.is_empty {
+                    self.writer.write(b",")?;
+                }
+
+                self.pretty_printer
+                    .before_member_name(self.nesting_depth(), &mut |b| self.writer.write(b))?;
+            } else {
+                self.pretty_printer.before_member_value(
+                    value_type.unwrap(),
+                    self.nesting_depth(),
+                    &mut |b| self.writer.write(b),
+                )?;
+            }
         }
+
         Ok(())
     }
 
-    /// Called for array items and object member names, but not for object member values
-    fn before_container_element(&mut self) -> Result<(), IoError> {
-        if !self.is_empty {
-            self.writer.write(b",")?;
-        }
-        if self.writer_settings.pretty_print {
-            self.writer.write(b"\n")?;
-            self.write_indentation()?;
-        }
-        Ok(())
-    }
-
-    fn before_value(&mut self) -> Result<(), IoError> {
+    fn before_value(&mut self, value_type: ValueType) -> Result<(), IoError> {
         if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
@@ -224,8 +754,12 @@ impl<W: Write> JsonStreamWriter<W> {
                     self.writer.write(separator.as_bytes())?;
                 },
             }
-        } else if self.is_in_array() {
-            self.before_container_element()?;
+        }
+        if is_top_level {
+            self.pretty_printer
+                .before_top_level_value(value_type, &mut |b| self.writer.write(b))?;
+        } else {
+            self.before_container_element(Some(value_type))?;
         }
         self.is_empty = false;
 
@@ -237,8 +771,36 @@ impl<W: Write> JsonStreamWriter<W> {
         Ok(())
     }
 
+    fn after_value(&mut self, value_type: ValueType) -> Result<(), IoError> {
+        if self.is_in_array() {
+            self.pretty_printer
+                .after_array_item(value_type, self.nesting_depth(), &mut |b| {
+                    self.writer.write(b)
+                })?;
+        } else if self.is_in_object() {
+            self.pretty_printer
+                .after_member_value(value_type, self.nesting_depth(), &mut |b| {
+                    self.writer.write(b)
+                })?;
+        } else {
+            self.pretty_printer
+                .after_top_level_value(value_type, &mut |b| self.writer.write(b))?;
+        }
+        Ok(())
+    }
+
+    fn write_value(&mut self, value_json: &[u8], value_type: ValueType) -> Result<(), IoError> {
+        self.before_value(value_type)?;
+        self.writer.write(value_json)?;
+        self.after_value(value_type)
+    }
+
     fn on_container_start(&mut self, container_type: StackValue) -> Result<(), IoError> {
-        self.before_value()?;
+        let value_type = match container_type {
+            StackValue::Array => ValueType::Array,
+            StackValue::Object => ValueType::Object,
+        };
+        self.before_value(value_type)?;
         self.stack.push(container_type);
         self.is_empty = true;
         Ok(())
@@ -246,11 +808,6 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn on_container_end(&mut self) -> Result<(), IoError> {
         self.stack.pop();
-
-        if !self.is_empty && self.writer_settings.pretty_print {
-            self.writer.write(b"\n")?;
-            self.write_indentation()?;
-        }
 
         // Enclosing container is not empty since this method call here is processing its child
         self.is_empty = false;
@@ -262,7 +819,7 @@ impl<W: Write> JsonStreamWriter<W> {
 }
 
 // Implementation with string writing methods
-impl<W: Write> JsonStreamWriter<W> {
+impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
     fn should_escape(&self, c: char) -> bool {
         matches!(c, '"' | '\\')
         // Control characters which must be escaped per JSON specification
@@ -351,7 +908,7 @@ impl<W: Write> JsonStreamWriter<W> {
     }
 }
 
-impl<W: Write> JsonWriter for JsonStreamWriter<W> {
+impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
     /// Result returned by [`finish_document`](Self::finish_document)
     ///
     /// This JSON writer implementation returns the underlying `Write` to allow for
@@ -363,7 +920,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     fn begin_object(&mut self) -> Result<(), IoError> {
         self.on_container_start(StackValue::Object)?;
         self.expects_member_name = true;
-        self.writer.write(b"{")
+        self.writer.write(b"{")?;
+        self.pretty_printer
+            .begin_object(self.nesting_depth(), &mut |b| self.writer.write(b))
     }
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
@@ -373,12 +932,11 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         if self.is_string_value_writer_active {
             panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
         }
-        self.before_container_element()?;
+        self.before_container_element(None)?;
         self.write_string_value(name)?;
+        self.pretty_printer
+            .after_member_name(self.nesting_depth(), &mut |b| self.writer.write(b))?;
         self.writer.write(b":")?;
-        if self.writer_settings.pretty_print {
-            self.writer.write(b" ")?;
-        }
         self.expects_member_name = false;
 
         Ok(())
@@ -394,8 +952,14 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         if !self.expects_member_name {
             panic!("Incorrect writer usage: Cannot end object when member value is expected");
         }
+        self.pretty_printer
+            .end_object(self.nesting_depth(), self.is_empty, &mut |b| {
+                self.writer.write(b)
+            })?;
         self.on_container_end()?;
-        self.writer.write(b"}")
+        self.writer.write(b"}")?;
+        self.after_value(ValueType::Object)?;
+        Ok(())
     }
 
     fn begin_array(&mut self) -> Result<(), IoError> {
@@ -404,7 +968,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
         self.expects_member_name = false;
 
-        self.writer.write(b"[")
+        self.writer.write(b"[")?;
+        self.pretty_printer
+            .begin_array(self.nesting_depth(), &mut |b| self.writer.write(b))
     }
 
     fn end_array(&mut self) -> Result<(), IoError> {
@@ -416,43 +982,45 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
                 "Incorrect writer usage: Cannot end array when string value writer is still active"
             );
         }
+        self.pretty_printer
+            .end_array(self.nesting_depth(), self.is_empty, &mut |b| {
+                self.writer.write(b)
+            })?;
         self.on_container_end()?;
-        self.writer.write(b"]")
+        self.writer.write(b"]")?;
+        self.after_value(ValueType::Array)?;
+        Ok(())
     }
 
     fn string_value(&mut self, value: &str) -> Result<(), IoError> {
-        self.before_value()?;
-        self.write_string_value(value)
+        self.before_value(ValueType::String)?;
+        self.write_string_value(value)?;
+        self.after_value(ValueType::String)
     }
 
     fn bool_value(&mut self, value: bool) -> Result<(), IoError> {
-        self.before_value()?;
-        self.writer.write(if value { b"true" } else { b"false" })
+        self.write_value(if value { b"true" } else { b"false" }, ValueType::Boolean)
     }
 
     fn null_value(&mut self) -> Result<(), IoError> {
-        self.before_value()?;
-        self.writer.write(b"null")
+        self.write_value(b"null", ValueType::Null)
     }
 
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
         value.use_json_number(|number_str| {
-            self.before_value()?;
-            self.writer.write(number_str.as_bytes())
+            self.write_value(number_str.as_bytes(), ValueType::Number)
         })
     }
 
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError> {
         value.use_json_number(|number_str| {
-            self.before_value()?;
-            self.writer.write(number_str.as_bytes())
+            self.write_value(number_str.as_bytes(), ValueType::Number)
         })
     }
 
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
         if is_valid_json_number(value) {
-            self.before_value()?;
-            self.writer.write(value.as_bytes())?;
+            self.write_value(value.as_bytes(), ValueType::Number)?;
             Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber(format!(
@@ -495,7 +1063,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 
     fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
-        self.before_value()?;
+        self.before_value(ValueType::String)?;
         self.writer.write(b"\"")?;
         self.is_string_value_writer_active = true;
         Ok(StringValueWriterImpl {
@@ -508,8 +1076,8 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 }
 
-struct StringValueWriterImpl<'j, W: Write> {
-    json_writer: &'j mut JsonStreamWriter<W>,
+struct StringValueWriterImpl<'j, W: Write, P: PrettyPrinter> {
+    json_writer: &'j mut JsonStreamWriter<W, P>,
     /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
     /// a user of this writer
     ///
@@ -540,7 +1108,7 @@ fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
     }
 }
 
-impl<W: Write> StringValueWriterImpl<'_, W> {
+impl<W: Write, P: PrettyPrinter> StringValueWriterImpl<'_, W, P> {
     fn write_impl(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -643,7 +1211,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
         result
     }
 }
-impl<W: Write> Write for StringValueWriterImpl<'_, W> {
+impl<W: Write, P: PrettyPrinter> Write for StringValueWriterImpl<'_, W, P> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.run_with_error_tracking(|self_| self_.write_impl(buf))
     }
@@ -653,7 +1221,7 @@ impl<W: Write> Write for StringValueWriterImpl<'_, W> {
     }
 }
 
-impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
+impl<W: Write, P: PrettyPrinter> StringValueWriter for StringValueWriterImpl<'_, W, P> {
     // Provides more efficient implementation which benefits from avoided UTF-8 validation
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
         self.run_with_error_tracking(|self_| {
@@ -682,6 +1250,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
         }
         self.json_writer.writer.write(b"\"")?;
         self.json_writer.is_string_value_writer_active = false;
+        self.json_writer.after_value(ValueType::String)?;
         Ok(())
     }
 }
@@ -1312,6 +1881,7 @@ mod tests {
                     multi_top_level_value_separator: Some(top_level_separator.to_owned()),
                     ..Default::default()
                 },
+                CompactPrettyPrinter,
             )
         }
 
@@ -1356,15 +1926,15 @@ mod tests {
     }
 
     #[test]
-    fn pretty_print() -> TestResult {
+    fn pretty_printer_simple() -> TestResult {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new_custom(
             &mut writer,
             WriterSettings {
-                pretty_print: true,
                 multi_top_level_value_separator: Some("#".to_owned()),
                 ..Default::default()
             },
+            SimplePrettyPrinter,
         );
 
         json_writer.begin_array()?;
@@ -1417,6 +1987,7 @@ mod tests {
                 escape_all_control_chars: true,
                 ..Default::default()
             },
+            CompactPrettyPrinter,
         );
 
         json_writer
@@ -1439,6 +2010,7 @@ mod tests {
                 escape_all_non_ascii: true,
                 ..Default::default()
             },
+            CompactPrettyPrinter,
         );
         json_writer.string_value("\u{0000}\u{001F} test \" \u{007F}\u{0080}\u{10000}\u{10FFFF}")?;
         json_writer.finish_document()?;
@@ -1455,6 +2027,7 @@ mod tests {
                 escape_all_non_ascii: true,
                 ..Default::default()
             },
+            CompactPrettyPrinter,
         );
         json_writer.string_value("\u{0000} test \" \u{007F}\u{0080}\u{10FFFF}")?;
         json_writer.finish_document()?;

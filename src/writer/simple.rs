@@ -487,10 +487,11 @@ impl<J: JsonWriter> SimpleJsonWriter<J> {
     ///     JsonStreamWriter::new_custom(
     ///         &mut writer,
     ///         WriterSettings {
-    ///             pretty_print: true,
+    ///             escape_all_control_chars: true,
     ///             // For all other settings use the default
     ///             ..Default::default()
     ///         },
+    ///         SimplePrettyPrinter,
     ///     )
     /// );
     /// ```
