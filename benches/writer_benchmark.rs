@@ -5,10 +5,10 @@ use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
 use serde::ser::Serializer;
 
-fn bench_compare<RF: Fn(&mut JsonStreamWriter<Sink>) -> Result<(), Box<dyn Error>>>(
+fn bench_compare<SF: Fn(&mut JsonStreamWriter<Sink>) -> Result<(), Box<dyn Error>>>(
     c: &mut Criterion,
     name: &str,
-    struson_function: RF,
+    struson_function: SF,
 ) {
     let mut group = c.benchmark_group(name);
     group.bench_with_input("struson-write", &struson_function, |b, write_function| {

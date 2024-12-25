@@ -44,7 +44,7 @@ type IoError = std::io::Error;
 /// [`name`](Self::name) and the value with any of the value writing methods such as [`bool_value`](Self::bool_value).
 ///
 /// Once the JSON document is complete, [`finish_document`](Self::finish_document) has to be called to ensure that the
-/// JSON document really is complete and to flush the internal buffer to the underlying writer.
+/// JSON document really is complete and, depending on the JSON writer implementation, to flush any internal buffers.
 /// Forgetting to call [`finish_document`](Self::finish_document) leads to unspecified behavior; most likely the written
 /// JSON document will be incomplete. However, no _undefined_ behavior occurs.
 ///
@@ -533,7 +533,8 @@ pub trait JsonWriter {
     /// usage, so the `WriterResult` returned by this method can be ignored.
     ///
     /// This method **must** be called explicitly. Dropping the JSON writer will not
-    /// automatically flush the buffer.
+    /// verify that the JSON document is complete and, depending on the JSON writer
+    /// implementation, will not flush any buffers.
     ///
     /// **Important:** It is expected that there is always at least one top-level value
     /// in a JSON document, so calling this method without having written a value yet

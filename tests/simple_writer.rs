@@ -232,10 +232,12 @@ fn write_string_with_writer() -> Result<(), Box<dyn Error>> {
             WriterAction::Flush,
             WriterAction::Write(b"first".to_vec()),
             WriterAction::Flush,
-            WriterAction::Write(b" second third".to_vec()),
+            WriterAction::Write(b" second".to_vec()),
+            WriterAction::Write(b" third".to_vec()),
             WriterAction::Flush,
             WriterAction::Flush,
-            WriterAction::Write(b" fourth\"".to_vec()),
+            WriterAction::Write(b" fourth".to_vec()),
+            WriterAction::Write(b"\"".to_vec()),
             WriterAction::Flush,
         ],
         tracking_writer.actions
@@ -253,6 +255,7 @@ fn closure_error_propagation() {
     let message = "custom-message";
     fn assert_error<T: Debug, E: Display + Debug>(
         f: impl FnOnce(SimpleJsonWriter<JsonStreamWriter<&mut Vec<u8>>>) -> Result<T, E>,
+        partial_json: &str,
     ) {
         let mut writer = Vec::new();
         let json_writer = SimpleJsonWriter::new(&mut writer);
@@ -262,46 +265,71 @@ fn closure_error_propagation() {
             _ => panic!("unexpected result: {result:?}"),
         };
 
-        // TODO: Ideally would check partial written JSON data to make sure no additional data
-        // (e.g. closing `]`) was written after error was propagated; but this is currently not
-        // easily possible due to JsonStreamWriter's internal buffering (and therefore `writer`
-        // being empty)
+        // Check partial written JSON data to make sure no additional data (e.g. closing `]`) was
+        // written after error was propagated
+        assert_eq!(partial_json, String::from_utf8(writer).unwrap());
     }
 
     // --- write_string_with_writer ---
-    assert_error(|json_writer| json_writer.write_string_with_writer(|_| Err(message.into())));
+    assert_error(
+        |json_writer| json_writer.write_string_with_writer(|_| Err(message.into())),
+        "\"",
+    );
 
     // --- write_array ---
-    assert_error(|json_writer| json_writer.write_array(|_| Err(message.into())));
+    assert_error(
+        |json_writer| json_writer.write_array(|_| Err(message.into())),
+        "[",
+    );
 
-    assert_error(|json_writer| {
-        json_writer.write_array(|array_writer| array_writer.write_array(|_| Err(message.into())))
-    });
+    assert_error(
+        |json_writer| {
+            json_writer
+                .write_array(|array_writer| array_writer.write_array(|_| Err(message.into())))
+        },
+        "[[",
+    );
 
-    assert_error(|json_writer| {
-        json_writer.write_array(|array_writer| array_writer.write_object(|_| Err(message.into())))
-    });
+    assert_error(
+        |json_writer| {
+            json_writer
+                .write_array(|array_writer| array_writer.write_object(|_| Err(message.into())))
+        },
+        "[{",
+    );
 
     // --- write_object ---
-    assert_error(|json_writer| json_writer.write_object(|_| Err(message.into())));
+    assert_error(
+        |json_writer| json_writer.write_object(|_| Err(message.into())),
+        "{",
+    );
 
-    assert_error(|json_writer| {
-        json_writer.write_object(|object_writer| {
-            object_writer.write_member("name", |_| Err(message.into()))
-        })
-    });
+    assert_error(
+        |json_writer| {
+            json_writer.write_object(|object_writer| {
+                object_writer.write_member("name", |_| Err(message.into()))
+            })
+        },
+        "{\"name\":",
+    );
 
-    assert_error(|json_writer| {
-        json_writer.write_object(|object_writer| {
-            object_writer.write_array_member("name", |_| Err(message.into()))
-        })
-    });
+    assert_error(
+        |json_writer| {
+            json_writer.write_object(|object_writer| {
+                object_writer.write_array_member("name", |_| Err(message.into()))
+            })
+        },
+        "{\"name\":[",
+    );
 
-    assert_error(|json_writer| {
-        json_writer.write_object(|object_writer| {
-            object_writer.write_object_member("name", |_| Err(message.into()))
-        })
-    });
+    assert_error(
+        |json_writer| {
+            json_writer.write_object(|object_writer| {
+                object_writer.write_object_member("name", |_| Err(message.into()))
+            })
+        },
+        "{\"name\":{",
+    );
 }
 
 /// Tests behavior when a user-provided closure encounters an `Err` from the writer,
@@ -421,12 +449,10 @@ fn discarded_error_handling() {
         }
     }
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
+        remaining_capacity: 3,
     });
     let result = json_writer.write_array(|array_writer| {
-        // Must write long enough value to trigger flushing of JsonStreamWriter's buffer
-        let value = "a".repeat(1024 + 10);
-        array_writer.write_string(&value).unwrap_err();
+        array_writer.write_string("test").unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -471,12 +497,10 @@ fn discarded_error_handling() {
     );
 
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
+        remaining_capacity: 3,
     });
     let result = json_writer.write_string_with_writer(|mut writer| {
-        // Must write long enough value to trigger flushing of JsonStreamWriter's buffer
-        let value = "a".repeat(1024 + 10);
-        writer.write_str(&value).unwrap_err();
+        writer.write_str("test").unwrap_err();
         Ok(())
     });
     assert_eq!(
@@ -484,13 +508,23 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
-    });
+    /// Writer which returns an error when `flush()` is called
+    struct FlushErrorWriter;
+    impl Write for FlushErrorWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // Do nothing
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(ErrorKind::WouldBlock, "custom-error"))
+        }
+    }
+    let json_writer = SimpleJsonWriter::new(FlushErrorWriter);
     let result = json_writer.write_string_with_writer(|mut writer| {
-        // `write_str` should not fail because bytes have not been flushed to underlying writer yet
-        writer.write_str("test value").unwrap();
-        writer.flush().unwrap_err();
+        let error = writer.flush().unwrap_err();
+        assert_eq!(ErrorKind::WouldBlock, error.kind());
+        assert_eq!("custom-error", error.to_string());
         Ok(())
     });
     assert_eq!(
@@ -498,25 +532,7 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
-    });
-    let result = json_writer.write_string_with_writer(|mut writer| {
-        // `write_str` should not fail because bytes have not been flushed to underlying writer yet
-        writer.write_str("test value").unwrap();
-        let result = writer.flush();
-        assert_eq!("custom-error", result.unwrap_err().to_string());
-        writer.flush().unwrap_err();
-        Ok(())
-    });
-    assert_eq!(
-        format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
-        result.unwrap_err().to_string()
-    );
-
-    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
-    });
+    let json_writer = SimpleJsonWriter::new(sink());
     let result = json_writer.write_array(|array_writer| {
         array_writer
             .write_string_with_writer(|mut writer| {
@@ -535,9 +551,7 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
-        remaining_capacity: 4,
-    });
+    let json_writer = SimpleJsonWriter::new(sink());
     let result = json_writer.write_object(|object_writer| {
         object_writer
             .write_string_member_with_writer("name", |mut writer| {
