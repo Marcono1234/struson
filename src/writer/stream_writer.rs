@@ -179,13 +179,11 @@ impl<W: Write> JsonStreamWriter<W> {
 // Implementation with JSON structure state inspection methods, and general value methods
 impl<W: Write> JsonStreamWriter<W> {
     fn is_in_array(&self) -> bool {
-        self.stack.last().map_or(false, |v| v == &StackValue::Array)
+        self.stack.last() == Some(&StackValue::Array)
     }
 
     fn is_in_object(&self) -> bool {
-        self.stack
-            .last()
-            .map_or(false, |v| v == &StackValue::Object)
+        self.stack.last() == Some(&StackValue::Object)
     }
 
     fn write_indentation(&mut self) -> Result<(), IoError> {
