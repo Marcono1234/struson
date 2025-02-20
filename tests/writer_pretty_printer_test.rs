@@ -3,8 +3,8 @@ use std::error::Error;
 use struson::{
     reader::ValueType,
     writer::{
-        JsonStreamWriter, JsonWriter, PrettyPrinter, SimplePrettyPrinter, StringValueWriter,
-        WriterSettings,
+        FormattingWriter, JsonStreamWriter, JsonWriter, PrettyPrinter, SimplePrettyPrinter,
+        StringValueWriter, WriterSettings,
     },
 };
 
@@ -14,75 +14,72 @@ type IoError = std::io::Error;
 fn pretty_printer_calls() -> Result<(), Box<dyn Error>> {
     struct CustomPrettyPrinter;
     impl CustomPrettyPrinter {
-        fn write(
-            data: String,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
-        ) -> Result<(), IoError> {
-            write(b"\n<")?;
-            write(data.as_bytes())?;
-            write(b">\n")
+        fn write(data: String, writer: &mut impl FormattingWriter) -> Result<(), IoError> {
+            writer.write(b"\n<")?;
+            writer.write(data.as_bytes())?;
+            writer.write(b">\n")
         }
     }
     impl PrettyPrinter for CustomPrettyPrinter {
         fn begin_array(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("begin_array({nesting_depth})"), write)
+            Self::write(format!("begin_array({nesting_depth})"), writer)
         }
 
         fn end_array(
             &mut self,
             nesting_depth: u32,
             is_empty: bool,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("end_array({nesting_depth}, {is_empty})"), write)
+            Self::write(format!("end_array({nesting_depth}, {is_empty})"), writer)
         }
 
         fn begin_object(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("begin_object({nesting_depth})"), write)
+            Self::write(format!("begin_object({nesting_depth})"), writer)
         }
 
         fn end_object(
             &mut self,
             nesting_depth: u32,
             is_empty: bool,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("end_object({nesting_depth}, {is_empty})"), write)
+            Self::write(format!("end_object({nesting_depth}, {is_empty})"), writer)
         }
 
         fn before_top_level_value(
             &mut self,
             value_type: ValueType,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("before_top_level_value({value_type})"), write)
+            Self::write(format!("before_top_level_value({value_type})"), writer)
         }
 
         fn after_top_level_value(
             &mut self,
             value_type: ValueType,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("after_top_level_value({value_type})"), write)
+            Self::write(format!("after_top_level_value({value_type})"), writer)
         }
 
         fn before_array_item(
             &mut self,
             value_type: ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
             Self::write(
                 format!("before_array_item({value_type}, {nesting_depth})"),
-                write,
+                writer,
             )
         }
 
@@ -90,39 +87,39 @@ fn pretty_printer_calls() -> Result<(), Box<dyn Error>> {
             &mut self,
             value_type: ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
             Self::write(
                 format!("after_array_item({value_type}, {nesting_depth})"),
-                write,
+                writer,
             )
         }
 
         fn before_member_name(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("before_member_name({nesting_depth})"), write)
+            Self::write(format!("before_member_name({nesting_depth})"), writer)
         }
 
         fn after_member_name(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            Self::write(format!("after_member_name({nesting_depth})"), write)
+            Self::write(format!("after_member_name({nesting_depth})"), writer)
         }
 
         fn before_member_value(
             &mut self,
             value_type: ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
             Self::write(
                 format!("before_member_value({value_type}, {nesting_depth})"),
-                write,
+                writer,
             )
         }
 
@@ -130,11 +127,11 @@ fn pretty_printer_calls() -> Result<(), Box<dyn Error>> {
             &mut self,
             value_type: ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
             Self::write(
                 format!("after_member_value({value_type}, {nesting_depth})"),
-                write,
+                writer,
             )
         }
     }
@@ -345,11 +342,11 @@ fn colorizing_pretty_printer() -> Result<(), Box<dyn Error>> {
         fn start_color(
             &mut self,
             value_type: ValueType,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
             // Write ANSI escape code, see https://en.wikipedia.org/wiki/ANSI_escape_code#Select_Graphic_Rendition_parameters
-            write(b"\x1B[")?;
-            write(
+            writer.write(b"\x1B[")?;
+            writer.write(
                 match value_type {
                     ValueType::Array => "33",
                     ValueType::Object => "33",
@@ -360,137 +357,137 @@ fn colorizing_pretty_printer() -> Result<(), Box<dyn Error>> {
                 }
                 .as_bytes(),
             )?;
-            write(b"m")?;
+            writer.write(b"m")?;
 
             if self.custom_style_active {
-                write(b"\x1B[3m\x1B[4m")?;
+                writer.write(b"\x1B[3m\x1B[4m")?;
                 self.custom_style_active = false;
             }
             Ok(())
         }
 
-        fn end_color(write: &mut impl FnMut(&[u8]) -> Result<(), IoError>) -> Result<(), IoError> {
+        fn end_color(writer: &mut impl FormattingWriter) -> Result<(), IoError> {
             // Reset color
-            write(b"\x1B[0m")
+            writer.write(b"\x1B[0m")
         }
     }
     impl PrettyPrinter for ColorizingPrettyPrinter {
         fn begin_array(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.begin_array(nesting_depth, write)?;
+            SimplePrettyPrinter.begin_array(nesting_depth, writer)?;
             // End color of the opening `[`
-            Self::end_color(write)
+            Self::end_color(writer)
         }
 
         fn end_array(
             &mut self,
             nesting_depth: u32,
             is_empty: bool,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.end_array(nesting_depth, is_empty, write)?;
+            SimplePrettyPrinter.end_array(nesting_depth, is_empty, writer)?;
             // Colorize closing `]`
-            self.start_color(ValueType::Array, write)
+            self.start_color(ValueType::Array, writer)
         }
 
         fn begin_object(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.begin_object(nesting_depth, write)?;
+            SimplePrettyPrinter.begin_object(nesting_depth, writer)?;
             // End color of the opening `{`
-            Self::end_color(write)
+            Self::end_color(writer)
         }
 
         fn end_object(
             &mut self,
             nesting_depth: u32,
             is_empty: bool,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.end_object(nesting_depth, is_empty, write)?;
+            SimplePrettyPrinter.end_object(nesting_depth, is_empty, writer)?;
             // Colorize closing `}`
-            self.start_color(ValueType::Object, write)
+            self.start_color(ValueType::Object, writer)
         }
 
         fn before_top_level_value(
             &mut self,
             value_type: ValueType,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.before_top_level_value(value_type, write)?;
-            self.start_color(value_type, write)
+            SimplePrettyPrinter.before_top_level_value(value_type, writer)?;
+            self.start_color(value_type, writer)
         }
 
         fn after_top_level_value(
             &mut self,
             value_type: ValueType,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.after_top_level_value(value_type, write)?;
-            Self::end_color(write)
+            SimplePrettyPrinter.after_top_level_value(value_type, writer)?;
+            Self::end_color(writer)
         }
 
         fn before_array_item(
             &mut self,
             value_type: struson::reader::ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.before_array_item(value_type, nesting_depth, write)?;
-            self.start_color(value_type, write)
+            SimplePrettyPrinter.before_array_item(value_type, nesting_depth, writer)?;
+            self.start_color(value_type, writer)
         }
 
         fn after_array_item(
             &mut self,
             value_type: struson::reader::ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.after_array_item(value_type, nesting_depth, write)?;
-            Self::end_color(write)
+            SimplePrettyPrinter.after_array_item(value_type, nesting_depth, writer)?;
+            Self::end_color(writer)
         }
 
         fn before_member_name(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.before_member_name(nesting_depth, write)?;
-            self.start_color(ValueType::String, write)
+            SimplePrettyPrinter.before_member_name(nesting_depth, writer)?;
+            self.start_color(ValueType::String, writer)
         }
 
         fn after_member_name(
             &mut self,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.after_member_name(nesting_depth, write)?;
-            Self::end_color(write)
+            SimplePrettyPrinter.after_member_name(nesting_depth, writer)?;
+            Self::end_color(writer)
         }
 
         fn before_member_value(
             &mut self,
             value_type: struson::reader::ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.before_member_value(value_type, nesting_depth, write)?;
-            self.start_color(value_type, write)
+            SimplePrettyPrinter.before_member_value(value_type, nesting_depth, writer)?;
+            self.start_color(value_type, writer)
         }
 
         fn after_member_value(
             &mut self,
             value_type: struson::reader::ValueType,
             nesting_depth: u32,
-            write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+            writer: &mut impl FormattingWriter,
         ) -> Result<(), IoError> {
-            SimplePrettyPrinter.after_member_value(value_type, nesting_depth, write)?;
-            Self::end_color(write)
+            SimplePrettyPrinter.after_member_value(value_type, nesting_depth, writer)?;
+            Self::end_color(writer)
         }
     }
 

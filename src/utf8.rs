@@ -84,19 +84,27 @@ pub(crate) fn is_valid_4bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     matches!(code_point, 0x10000..=0x10FFFF)
 }
 
-fn debug_assert_valid_utf8(bytes: &[u8]) {
+/// For debug builds: Verifies that the bytes are valid UTF-8 data
+pub(crate) fn debug_assert_valid_utf8(message: &str, bytes: &[u8]) {
     if cfg!(debug_assertions) {
         if let Err(e) = std::str::from_utf8(bytes) {
-            panic!("Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: {e:?}; bytes: {bytes:02X?}")
+            panic!("{message}: {e:?}; bytes: {bytes:02X?}")
         }
     }
+}
+
+fn debug_assert_valid_utf8_struson(bytes: &[u8]) {
+    debug_assert_valid_utf8(
+        "Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers",
+        bytes,
+    );
 }
 
 /// Converts bytes to a `str`, possibly without validating that the bytes are valid UTF-8 data
 ///
 /// Must only be called if UTF-8 validation on the bytes has already been performed manually.
 pub(crate) fn to_str_unchecked(bytes: &[u8]) -> &str {
-    debug_assert_valid_utf8(bytes);
+    debug_assert_valid_utf8_struson(bytes);
     // TODO: Once confident enough that UTF-8 validation in this crate is correct, use `std::str::from_utf8_unchecked` instead
     std::str::from_utf8(bytes).unwrap()
 }
@@ -105,7 +113,7 @@ pub(crate) fn to_str_unchecked(bytes: &[u8]) -> &str {
 ///
 /// Must only be called if UTF-8 validation on the bytes has already been performed manually.
 pub(crate) fn to_string_unchecked(bytes: Vec<u8>) -> String {
-    debug_assert_valid_utf8(&bytes);
+    debug_assert_valid_utf8_struson(&bytes);
     // TODO: Once confident enough that UTF-8 validation in this crate is correct, use `String::from_utf8_unchecked` instead
     String::from_utf8(bytes).unwrap()
 }

@@ -139,8 +139,6 @@ impl Default for WriterSettings {
 /// writing whitespace; tokens of the JSON data such as `[` for a JSON array are
 /// written by the JSON writer itself.
 ///
-/// The `write` function argument of the methods is for writing the whitespace (if any),
-/// it can be called multiple times, or not at all.\
 /// The `nesting_depth` argument is the number of how many JSON arrays or objects
 /// are currently open (starting at 0), and therefore how deeply the currently
 /// written value is nested.
@@ -193,13 +191,13 @@ impl Default for WriterSettings {
  *   often arrays and objects are opened and closed. However, it is less error-prone if
  *   this information is directly provided, and also more convenient because it allows more
  *   implementations to be stateless.
- * - The methods take a `write` argument because
+ * - The methods take a `FormattingWriter` argument because
  *   - It makes it independent of the underlying `Write` implementation of the JsonStreamWriter
  *   - It is less error-prone than using a `Write`, which offers a lot of methods which are
  *     probably not needed here, and depending on the method you have to make sure that it
  *     fully wrote the data
- *   - Compared to returning a `String` or `Vec` it can avoid heap allocations when writing
- *     repeated indentation
+ *   - Compared to returning a `String` or `Vec` from the PrettyPrinter methods it can avoid heap
+ *     allocations when writing repeated indentation
  */
 /*
  * TODO: Maybe rename to something else, e.g. "Formatter" (same as Serde JSON) and then have
@@ -223,7 +221,7 @@ pub trait PrettyPrinter {
     fn begin_array(
         &mut self,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately before the `]` of a JSON array
@@ -234,7 +232,7 @@ pub trait PrettyPrinter {
         &mut self,
         nesting_depth: u32,
         is_empty: bool,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately after the `{` of a JSON object
@@ -243,7 +241,7 @@ pub trait PrettyPrinter {
     fn begin_object(
         &mut self,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately before the `}` of a JSON object
@@ -254,7 +252,7 @@ pub trait PrettyPrinter {
         &mut self,
         nesting_depth: u32,
         is_empty: bool,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /*
@@ -268,25 +266,29 @@ pub trait PrettyPrinter {
     /// If [`WriterSettings::multi_top_level_value_separator`] is specified and there
     /// is a previous top-level value, then the separator has already been written
     /// before this method is called.
+    ///
+    /// The default implementation does nothing.
     fn before_top_level_value(
         &mut self,
         value_type: ValueType,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         // Provide no-op default implementation because most pretty printers probably don't need this
         let _ = value_type;
-        let _ = write;
+        let _ = writer;
         Ok(())
     }
     /// Called immediately after a top-level value
+    ///
+    /// The default implementation does nothing.
     fn after_top_level_value(
         &mut self,
         value_type: ValueType,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         // Provide no-op default implementation because most pretty printers probably don't need this
         let _ = value_type;
-        let _ = write;
+        let _ = writer;
         Ok(())
     }
 
@@ -299,7 +301,7 @@ pub trait PrettyPrinter {
         &mut self,
         value_type: ValueType,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately after a JSON array item
@@ -311,7 +313,7 @@ pub trait PrettyPrinter {
         &mut self,
         value_type: ValueType,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately before a JSON object member name
@@ -321,7 +323,7 @@ pub trait PrettyPrinter {
     fn before_member_name(
         &mut self,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately after a JSON object member name
@@ -330,7 +332,7 @@ pub trait PrettyPrinter {
     fn after_member_name(
         &mut self,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately before a JSON object member value
@@ -341,7 +343,7 @@ pub trait PrettyPrinter {
         &mut self,
         value_type: ValueType,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
 
     /// Called immediately after a JSON object member value
@@ -353,8 +355,24 @@ pub trait PrettyPrinter {
         &mut self,
         value_type: ValueType,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError>;
+}
+
+/// Writer for the formatting of a [`PrettyPrinter`]
+///
+/// The methods of this formatter are for writing the whitespace (if any) in the JSON data.
+/// They can be called multiple times, or not at all.
+pub trait FormattingWriter {
+    /// Writes UTF-8 bytes as formatting
+    ///
+    /// The caller is responsible for making sure the data is valid UTF-8 data.
+    fn write(&mut self, utf8_bytes: &[u8]) -> Result<(), IoError>;
+
+    /// Writes a string as formatting
+    fn write_str(&mut self, string: &str) -> Result<(), IoError> {
+        self.write(string.as_bytes())
+    }
 }
 
 /// Pretty printer implementation which does not perform any pretty printing
@@ -372,7 +390,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
     fn begin_array(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -381,7 +399,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _nesting_depth: u32,
         _is_empty: bool,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -389,7 +407,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
     fn begin_object(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -398,7 +416,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _nesting_depth: u32,
         _is_empty: bool,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -407,7 +425,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -416,7 +434,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -424,7 +442,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
     fn before_member_name(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -432,7 +450,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
     fn after_member_name(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -441,7 +459,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -450,7 +468,7 @@ impl PrettyPrinter for CompactPrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -482,7 +500,7 @@ impl PrettyPrinter for SimplePrettyPrinter {
     fn begin_array(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         // Write nothing; indentation is written before each value
         Ok(())
@@ -492,12 +510,12 @@ impl PrettyPrinter for SimplePrettyPrinter {
         &mut self,
         nesting_depth: u32,
         is_empty: bool,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         if !is_empty {
-            write(Self::NEWLINE)?;
+            writer.write(Self::NEWLINE)?;
             for _ in 0..(nesting_depth - 1) {
-                write(Self::INDENTATION)?;
+                writer.write(Self::INDENTATION)?;
             }
         }
         Ok(())
@@ -506,7 +524,7 @@ impl PrettyPrinter for SimplePrettyPrinter {
     fn begin_object(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         // Write nothing; indentation is written before each member
         Ok(())
@@ -516,12 +534,12 @@ impl PrettyPrinter for SimplePrettyPrinter {
         &mut self,
         nesting_depth: u32,
         is_empty: bool,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         if !is_empty {
-            write(Self::NEWLINE)?;
+            writer.write(Self::NEWLINE)?;
             for _ in 0..(nesting_depth - 1) {
-                write(Self::INDENTATION)?;
+                writer.write(Self::INDENTATION)?;
             }
         }
         Ok(())
@@ -531,11 +549,11 @@ impl PrettyPrinter for SimplePrettyPrinter {
         &mut self,
         _value_type: ValueType,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
-        write(Self::NEWLINE)?;
+        writer.write(Self::NEWLINE)?;
         for _ in 0..nesting_depth {
-            write(Self::INDENTATION)?;
+            writer.write(Self::INDENTATION)?;
         }
         Ok(())
     }
@@ -544,7 +562,7 @@ impl PrettyPrinter for SimplePrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -552,11 +570,11 @@ impl PrettyPrinter for SimplePrettyPrinter {
     fn before_member_name(
         &mut self,
         nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
-        write(Self::NEWLINE)?;
+        writer.write(Self::NEWLINE)?;
         for _ in 0..nesting_depth {
-            write(Self::INDENTATION)?;
+            writer.write(Self::INDENTATION)?;
         }
         Ok(())
     }
@@ -564,7 +582,7 @@ impl PrettyPrinter for SimplePrettyPrinter {
     fn after_member_name(
         &mut self,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -573,16 +591,16 @@ impl PrettyPrinter for SimplePrettyPrinter {
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
-        write(b" ")
+        writer.write(b" ")
     }
 
     fn after_member_value(
         &mut self,
         _value_type: ValueType,
         _nesting_depth: u32,
-        _write: &mut impl FnMut(&[u8]) -> Result<(), IoError>,
+        _writer: &mut impl FormattingWriter,
     ) -> Result<(), IoError> {
         Ok(())
     }
@@ -605,6 +623,14 @@ impl<W: Write> Writer<W> {
 
     fn flush(&mut self) -> Result<(), IoError> {
         self.0.flush()
+    }
+}
+impl<W: Write> FormattingWriter for Writer<W> {
+    fn write(&mut self, utf8_bytes: &[u8]) -> Result<(), IoError> {
+        // Verify valid UTF-8 to make troubleshooting for user easier; but for release builds
+        // they are still responsible for making sure that data is valid UTF-8
+        utf8::debug_assert_valid_utf8("Malformed formatting", utf8_bytes);
+        self.write(utf8_bytes)
     }
 }
 
@@ -714,7 +740,7 @@ impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
             self.pretty_printer.before_array_item(
                 value_type.unwrap(),
                 self.nesting_depth(),
-                &mut |b| self.writer.write(b),
+                &mut self.writer,
             )?;
         } else {
             assert!(self.is_in_object());
@@ -725,12 +751,12 @@ impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
                 }
 
                 self.pretty_printer
-                    .before_member_name(self.nesting_depth(), &mut |b| self.writer.write(b))?;
+                    .before_member_name(self.nesting_depth(), &mut self.writer)?;
             } else {
                 self.pretty_printer.before_member_value(
                     value_type.unwrap(),
                     self.nesting_depth(),
-                    &mut |b| self.writer.write(b),
+                    &mut self.writer,
                 )?;
             }
         }
@@ -757,7 +783,7 @@ impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
         }
         if is_top_level {
             self.pretty_printer
-                .before_top_level_value(value_type, &mut |b| self.writer.write(b))?;
+                .before_top_level_value(value_type, &mut self.writer)?;
         } else {
             self.before_container_element(Some(value_type))?;
         }
@@ -773,18 +799,20 @@ impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
 
     fn after_value(&mut self, value_type: ValueType) -> Result<(), IoError> {
         if self.is_in_array() {
-            self.pretty_printer
-                .after_array_item(value_type, self.nesting_depth(), &mut |b| {
-                    self.writer.write(b)
-                })?;
+            self.pretty_printer.after_array_item(
+                value_type,
+                self.nesting_depth(),
+                &mut self.writer,
+            )?;
         } else if self.is_in_object() {
-            self.pretty_printer
-                .after_member_value(value_type, self.nesting_depth(), &mut |b| {
-                    self.writer.write(b)
-                })?;
+            self.pretty_printer.after_member_value(
+                value_type,
+                self.nesting_depth(),
+                &mut self.writer,
+            )?;
         } else {
             self.pretty_printer
-                .after_top_level_value(value_type, &mut |b| self.writer.write(b))?;
+                .after_top_level_value(value_type, &mut self.writer)?;
         }
         Ok(())
     }
@@ -922,7 +950,7 @@ impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
         self.expects_member_name = true;
         self.writer.write(b"{")?;
         self.pretty_printer
-            .begin_object(self.nesting_depth(), &mut |b| self.writer.write(b))
+            .begin_object(self.nesting_depth(), &mut self.writer)
     }
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
@@ -935,7 +963,7 @@ impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
         self.before_container_element(None)?;
         self.write_string_value(name)?;
         self.pretty_printer
-            .after_member_name(self.nesting_depth(), &mut |b| self.writer.write(b))?;
+            .after_member_name(self.nesting_depth(), &mut self.writer)?;
         self.writer.write(b":")?;
         self.expects_member_name = false;
 
@@ -953,9 +981,7 @@ impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
             panic!("Incorrect writer usage: Cannot end object when member value is expected");
         }
         self.pretty_printer
-            .end_object(self.nesting_depth(), self.is_empty, &mut |b| {
-                self.writer.write(b)
-            })?;
+            .end_object(self.nesting_depth(), self.is_empty, &mut self.writer)?;
         self.on_container_end()?;
         self.writer.write(b"}")?;
         self.after_value(ValueType::Object)?;
@@ -970,7 +996,7 @@ impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
 
         self.writer.write(b"[")?;
         self.pretty_printer
-            .begin_array(self.nesting_depth(), &mut |b| self.writer.write(b))
+            .begin_array(self.nesting_depth(), &mut self.writer)
     }
 
     fn end_array(&mut self) -> Result<(), IoError> {
@@ -983,9 +1009,7 @@ impl<W: Write, P: PrettyPrinter> JsonWriter for JsonStreamWriter<W, P> {
             );
         }
         self.pretty_printer
-            .end_array(self.nesting_depth(), self.is_empty, &mut |b| {
-                self.writer.write(b)
-            })?;
+            .end_array(self.nesting_depth(), self.is_empty, &mut self.writer)?;
         self.on_container_end()?;
         self.writer.write(b"]")?;
         self.after_value(ValueType::Array)?;
