@@ -719,13 +719,11 @@ impl<W: Write, P: PrettyPrinter> JsonStreamWriter<W, P> {
     }
 
     fn is_in_array(&self) -> bool {
-        self.stack.last().map_or(false, |v| v == &StackValue::Array)
+        self.stack.last() == Some(&StackValue::Array)
     }
 
     fn is_in_object(&self) -> bool {
-        self.stack
-            .last()
-            .map_or(false, |v| v == &StackValue::Object)
+        self.stack.last() == Some(&StackValue::Object)
     }
 
     /// Called for array items, and object member names and values

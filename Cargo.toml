@@ -13,18 +13,18 @@ categories = ["parser-implementations"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thiserror = "2.0.7"
+thiserror = "2.0.11"
 strum = { version = "0.26.3", features = ["derive"] }
 duplicate = "2.0.0"
 
-serde = { version = "1.0.216", optional = true }
+serde = { version = "1.0.217", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
-serde = "1.0.216"
+serde = "1.0.217"
 # When updating serde_json, adjust Struson Serde integration behavior to match serde_json
-serde_json = "1.0.133"
+serde_json = "1.0.138"
 # Used for verifying in allocation tests that no allocations occur in certain situations
 # Specify Git revision because version with "backtrace" feature has not been released yet
 assert_no_alloc = { git = "https://github.com/Windfisch/rust-assert-no-alloc.git", rev = "d31f2d5f550ce339d1c2f0c1ab7da951224b20df", features = [
