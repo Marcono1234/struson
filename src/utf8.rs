@@ -53,7 +53,7 @@ pub(crate) fn is_continuation(b: u8) -> bool {
 pub(crate) fn is_valid_2bytes(b0: u8, b1: u8) -> bool {
     // caller should have verified this
     debug_assert!(is_2byte_start(b0) && is_continuation(b1));
-    let code_point = u32::from(b0 & _2BYTE_MASK_VAL) << 6 | u32::from(b1 & CONT_MASK_VAL);
+    let code_point = (u32::from(b0 & _2BYTE_MASK_VAL) << 6) | u32::from(b1 & CONT_MASK_VAL);
     // Verify no 'overlong encoding' of lower code points
     code_point >= 0x80
 }
@@ -62,8 +62,8 @@ pub(crate) fn is_valid_2bytes(b0: u8, b1: u8) -> bool {
 pub(crate) fn is_valid_3bytes(b0: u8, b1: u8, b2: u8) -> bool {
     // caller should have verified this
     debug_assert!(is_3byte_start(b0) && is_continuation(b1) && is_continuation(b2));
-    let code_point = u32::from(b0 & _3BYTE_MASK_VAL) << 12
-        | u32::from(b1 & CONT_MASK_VAL) << 6
+    let code_point = (u32::from(b0 & _3BYTE_MASK_VAL) << 12)
+        | (u32::from(b1 & CONT_MASK_VAL) << 6)
         | u32::from(b2 & CONT_MASK_VAL);
     // Verify no 'overlong encoding' of lower code points, and no UTF-16 surrogate chars encoded in UTF-8
     code_point >= 0x800 && !matches!(code_point, 0xD800..=0xDFFF)
@@ -75,9 +75,9 @@ pub(crate) fn is_valid_4bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     debug_assert!(
         is_4byte_start(b0) && is_continuation(b1) && is_continuation(b2) && is_continuation(b3)
     );
-    let code_point = u32::from(b0 & _4BYTE_MASK_VAL) << 18
-        | u32::from(b1 & CONT_MASK_VAL) << 12
-        | u32::from(b2 & CONT_MASK_VAL) << 6
+    let code_point = (u32::from(b0 & _4BYTE_MASK_VAL) << 18)
+        | (u32::from(b1 & CONT_MASK_VAL) << 12)
+        | (u32::from(b2 & CONT_MASK_VAL) << 6)
         | u32::from(b3 & CONT_MASK_VAL);
 
     // Verify no 'overlong encoding' of lower code points, and no invalid code point > U+10FFFF

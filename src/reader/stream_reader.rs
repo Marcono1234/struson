@@ -1123,7 +1123,7 @@ trait UnicodeEscapeReader {
         let d3 = self.read_hex_byte()?;
         let d4 = self.read_hex_byte()?;
 
-        Ok(d4 | d3 << 4 | d2 << 8 | d1 << 12)
+        Ok(d4 | (d3 << 4) | (d2 << 8) | (d1 << 12))
     }
 
     /// Reads a Unicode-escaped char
@@ -1160,7 +1160,7 @@ trait UnicodeEscapeReader {
                 })?;
             }
 
-            c = ((c - 0xD800) << 10 | (c2 - 0xDC00)) + 0x10000;
+            c = (((c - 0xD800) << 10) | (c2 - 0xDC00)) + 0x10000;
         }
 
         // unwrap() here should be safe since checks above made sure this is a valid Rust `char`

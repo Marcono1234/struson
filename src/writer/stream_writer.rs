@@ -283,9 +283,9 @@ impl<W: Write> JsonStreamWriter<W> {
             }
 
             [
-                to_hex(value >> 12 & 15),
-                to_hex(value >> 8 & 15),
-                to_hex(value >> 4 & 15),
+                to_hex((value >> 12) & 15),
+                to_hex((value >> 8) & 15),
+                to_hex((value >> 4) & 15),
                 to_hex(value & 15),
             ]
         }
