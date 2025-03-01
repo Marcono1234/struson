@@ -128,7 +128,9 @@ mod custom_writer {
             self.verify_string_writer_inactive();
             if let Some(StackValue::Object(_)) = self.stack.last() {
                 if self.pending_name.is_some() {
-                    panic!("Incorrect writer usage: Member name has already been written; expecting value");
+                    panic!(
+                        "Incorrect writer usage: Member name has already been written; expecting value"
+                    );
                 }
                 self.pending_name = Some(name.to_owned());
                 Ok(())

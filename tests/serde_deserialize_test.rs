@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use struson::{
     reader::{JsonReader, JsonStreamReader, ReaderError, UnexpectedStructureKind, ValueType},
     serde::{DeserializerError, JsonReaderDeserializer},

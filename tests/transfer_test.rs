@@ -1,7 +1,7 @@
 use std::{error::Error, fs::read_to_string};
 
 use struson::{
-    reader::{json_path::json_path, JsonReader, JsonStreamReader},
+    reader::{JsonReader, JsonStreamReader, json_path::json_path},
     writer::{JsonStreamWriter, JsonWriter, WriterSettings},
 };
 

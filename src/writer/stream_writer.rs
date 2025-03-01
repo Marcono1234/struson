@@ -208,7 +208,9 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn before_value(&mut self) -> Result<(), IoError> {
         if self.is_string_value_writer_active {
-            panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
+            panic!(
+                "Incorrect writer usage: Cannot finish document when string value writer is still active"
+            );
         }
         if self.expects_member_name {
             panic!("Incorrect writer usage: Cannot write value when name is expected");
@@ -217,10 +219,12 @@ impl<W: Write> JsonStreamWriter<W> {
         let is_top_level = self.stack.is_empty();
         if is_top_level && !self.is_empty {
             match &self.writer_settings.multi_top_level_value_separator {
-                None => panic!("Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"),
+                None => panic!(
+                    "Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"
+                ),
                 Some(separator) => {
                     self.writer.write(separator.as_bytes())?;
-                },
+                }
             }
         } else if self.is_in_array() {
             self.before_container_element()?;
@@ -369,7 +373,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             panic!("Incorrect writer usage: Cannot write name when name is not expected");
         }
         if self.is_string_value_writer_active {
-            panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
+            panic!(
+                "Incorrect writer usage: Cannot finish document when string value writer is still active"
+            );
         }
         self.before_container_element()?;
         self.write_string_value(name)?;
@@ -387,7 +393,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             panic!("Incorrect writer usage: Cannot end object when not inside object");
         }
         if self.is_string_value_writer_active {
-            panic!("Incorrect writer usage: Cannot end object when string value writer is still active");
+            panic!(
+                "Incorrect writer usage: Cannot end object when string value writer is still active"
+            );
         }
         if !self.expects_member_name {
             panic!("Incorrect writer usage: Cannot end object when member value is expected");
@@ -476,17 +484,23 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
 
     fn finish_document(mut self) -> Result<Self::WriterResult, IoError> {
         if self.is_string_value_writer_active {
-            panic!("Incorrect writer usage: Cannot finish document when string value writer is still active");
+            panic!(
+                "Incorrect writer usage: Cannot finish document when string value writer is still active"
+            );
         }
         if self.expects_member_name {
             panic!("Incorrect writer usage: Cannot finish document when member name is expected");
         }
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!("Incorrect writer usage: Cannot finish document when no value has been written yet");
+                panic!(
+                    "Incorrect writer usage: Cannot finish document when no value has been written yet"
+                );
             }
         } else {
-            panic!("Incorrect writer usage: Cannot finish document when top-level value is not finished");
+            panic!(
+                "Incorrect writer usage: Cannot finish document when top-level value is not finished"
+            );
         }
         self.writer.flush()?;
         Ok(self.writer.0)
@@ -562,11 +576,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
         fn max_or_offset_negative(a: usize, b: usize, b_neg_off: usize) -> usize {
             debug_assert!(b >= a);
             // Avoids numeric underflow compared to normal `a.max(b - b_neg_off)`
-            if b_neg_off > b {
-                a
-            } else {
-                b - b_neg_off
-            }
+            if b_neg_off > b { a } else { b - b_neg_off }
         }
 
         // Checks for incomplete UTF-8 data and converts the bytes with str::from_utf8
@@ -1596,7 +1606,7 @@ mod tests {
     mod serde {
         use super::*;
         use crate::serde::SerializerError;
-        use ::serde::{ser::SerializeStruct, Serialize, Serializer};
+        use ::serde::{Serialize, Serializer, ser::SerializeStruct};
         use std::collections::HashMap;
 
         #[test]

@@ -13,8 +13,8 @@ use std::{
 use struson::{
     json_path,
     reader::{
-        simple::{SimpleJsonReader, ValueReader},
         JsonStreamReader, JsonSyntaxError, ReaderError, SyntaxErrorKind, ValueType,
+        simple::{SimpleJsonReader, ValueReader},
     },
 };
 
@@ -1446,7 +1446,7 @@ fn errors() {
     let json_reader = new_reader("1");
     assert_error(
         json_reader.read_bool().map_err(|e| e.into()),
-        "expected JSON value type Boolean but got Number at path '$', line 0, column 0 (data pos 0)"
+        "expected JSON value type Boolean but got Number at path '$', line 0, column 0 (data pos 0)",
     );
 }
 

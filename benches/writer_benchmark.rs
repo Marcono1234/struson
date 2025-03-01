@@ -1,6 +1,6 @@
 use std::{error::Error, io::Sink};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
 use serde::ser::Serializer;

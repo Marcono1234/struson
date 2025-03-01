@@ -87,7 +87,9 @@ pub(crate) fn is_valid_4bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
 fn debug_assert_valid_utf8(bytes: &[u8]) {
     if cfg!(debug_assertions) {
         if let Err(e) = std::str::from_utf8(bytes) {
-            panic!("Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: {e:?}; bytes: {bytes:02X?}")
+            panic!(
+                "Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: {e:?}; bytes: {bytes:02X?}"
+            )
         }
     }
 }
@@ -136,7 +138,9 @@ mod tests {
         let message = assert_panics(|| to_str_unchecked(b"\xC1\xBF"));
         // Check prefix and suffix but ignore the error message from Rust in the middle
         assert!(
-            message.starts_with("Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: "),
+            message.starts_with(
+                "Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: "
+            ),
             "Unexpected prefix for message: {message}"
         );
         assert!(
@@ -151,8 +155,10 @@ mod tests {
         // Overlong UTF-8 encoding for two bytes
         let message = assert_panics(|| to_string_unchecked(b"\xC1\xBF".to_vec()));
         // Check prefix and suffix but ignore the error message from Rust in the middle
-        assert!(message.starts_with(
-            "Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: "),
+        assert!(
+            message.starts_with(
+                "Unexpected: Invalid UTF-8 bytes detected, report this to the Struson maintainers: "
+            ),
             "Unexpected prefix for message: {message}"
         );
         assert!(
