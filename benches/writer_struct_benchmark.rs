@@ -1,6 +1,6 @@
-use std::{error::Error, io::Sink, iter};
+use std::{error::Error, io::Sink};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Serialize;
 use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
@@ -14,13 +14,15 @@ struct StructValue {
 
 fn benchmark_struct(c: &mut Criterion) {
     let mut group = c.benchmark_group("write-structs");
-    let values: Vec<StructValue> = iter::repeat(StructValue {
-        bool_value: true,
-        integer: 123456,
-        float: 123.4567,
-        string: "a string value with some text",
-    })
-    .take(10_000)
+    let values: Vec<StructValue> = std::iter::repeat_n(
+        StructValue {
+            bool_value: true,
+            integer: 123456,
+            float: 123.4567,
+            string: "a string value with some text",
+        },
+        10_000,
+    )
     .collect();
 
     fn struson_write(

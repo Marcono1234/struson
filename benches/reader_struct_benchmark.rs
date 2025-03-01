@@ -1,10 +1,10 @@
 use std::error::Error;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use serde::Deserialize;
 use serde_json::{
-    de::{IoRead, Read, StrRead},
     StreamDeserializer,
+    de::{IoRead, Read, StrRead},
 };
 use struson::reader::{JsonReader, JsonStreamReader, ReaderSettings};
 

@@ -11,7 +11,7 @@
 
 use std::{error::Error, io::Write};
 
-use self::error_safe_writer::{error_from_stored, ErrorSafeJsonWriter};
+use self::error_safe_writer::{ErrorSafeJsonWriter, error_from_stored};
 use crate::writer::{
     FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, JsonWriter,
     StringValueWriter as AdvancedStringValueWriter,

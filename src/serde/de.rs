@@ -10,8 +10,9 @@ use std::{
 };
 
 use serde::{
-    de::{value::StrDeserializer, DeserializeSeed, Error, Unexpected, Visitor},
-    forward_to_deserialize_any, Deserialize, Deserializer,
+    Deserialize, Deserializer,
+    de::{DeserializeSeed, Error, Unexpected, Visitor, value::StrDeserializer},
+    forward_to_deserialize_any,
 };
 use thiserror::Error;
 

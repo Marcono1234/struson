@@ -211,7 +211,7 @@ use std::{
 
 use thiserror::Error;
 
-use self::json_path::{format_abs_json_path, JsonPath, JsonPathPiece};
+use self::json_path::{JsonPath, JsonPathPiece, format_abs_json_path};
 use crate::writer::JsonWriter;
 
 mod stream_reader;
@@ -1811,9 +1811,9 @@ mod tests {
     use std::io::ErrorKind;
 
     use super::{
-        json_path::{json_path, JsonPathPiece},
         IoError, JsonReaderPosition, JsonSyntaxError, LinePosition, ReaderError, SyntaxErrorKind,
         UnexpectedStructureKind, ValueType,
+        json_path::{JsonPathPiece, json_path},
     };
 
     #[test]

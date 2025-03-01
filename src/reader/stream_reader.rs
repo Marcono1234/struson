@@ -12,7 +12,7 @@ use super::{json_path::JsonPathPiece, *};
 #[allow(unused_imports)]
 use super::json_path::json_path;
 use crate::{
-    json_number::{consume_json_number, NumberBytesProvider},
+    json_number::{NumberBytesProvider, consume_json_number},
     utf8,
     writer::{StringValueWriter, TransferredNumber},
 };
@@ -169,11 +169,7 @@ impl<R: Read + Debug> Debug for JsonStreamReader<R> {
                     None => s.to_owned(),
                     Some((index, _)) => {
                         let s = s[..index].to_owned();
-                        if add_ellipsis {
-                            format!("{s}...")
-                        } else {
-                            s
-                        }
+                        if add_ellipsis { format!("{s}...") } else { s }
                     }
                 }
             }
@@ -472,7 +468,9 @@ impl<R: Read> JsonStreamReader<R> {
         debug_assert!(start_pos < self.buf.len());
 
         if self.buf_used_for_bytes_value {
-            panic!("Unexpected: Cannot refill buf because it holds a bytes value; report this to the Struson maintainers");
+            panic!(
+                "Unexpected: Cannot refill buf because it holds a bytes value; report this to the Struson maintainers"
+            );
         }
 
         self.buf_pos = start_pos;
@@ -621,7 +619,7 @@ impl<R: Read> JsonStreamReader<R> {
 
             let byte = match self.peek_byte()? {
                 None => {
-                    return self.create_syntax_value_error(SyntaxErrorKind::BlockCommentNotClosed)
+                    return self.create_syntax_value_error(SyntaxErrorKind::BlockCommentNotClosed);
                 }
                 Some(byte) => byte,
             };
@@ -741,7 +739,9 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         if self.is_behind_top_level() && !self.reader_settings.allow_multiple_top_level {
-            panic!("Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings");
+            panic!(
+                "Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings"
+            );
         }
         if self.expects_member_value() {
             // Finish member name which has just been consumed before
@@ -1591,7 +1591,7 @@ impl<R: Read> JsonStreamReader<R> {
                         return Err(JsonSyntaxError {
                             kind: SyntaxErrorKind::UnknownEscapeSequence,
                             location: self.create_error_location(),
-                        })?
+                        })?;
                     }
                 }
             }
@@ -1708,7 +1708,7 @@ impl<R: Read> JsonStreamReader<R> {
                             return Err(JsonSyntaxError {
                                 kind: SyntaxErrorKind::UnknownEscapeSequence,
                                 location: bytes_reader.json_reader.create_error_location(),
-                            })?
+                            })?;
                         }
                     }
                     // After escape sequence was successfully read, update location information;
@@ -1764,7 +1764,9 @@ impl<R: Read> JsonStreamReader<R> {
             panic!("Incorrect reader usage: Cannot consume member name when not expecting it");
         }
         if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot consume member name when string value reader is active");
+            panic!(
+                "Incorrect reader usage: Cannot consume member name when string value reader is active"
+            );
         }
 
         if !self.has_next()? {
@@ -2056,15 +2058,21 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn has_next(&mut self) -> Result<bool, ReaderError> {
         if self.expects_member_value() {
-            panic!("Incorrect reader usage: Cannot check for next element when member value is expected");
+            panic!(
+                "Incorrect reader usage: Cannot check for next element when member value is expected"
+            );
         }
 
         let peeked: PeekedValue;
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!("Incorrect reader usage: Cannot check for next element when top-level value has not been started");
+                panic!(
+                    "Incorrect reader usage: Cannot check for next element when top-level value has not been started"
+                );
             } else if !self.reader_settings.allow_multiple_top_level {
-                panic!("Incorrect reader usage: Cannot check for multiple top-level values when not enabled in the reader settings");
+                panic!(
+                    "Incorrect reader usage: Cannot check for multiple top-level values when not enabled in the reader settings"
+                );
             } else {
                 peeked = match self.peek_internal_optional()? {
                     None => return Ok(false),
@@ -2214,7 +2222,9 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot skip to top-level when string value reader is active");
+            panic!(
+                "Incorrect reader usage: Cannot skip to top-level when string value reader is active"
+            );
         }
 
         // Handle expected member value separately because has_next() calls below are not allowed when
@@ -2336,14 +2346,20 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn consume_trailing_whitespace(mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot consume trailing whitespace when string value reader is active");
+            panic!(
+                "Incorrect reader usage: Cannot consume trailing whitespace when string value reader is active"
+            );
         }
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!("Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet");
+                panic!(
+                    "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet"
+                );
             }
         } else {
-            panic!("Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet");
+            panic!(
+                "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet"
+            );
         }
 
         let next_byte = self.skip_whitespace(None)?;

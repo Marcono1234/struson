@@ -1,7 +1,7 @@
 use std::error::Error;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use serde::{de::Visitor, Deserializer};
+use criterion::{Criterion, criterion_group, criterion_main};
+use serde::{Deserializer, de::Visitor};
 use serde_json::de::{IoRead, Read, StrRead};
 use struson::reader::*;
 

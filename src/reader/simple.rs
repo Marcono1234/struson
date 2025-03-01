@@ -17,10 +17,10 @@ use self::{
 };
 use crate::{
     reader::{
-        json_path::{JsonPath, JsonPathPiece},
-        simple::error_safe_reader::create_dummy_error,
         JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, ReaderError,
         SyntaxErrorKind, TransferError, ValueType,
+        json_path::{JsonPath, JsonPathPiece},
+        simple::error_safe_reader::create_dummy_error,
     },
     utf8,
     writer::JsonWriter,

@@ -2,7 +2,7 @@ use std::{error::Error, fmt::Debug, fs::File};
 
 use struson::reader::{JsonReader, JsonStreamReader, ValueType};
 
-use crate::test_lib::{get_expected_events, get_test_data_file_path, JsonEvent};
+use crate::test_lib::{JsonEvent, get_expected_events, get_test_data_file_path};
 
 mod test_lib;
 

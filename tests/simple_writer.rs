@@ -8,12 +8,12 @@ use std::{
     collections::HashMap,
     error::Error,
     fmt::{Debug, Display},
-    io::{sink, ErrorKind, Sink, Write},
+    io::{ErrorKind, Sink, Write, sink},
 };
 
 use struson::writer::{
-    simple::{SimpleJsonWriter, ValueWriter},
     JsonStreamWriter,
+    simple::{SimpleJsonWriter, ValueWriter},
 };
 
 fn assert_written<E: Debug>(

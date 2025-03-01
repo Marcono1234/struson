@@ -1063,11 +1063,11 @@ mod tests {
     use std::vec;
 
     use serde::{
+        Serialize, Serializer,
         ser::{
             SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
             SerializeTupleStruct, SerializeTupleVariant,
         },
-        Serialize, Serializer,
     };
 
     use super::{JsonWriterSerializer, SerializerError};

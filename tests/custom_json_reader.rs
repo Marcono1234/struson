@@ -12,8 +12,8 @@ use serde_json::json;
 use std::io::Read;
 use struson::{
     reader::{
-        json_path::{json_path, JsonPath},
         JsonReader, ReaderError, UnexpectedStructureKind, ValueType,
+        json_path::{JsonPath, json_path},
     },
     writer::{JsonStreamWriter, JsonWriter},
 };
@@ -23,8 +23,8 @@ mod custom_reader {
     use std::{io::Read, iter::Peekable};
     use struson::{
         reader::{
-            json_path::JsonPathPiece, JsonReader, JsonReaderPosition, ReaderError, TransferError,
-            UnexpectedStructureKind, ValueType,
+            JsonReader, JsonReaderPosition, ReaderError, TransferError, UnexpectedStructureKind,
+            ValueType, json_path::JsonPathPiece,
         },
         writer::{JsonNumberError, JsonWriter},
     };
@@ -215,7 +215,9 @@ mod custom_reader {
                         if self.expects_name {
                             iter.peek().is_some()
                         } else {
-                            panic!("Incorrect reader usage: Cannot check for next when member value is expected");
+                            panic!(
+                                "Incorrect reader usage: Cannot check for next when member value is expected"
+                            );
                         }
                     }
                 })
@@ -428,8 +430,12 @@ mod custom_reader {
                             // Should not fail since next_number_as_string would have returned Err for invalid JSON number
                             if let Err(e) = json_writer.number_value_from_string(number) {
                                 match e {
-                                    JsonNumberError::InvalidNumber(e) => panic!("Unexpected: JSON writer rejected valid JSON number '{number}': {e}"),
-                                    JsonNumberError::IoError(e) => return Err(TransferError::WriterError(e)),
+                                    JsonNumberError::InvalidNumber(e) => panic!(
+                                        "Unexpected: JSON writer rejected valid JSON number '{number}': {e}"
+                                    ),
+                                    JsonNumberError::IoError(e) => {
+                                        return Err(TransferError::WriterError(e));
+                                    }
                                 }
                             }
                         }
