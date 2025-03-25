@@ -59,9 +59,9 @@ jobs:
           git tag -a "v${{ steps.get-new-version.outputs.VERSION }}" -m "Release ${{ steps.get-new-version.outputs.VERSION }}"
 
       - name: Install cargo-make
-        uses: davidB/rust-cargo-make@63a0488810710962bfe5dc150b3fa313a08738fe  # v1.12.1
+        uses: taiki-e/install-action@0b63bc859f7224657cf7e39426848cabaa36f456  #v2.49.9
         with:
-          version: '0.37.23'
+          tool: cargo-make@0.37.23
 
       # Perform full build to make sure there are no issues
       - name: Build project

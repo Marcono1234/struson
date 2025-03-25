@@ -30,9 +30,9 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6  # v2.7.8
 
       - name: Install cargo-make
-        uses: davidB/rust-cargo-make@63a0488810710962bfe5dc150b3fa313a08738fe  # v1.12.1
+        uses: taiki-e/install-action@0b63bc859f7224657cf7e39426848cabaa36f456  #v2.49.9
         with:
-          version: '0.37.23'
+          tool: cargo-make@0.37.23
 
       - name: Build
         run: cargo make
