@@ -2438,13 +2438,11 @@ impl<R: Read> StringValueReader<'_, R> {
                     }
                 }
                 Err(e) => match e {
-                    StringReadingError::SyntaxError(e) => {
-                        return Err(IoError::new(ErrorKind::Other, e))
-                    }
+                    StringReadingError::SyntaxError(e) => return Err(IoError::other(e)),
                     StringReadingError::IoError(e) => {
                         // Note: Could instead also directly return `Err(e.0)`; that would allow user to
                         // inspect IO error, but would on the other hand lose location information
-                        return Err(IoError::new(ErrorKind::Other, e));
+                        return Err(IoError::other(e));
                     }
                 },
             }
@@ -4403,7 +4401,7 @@ mod tests {
     #[test]
     fn transfer_to_writer_error() {
         fn err() -> IoError {
-            IoError::new(ErrorKind::Other, "test error")
+            IoError::other("test error")
         }
 
         /// [`StringValueWriter`] which is unreachable

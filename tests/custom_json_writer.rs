@@ -193,7 +193,7 @@ mod custom_writer {
                                     "Unexpected: Writer rejected finite number '{number_str}': {e}"
                                 )
                             }
-                            JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
+                            JsonNumberError::IoError(e) => IoError::other(e),
                         })
                 })
             }
@@ -224,7 +224,7 @@ mod custom_writer {
                                     "Unexpected: Writer rejected finite number '{number_str}': {e}"
                                 )
                             }
-                            JsonNumberError::IoError(e) => IoError::new(ErrorKind::Other, e),
+                            JsonNumberError::IoError(e) => IoError::other(e),
                         }
                     })
                 })
