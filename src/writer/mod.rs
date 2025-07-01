@@ -822,8 +822,7 @@ mod tests {
             assert_eq!(
                 true,
                 is_valid_json_number(&number_string),
-                "Expected to be valid JSON number: {}",
-                number
+                "Expected to be valid JSON number: {number}"
             );
         }
 
@@ -851,8 +850,7 @@ mod tests {
             assert_eq!(
                 true,
                 is_valid_json_number(&number_string),
-                "Expected to be valid JSON number: {}",
-                number
+                "Expected to be valid JSON number: {number}"
             );
         }
 

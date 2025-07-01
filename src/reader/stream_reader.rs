@@ -2519,7 +2519,7 @@ mod tests {
     ) {
         let input_display_str = input.map_or("".to_owned(), |s| format!(" for '{s}'"));
         match result {
-            Ok(_) => panic!("Test should have failed{}", input_display_str),
+            Ok(_) => panic!("Test should have failed{input_display_str}"),
             Err(e) => match e {
                 ReaderError::SyntaxError(e) => assert_eq!(
                     JsonSyntaxError {
@@ -2534,11 +2534,10 @@ mod tests {
                         },
                     },
                     e,
-                    "For input: {:?}",
-                    input
+                    "For input: {input:?}"
                 ),
                 other => {
-                    panic!("Unexpected error{}: {other}", input_display_str)
+                    panic!("Unexpected error{input_display_str}: {other}")
                 }
             },
         }
