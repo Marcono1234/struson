@@ -59,7 +59,7 @@ jobs:
           git tag -a "v${{ steps.get-new-version.outputs.VERSION }}" -m "Release ${{ steps.get-new-version.outputs.VERSION }}"
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@33734a118689b0b418824fb78ea2bf18e970b43b  #v2.50.4
+        uses: taiki-e/install-action@b3a78f63e98edea84875a27f5fe0a58ff321ebe4  #v2.55.4
         with:
           tool: cargo-make@0.37.23
 
