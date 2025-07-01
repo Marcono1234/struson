@@ -1,6 +1,6 @@
-use std::error::Error;
+use std::{error::Error, hint::black_box};
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Deserialize;
 use serde_json::{
     StreamDeserializer,
