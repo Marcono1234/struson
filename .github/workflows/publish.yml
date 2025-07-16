@@ -27,6 +27,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: publishing
+    permissions:
+      id-token: write  # Required for OIDC token exchange for trusted publishing, see below
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
@@ -76,13 +78,16 @@ jobs:
         shell: bash
         run: cargo clean
 
+      # Uses trusted publishing, see https://crates.io/docs/trusted-publishing
+      - name: crates.io auth
+        uses: rust-lang/crates-io-auth-action@e919bc7605cde86df457cf5b93c5e103838bd879  #v1.0.1
+        id: auth
       - name: Publish
         shell: bash
         # TODO: Fail on any warnings (e.g. incorrect Cargo.toml values); not yet available, see https://github.com/rust-lang/cargo/issues/8424
         run: cargo publish --all-features
         env:
-          # CRATES_IO_TOKEN has to be set as GitHub environment secret
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Push Git changes
         shell: bash
