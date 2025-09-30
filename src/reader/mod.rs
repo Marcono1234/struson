@@ -668,7 +668,7 @@ pub enum TransferError {
 ///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
 ///     - [`skip_value`](Self::skip_value): Skipping a value
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
-///     - [`seek_back`](Self::seek_back): Opposite of `seek_to`
+///     - [`seek_back`](Self::seek_back): Skipping to the original nesting level where `seek_to` started
 ///     - [`skip_to_top_level`](Self::skip_to_top_level): Skipping the remaining elements of all enclosing JSON arrays and objects
 ///  - Other:
 ///     - [`transfer_to`](Self::transfer_to): Reading a JSON value and writing it to a given JSON writer
@@ -1525,13 +1525,18 @@ pub trait JsonReader {
         Ok(())
     }
 
-    /// Opposite of [`seek_to`](Self::seek_to)
+    /// Seeks to the original nesting level where [`seek_to`](Self::seek_to) started
     ///
-    /// This is the opposite of the `seek_to` method; it goes through the path in reverse
-    /// order skipping remaining JSON array items and object members and closing arrays
-    /// and objects. Therefore once this method returns the reader is at the same nesting
-    /// level it was before `seek_to` had been called and allows continuing reading
-    /// values there.
+    /// This method is intended to be used together with `seek_to`. When it is given the
+    /// same path which had been passed to `seek_to` before, it goes through the path in
+    /// reverse order skipping remaining JSON array items and object members and closing
+    /// arrays and objects. Therefore once this method returns the reader is at the same
+    /// nesting level it was before `seek_to` had been called and allows continuing reading
+    /// values there.\
+    /// Note that this method only seeks 'back' to the original nesting level, it still
+    /// advances _forward_ in the JSON data. So after `seek_to` followed by `seek_back`
+    /// had been called, the reader effectively advanced one JSON value (and its nested
+    /// values, if any) at the original nesting level.
     ///
     /// For directly getting to the top-level regardless of the current position of the
     /// JSON reader, prefer [`skip_to_top_level`](Self::skip_to_top_level) instead.
@@ -1550,6 +1555,8 @@ pub trait JsonReader {
     ///   member name of that object the corresponding member value must be consumed as well
     ///
     /// # Examples
+    /// The following example shows how `seek_to` and `seek_back` can be combined to read the
+    /// nested object member `a.b` from a JSON array containing multiple such objects.
     /// ```
     /// # use struson::reader::*;
     /// # use struson::reader::json_path::*;
@@ -1560,6 +1567,7 @@ pub trait JsonReader {
     ///
     /// json_reader.begin_array()?;
     /// while json_reader.has_next()? {
+    ///     // Seek to the nested JSON object member
     ///     let path = json_path!["a", "b"];
     ///     json_reader.seek_to(&path)?;
     ///
@@ -1567,7 +1575,8 @@ pub trait JsonReader {
     ///     let value = json_reader.next_string()?;
     ///     values.push(value);
     ///
-    ///     // Go back to original location to continue reading there
+    ///     // Go back to original nesting level to continue reading there
+    ///     // In this example that is the top-level JSON array
     ///     json_reader.seek_back(&path)?;
     /// }
     /// json_reader.end_array()?;

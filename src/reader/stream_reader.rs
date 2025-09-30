@@ -4176,22 +4176,25 @@ mod tests {
 
         // Empty path, in array
         let path = json_path![];
-        let mut json_reader = new_reader("[1]");
+        let mut json_reader = new_reader("[1, 2]");
         json_reader.begin_array()?;
         json_reader.seek_to(&path)?;
         assert_eq!("1", json_reader.next_number_as_str()?);
         json_reader.seek_back(&path)?;
+        assert_eq!("2", json_reader.next_number_as_str()?);
         json_reader.end_array()?;
         json_reader.consume_trailing_whitespace()?;
 
         // Empty path, in object
         let path = json_path![];
-        let mut json_reader = new_reader(r#"{"a": 1}"#);
+        let mut json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
         json_reader.begin_object()?;
         assert_eq!("a", json_reader.next_name()?);
         json_reader.seek_to(&path)?;
         assert_eq!("1", json_reader.next_number_as_str()?);
         json_reader.seek_back(&path)?;
+        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("2", json_reader.next_number_as_str()?);
         json_reader.end_object()?;
         json_reader.consume_trailing_whitespace()?;
 
@@ -4220,6 +4223,31 @@ mod tests {
         json_reader.seek_to(&path)?;
         assert_eq!("1", json_reader.next_number_as_str()?);
         json_reader.seek_back(&path)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Continue reading in enclosing array
+        let mut json_reader = new_reader(r#"["a", ["b1", "b2", "b3"], "c"]"#);
+        json_reader.begin_array()?;
+        assert_eq!("a", json_reader.next_str()?);
+        let path = json_path![1];
+        json_reader.seek_to(&path)?;
+        assert_eq!("b2", json_reader.next_str()?);
+        json_reader.seek_back(&path)?;
+        assert_eq!("c", json_reader.next_str()?);
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Continue reading in enclosing object
+        let mut json_reader = new_reader(r#"{"a": {"a1": 1, "a2": 2, "a3": 3}, "b": 4}"#);
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        let path = json_path!["a2"];
+        json_reader.seek_to(&path)?;
+        assert_eq!("2", json_reader.next_number_as_str()?);
+        json_reader.seek_back(&path)?;
+        assert_eq!("b", json_reader.next_name()?);
+        assert_eq!("4", json_reader.next_number_as_str()?);
+        json_reader.end_object()?;
         json_reader.consume_trailing_whitespace()?;
 
         Ok(())
