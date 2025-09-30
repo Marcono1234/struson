@@ -1433,6 +1433,10 @@ pub trait JsonReader {
     /// at 0) index 2. If multiple members in a JSON object have the same name (for example
     /// `{"a": 1, "a": 2}`) this method will seek to the first occurrence.
     ///
+    /// When given an empty JSON path, that is, an array containing no path pieces, the reader
+    /// stays in front of the current JSON value and does not begin any JSON arrays or objects
+    /// and does not skip any values.
+    ///
     /// Seeking to a specific location can be useful when parts of the processed JSON document
     /// are not relevant for the application processing it.
     ///
@@ -1553,6 +1557,9 @@ pub trait JsonReader {
     /// - no enclosing JSON arrays or objects must be closed
     /// - if the path points to the member of a JSON object, then for every additionally read
     ///   member name of that object the corresponding member value must be consumed as well
+    ///
+    /// When given an empty JSON path, that is, an array containing no path pieces, the reader
+    /// stays at its current position and does not consume any JSON tokens.
     ///
     /// # Examples
     /// The following example shows how `seek_to` and `seek_back` can be combined to read the
