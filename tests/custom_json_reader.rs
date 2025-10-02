@@ -325,7 +325,7 @@ mod custom_reader {
         }
 
         #[cfg(feature = "serde")]
-        fn deserialize_next<'de, D: serde::Deserialize<'de>>(
+        fn deserialize_next<'de, D: serde_core::Deserialize<'de>>(
             &mut self,
         ) -> Result<D, struson::serde::DeserializerError> {
             // peek here to fail fast if reader is currently not expecting a value

@@ -551,6 +551,7 @@ dependencies = [
  "criterion",
  "duplicate",
  "serde",
+ "serde_core",
  "serde_json",
  "strum",
  "thiserror",

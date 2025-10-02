@@ -663,7 +663,7 @@ pub enum TransferError {
 ///     - [`next_number`](Self::next_number), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
-///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value (optional feature)
+///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value (optional feature)
 ///  - Skipping values
 ///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
 ///     - [`skip_value`](Self::skip_value): Skipping a value
@@ -1275,7 +1275,7 @@ pub trait JsonReader {
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_null(&mut self) -> Result<(), ReaderError>;
 
-    /// Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value
+    /// Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value
     ///
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
@@ -1335,7 +1335,7 @@ pub trait JsonReader {
     /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
         &mut self,
     ) -> Result<D, crate::serde::DeserializerError>;
 

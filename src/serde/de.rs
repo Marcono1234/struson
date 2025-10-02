@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
 };
 
-use serde::{
+use serde_core::{
     Deserialize, Deserializer,
     de::{DeserializeSeed, Error, Unexpected, Visitor, value::StrDeserializer},
     forward_to_deserialize_any,
@@ -54,7 +54,7 @@ pub enum DeserializerError {
     InvalidNumber(String),
 }
 
-impl serde::de::Error for DeserializerError {
+impl serde_core::de::Error for DeserializerError {
     fn custom<T: Display>(msg: T) -> Self {
         DeserializerError::Custom(msg.to_string())
     }
@@ -71,7 +71,7 @@ impl From<ParseFloatError> for DeserializerError {
     }
 }
 
-// TODO: Should use `serde::de::Error`'s error functions instead of using own error types?
+// TODO: Should use `serde_core::de::Error`'s error functions instead of using own error types?
 
 /// Serde `Deserializer` which delegates to a [`JsonReader`]
 ///
@@ -636,8 +636,8 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
     /// Duplicate keys are not detected or prevented.
     ///
     /// # Panics
-    /// For every call to [`MapAccess::next_key`](serde::de::MapAccess::next_key) which returns
-    /// `Some` a call to [`MapAccess::next_value`](serde::de::MapAccess::next_value)
+    /// For every call to [`MapAccess::next_key`](serde_core::de::MapAccess::next_key) which returns
+    /// `Some` a call to [`MapAccess::next_value`](serde_core::de::MapAccess::next_value)
     /// has to be made. Calling the methods in a different order or trying to consume
     /// a different number of keys than values will cause a panic.
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -688,7 +688,7 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
     /// - JSON object: an object with one member is expected, where the member name is
     ///   the enum variant name and the member value is the variant value
     /// - JSON string: the string is the variant name; the value is expected to be unit
-    ///   and has to be consumed with [`VariantAccess::unit_variant`](serde::de::VariantAccess::unit_variant),
+    ///   and has to be consumed with [`VariantAccess::unit_variant`](serde_core::de::VariantAccess::unit_variant),
     ///   using any other method will return an error
     ///
     /// In both cases [`Visitor::visit_enum`] is called. For all other JSON values an
@@ -766,7 +766,7 @@ struct SeqAccess<'s, 'a, R: JsonReader> {
     expected_len: Option<usize>,
     len: usize,
 }
-impl<'de, R: JsonReader> serde::de::SeqAccess<'de> for &mut SeqAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::SeqAccess<'de> for &mut SeqAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn next_element_seed<T: DeserializeSeed<'de>>(
@@ -799,7 +799,7 @@ struct MapAccess<'s, 'a, R: JsonReader> {
     de: &'s mut JsonReaderDeserializer<'a, R>,
     expects_entry_value: bool,
 }
-impl<'de, R: JsonReader> serde::de::MapAccess<'de> for &mut MapAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::MapAccess<'de> for &mut MapAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(
@@ -947,7 +947,7 @@ struct VariantAccess<'s, 'a, R: JsonReader> {
     consumed_variant_value: bool,
 }
 
-impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut VariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut VariantAccess<'_, '_, R> {
     type Error = DeserializerError;
     type Variant = Self;
 
@@ -965,7 +965,7 @@ impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut VariantAccess<'_, '
     }
 }
 
-impl<'de, R: JsonReader> serde::de::VariantAccess<'de> for &mut VariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut VariantAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
@@ -1013,7 +1013,7 @@ struct UnitVariantAccess<'s, 'a, R: JsonReader> {
     consumed_variant_value: bool,
 }
 
-impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
     type Error = DeserializerError;
     type Variant = Self;
 
@@ -1026,7 +1026,7 @@ impl<'de, R: JsonReader> serde::de::EnumAccess<'de> for &mut UnitVariantAccess<'
     }
 }
 
-impl<'de, R: JsonReader> serde::de::VariantAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
@@ -1071,7 +1071,8 @@ impl<'de, R: JsonReader> serde::de::VariantAccess<'de> for &mut UnitVariantAcces
 mod tests {
     use std::io::ErrorKind;
 
-    use serde::de::VariantAccess;
+    use serde::Deserialize;
+    use serde_core::de::VariantAccess;
     use serde_json::de::StrRead;
 
     use super::*;
@@ -1254,7 +1255,7 @@ mod tests {
             self.visit(Visited::NewtypeStructEnd)
         }
 
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        fn visit_seq<A: serde_core::de::SeqAccess<'de>>(
             self,
             mut seq: A,
         ) -> Result<Self::Value, A::Error> {
@@ -1268,7 +1269,7 @@ mod tests {
             self.visit(Visited::SeqEnd)
         }
 
-        fn visit_map<A: serde::de::MapAccess<'de>>(
+        fn visit_map<A: serde_core::de::MapAccess<'de>>(
             self,
             mut map: A,
         ) -> Result<Self::Value, A::Error> {
@@ -1284,7 +1285,7 @@ mod tests {
             self.visit(Visited::MapEnd)
         }
 
-        fn visit_enum<A: serde::de::EnumAccess<'de>>(
+        fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
             self,
             data: A,
         ) -> Result<Self::Value, A::Error> {
@@ -2037,7 +2038,7 @@ mod tests {
     }
 
     mod deserialize_map {
-        use serde::de::MapAccess;
+        use serde_core::de::MapAccess;
 
         use super::*;
 
@@ -2128,7 +2129,7 @@ mod tests {
                             write!(formatter, "map")
                         }
 
-                        fn visit_map<A: serde::de::MapAccess<'de>>(
+                        fn visit_map<A: serde_core::de::MapAccess<'de>>(
                             self,
                             mut $map: A,
                         ) -> Result<Self::Value, A::Error> {
@@ -2732,7 +2733,7 @@ mod tests {
                 write!(formatter, "enum")
             }
 
-            fn visit_enum<A: serde::de::EnumAccess<'de>>(
+            fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
                 self,
                 data: A,
             ) -> Result<Self::Value, A::Error> {

@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::writer::{FiniteNumber, FloatingPointNumber, JsonNumberError, JsonWriter};
 
-use serde::ser::{Impossible, Serialize, Serializer};
+use serde_core::ser::{Impossible, Serialize, Serializer};
 use thiserror::Error;
 
 // Implementation based on:
@@ -62,7 +62,7 @@ pub enum SerializerError {
     MapKeyNotString,
 }
 
-impl serde::ser::Error for SerializerError {
+impl serde_core::ser::Error for SerializerError {
     fn custom<T: Display>(msg: T) -> Self {
         SerializerError::Custom(msg.to_string())
     }
@@ -403,7 +403,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// Begin to serialize a variably sized sequence
     ///
     /// This implementation writes a JSON array, where each element written using
-    /// [`SerializeSeq::serialize_element`](serde::ser::SerializeSeq::serialize_element)
+    /// [`SerializeSeq::serialize_element`](serde_core::ser::SerializeSeq::serialize_element)
     /// is serialized as array item. If `len` is `Some`, serializing a different number
     /// of elements than `len` will cause a [`SerializerError::IncorrectElementsCount`].
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -418,7 +418,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// Begin to serialize a statically sized sequence
     ///
     /// This implementation writes a JSON array, where each element written using
-    /// [`SerializeTuple::serialize_element`](serde::ser::SerializeTuple::serialize_element)
+    /// [`SerializeTuple::serialize_element`](serde_core::ser::SerializeTuple::serialize_element)
     /// is serialized as array item. Serializing a different number of elements than `len`
     /// will cause a [`SerializerError::IncorrectElementsCount`].
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
@@ -433,7 +433,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// Begin to serialize a tuple struct like `struct Rgb(u8, u8, u8)`
     ///
     /// This implementation writes a JSON array, where each element written using
-    /// [`SerializeTupleStruct::serialize_field`](serde::ser::SerializeTupleStruct::serialize_field)
+    /// [`SerializeTupleStruct::serialize_field`](serde_core::ser::SerializeTupleStruct::serialize_field)
     /// is serialized as array item. Serializing a different number of fields than `len`
     /// will cause a [`SerializerError::IncorrectElementsCount`]. The given name is ignored.
     fn serialize_tuple_struct(
@@ -453,7 +453,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     ///
     /// This implementation writes a JSON object consisting of a single member whose
     /// name is `variant` and whose value is a JSON array containing all fields serialized
-    /// with [`SerializeTupleVariant::serialize_field`](serde::ser::SerializeTupleVariant::serialize_field).
+    /// with [`SerializeTupleVariant::serialize_field`](serde_core::ser::SerializeTupleVariant::serialize_field).
     /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
     /// The given name and variant index are ignored.
     fn serialize_tuple_variant(
@@ -477,7 +477,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// Begin to serialize a map
     ///
     /// This implementation writes a JSON object where each member consists of the
-    /// key-value entry serialized using [`SerializeMap`](serde::ser::SerializeMap).
+    /// key-value entry serialized using [`SerializeMap`](serde_core::ser::SerializeMap).
     ///
     /// Duplicate keys are not detected or prevented.
     ///
@@ -486,8 +486,8 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// cause a [`SerializerError::IncorrectElementsCount`].
     ///
     /// # Panics
-    /// The same number of [`SerializeMap::serialize_key`](serde::ser::SerializeMap::serialize_key)
-    /// and [`SerializeMap::serialize_value`](serde::ser::SerializeMap::serialize_value)
+    /// The same number of [`SerializeMap::serialize_key`](serde_core::ser::SerializeMap::serialize_key)
+    /// and [`SerializeMap::serialize_value`](serde_core::ser::SerializeMap::serialize_value)
     /// calls have to be made and for every `serialize_key` call a `serialize_value` call
     /// has to follow, otherwise a panic will occur.
     /* TODO doc key conversion behavior? */
@@ -505,7 +505,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     /// Begin to serialize a struct like `struct Rgb { r: u8, g: u8, b: u8 }`
     ///
     /// This implementation writes a JSON object where each member consists of the
-    /// field name and value serialized by [`SerializeStruct::serialize_field`](serde::ser::SerializeStruct::serialize_field).
+    /// field name and value serialized by [`SerializeStruct::serialize_field`](serde_core::ser::SerializeStruct::serialize_field).
     /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
     /// The given struct name is ignored.
     ///
@@ -527,7 +527,7 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     ///
     /// This implementation writes a JSON object consisting of a single member whose
     /// name is `variant` and whose value is a nested JSON object where each member
-    /// consists of the field name and value serialized by [`SerializeStructVariant::serialize_field`](serde::ser::SerializeStructVariant::serialize_field).
+    /// consists of the field name and value serialized by [`SerializeStructVariant::serialize_field`](serde_core::ser::SerializeStructVariant::serialize_field).
     ///
     /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
     /// The given struct name and variant index are ignored.
@@ -560,7 +560,7 @@ pub struct SerializeSeq<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -600,7 +600,7 @@ pub struct SerializeTuple<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -637,7 +637,7 @@ pub struct SerializeTupleStruct<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeTupleStruct for SerializeTupleStruct<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeTupleStruct for SerializeTupleStruct<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -674,7 +674,7 @@ pub struct SerializeTupleVariant<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeTupleVariant for SerializeTupleVariant<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeTupleVariant for SerializeTupleVariant<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -715,7 +715,7 @@ pub struct SerializeMap<'s, 'a, W: JsonWriter> {
     expects_entry_value: bool,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeMap for SerializeMap<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -774,7 +774,7 @@ pub struct SerializeStruct<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -816,7 +816,7 @@ pub struct SerializeStructVariant<'s, 'a, W: JsonWriter> {
     len: usize,
 }
 
-impl<W: JsonWriter> serde::ser::SerializeStructVariant for SerializeStructVariant<'_, '_, W> {
+impl<W: JsonWriter> serde_core::ser::SerializeStructVariant for SerializeStructVariant<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -1062,7 +1062,7 @@ impl<W: JsonWriter> Serializer for &mut MapKeyStringSerializer<'_, W> {
 mod tests {
     use std::vec;
 
-    use serde::{
+    use serde_core::{
         Serialize, Serializer,
         ser::{
             SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,

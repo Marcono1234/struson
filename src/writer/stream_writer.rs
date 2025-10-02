@@ -468,7 +468,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 
     #[cfg(feature = "serde")]
-    fn serialize_value<S: serde::ser::Serialize>(
+    fn serialize_value<S: serde_core::ser::Serialize>(
         &mut self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {
@@ -1606,7 +1606,7 @@ mod tests {
     mod serde {
         use super::*;
         use crate::serde::SerializerError;
-        use ::serde::{Serialize, Serializer, ser::SerializeStruct};
+        use ::serde_core::{Serialize, Serializer, ser::SerializeStruct};
         use std::collections::HashMap;
 
         #[test]

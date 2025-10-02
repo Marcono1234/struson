@@ -2204,7 +2204,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+    fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
         &mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         // TODO: Provide this as default implementation? Remove implementation in custom_json_reader test then;
@@ -4526,7 +4526,7 @@ mod tests {
             }
 
             #[cfg(feature = "serde")]
-            fn serialize_value<S: ::serde::ser::Serialize>(
+            fn serialize_value<S: ::serde_core::ser::Serialize>(
                 &mut self,
                 _value: &S,
             ) -> Result<(), crate::serde::SerializerError> {

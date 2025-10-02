@@ -94,7 +94,7 @@ pub trait ValueWriter<J: JsonWriter> {
     /// Returns an error if the string is not a valid JSON number value.
     fn write_number_string(self, value: &str) -> Result<(), JsonNumberError>;
 
-    /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
+    /// Serializes a Serde [`Serialize`](serde_core::ser::Serialize) as next value
     ///
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
@@ -126,7 +126,7 @@ pub trait ValueWriter<J: JsonWriter> {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(
+    fn write_serialize<S: serde_core::ser::Serialize>(
         self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError>;
@@ -361,7 +361,7 @@ mod error_safe_writer {
         }
 
         #[cfg(feature = "serde")]
-        fn serialize_value<S: serde::ser::Serialize>(
+        fn serialize_value<S: serde_core::ser::Serialize>(
             &mut self,
             value: &S,
         ) -> Result<(), crate::serde::SerializerError> {
@@ -566,7 +566,7 @@ impl<J: JsonWriter> ValueWriter<J> for SimpleJsonWriter<J> {
     }
 
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(
+    fn write_serialize<S: serde_core::ser::Serialize>(
         mut self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {
@@ -639,7 +639,7 @@ impl<J: JsonWriter> ValueWriter<J> for &mut ArrayWriter<'_, J> {
     }
 
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(
+    fn write_serialize<S: serde_core::ser::Serialize>(
         self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {
@@ -810,7 +810,7 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
         self.json_writer.number_value_from_string(value)
     }
 
-    /// Writes a member with a Serde [`Serialize`](serde::ser::Serialize) as value
+    /// Writes a member with a Serde [`Serialize`](serde_core::ser::Serialize) as value
     ///
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
@@ -819,7 +819,7 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
      * it is not serializing the whole member but only the member value
      */
     #[cfg(feature = "serde")]
-    pub fn write_serialized_member<S: serde::ser::Serialize>(
+    pub fn write_serialized_member<S: serde_core::ser::Serialize>(
         &mut self,
         name: &str,
         value: &S,
@@ -896,7 +896,7 @@ impl<J: JsonWriter> ValueWriter<J> for MemberValueWriter<'_, J> {
     }
 
     #[cfg(feature = "serde")]
-    fn write_serialize<S: serde::ser::Serialize>(
+    fn write_serialize<S: serde_core::ser::Serialize>(
         self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError> {

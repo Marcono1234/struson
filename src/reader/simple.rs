@@ -559,7 +559,7 @@ pub trait ValueReader<J: JsonReader> {
     /// ```
     fn read_number_as_string(self) -> Result<String, ReaderError>;
 
-    /// Deserializes a Serde [`Deserialize`](serde::de::Deserialize) from the next value
+    /// Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value
     ///
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
@@ -592,7 +592,7 @@ pub trait ValueReader<J: JsonReader> {
     /// of [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer) for
     /// security considerations.
     #[cfg(feature = "serde")]
-    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError>;
 
@@ -1409,7 +1409,7 @@ mod error_safe_reader {
         }
 
         #[cfg(feature = "serde")]
-        fn deserialize_next<'de, D: serde::de::Deserialize<'de>>(
+        fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
             &mut self,
         ) -> Result<D, crate::serde::DeserializerError> {
             use crate::serde::DeserializerError;
@@ -1714,7 +1714,7 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
     }
 
     #[cfg(feature = "serde")]
-    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         let result = self.json_reader.deserialize_next()?;
@@ -1849,7 +1849,7 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
     }
 
     #[cfg(feature = "serde")]
-    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.json_reader.deserialize_next()
@@ -1956,7 +1956,7 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     }
 
     #[cfg(feature = "serde")]
-    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError> {
         *self.consumed_value = true;
@@ -2120,7 +2120,7 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
     }
 
     #[cfg(feature = "serde")]
-    fn read_deserialize<'de, D: serde::de::Deserialize<'de>>(
+    fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         mut self,
     ) -> Result<D, crate::serde::DeserializerError> {
         self.check_skip_name()?;

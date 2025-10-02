@@ -32,7 +32,7 @@ type IoError = std::io::Error;
 ///     - [`number_value`](Self::number_value), [`fp_number_value`](Self::fp_number_value), [`number_value_from_string`](Self::number_value_from_string): Writing a JSON number value
 ///     - [`bool_value`](Self::bool_value): Writing a JSON boolean value
 ///     - [`null_value`](Self::null_value): Writing a JSON null value
-///     - [`serialize_value`](Self::serialize_value): Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value (optional feature)
+///     - [`serialize_value`](Self::serialize_value): Serializes a Serde [`Serialize`](serde_core::ser::Serialize) as next value (optional feature)
 ///  - Other:
 ///     - [`finish_document`](Self::finish_document): Ensuring that the JSON document is complete and flushing the buffer
 ///
@@ -459,7 +459,7 @@ pub trait JsonWriter {
      */
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError>;
 
-    /// Serializes a Serde [`Serialize`](serde::ser::Serialize) as next value
+    /// Serializes a Serde [`Serialize`](serde_core::ser::Serialize) as next value
     ///
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
@@ -519,7 +519,7 @@ pub trait JsonWriter {
     /// values are not [enabled in the `WriterSettings`](WriterSettings::multi_top_level_value_separator).
     /// Both cases indicate incorrect usage by the user.
     #[cfg(feature = "serde")]
-    fn serialize_value<S: serde::ser::Serialize>(
+    fn serialize_value<S: serde_core::ser::Serialize>(
         &mut self,
         value: &S,
     ) -> Result<(), crate::serde::SerializerError>;

@@ -234,7 +234,7 @@ mod custom_writer {
         }
 
         #[cfg(feature = "serde")]
-        fn serialize_value<S: serde::Serialize>(
+        fn serialize_value<S: serde_core::Serialize>(
             &mut self,
             value: &S,
         ) -> Result<(), struson::serde::SerializerError> {

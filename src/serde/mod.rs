@@ -1,7 +1,7 @@
 //! Provides integration with [Serde](https://docs.rs/serde/latest/serde/)
 //!
-//! This module provides optional integration with Serde by allowing [`Serialize`](serde::ser::Serialize)
-//! types to be written to a [`JsonWriter`](crate::writer::JsonWriter) and [`Deserialize`](serde::de::Deserialize)
+//! This module provides optional integration with Serde by allowing [`Serialize`](serde_core::ser::Serialize)
+//! types to be written to a [`JsonWriter`](crate::writer::JsonWriter) and [`Deserialize`](serde_core::de::Deserialize)
 //! types to be read from a [`JsonReader`](crate::reader::JsonReader). It is intended for use cases
 //! where code is using a `JsonWriter` or `JsonReader` in the first place, to provide convenience methods
 //! to directly write or read a `Serialize` or `Deserialize` in the middle of the JSON document.
