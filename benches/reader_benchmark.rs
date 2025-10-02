@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, hint::black_box};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::{Deserializer, de::Visitor};
@@ -242,15 +242,18 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
             write!(formatter, "a string")
         }
 
-        fn visit_borrowed_str<E: serde::de::Error>(self, _: &'de str) -> Result<Self::Value, E> {
+        fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<Self::Value, E> {
+            black_box(v);
             Ok(())
         }
 
-        fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            black_box(v);
             Ok(())
         }
 
-        fn visit_string<E: serde::de::Error>(self, _: String) -> Result<Self::Value, E> {
+        fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+            black_box(v);
             Ok(())
         }
     }

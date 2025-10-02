@@ -1,8 +1,30 @@
-use std::{error::Error, io::Sink};
+use std::{error::Error, hint::black_box, io::Write};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Serialize;
 use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
+
+struct BlackBoxWriter;
+impl Write for BlackBoxWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        black_box(buf);
+        Ok(buf.len())
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        black_box(buf);
+        Ok(())
+    }
+
+    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+        black_box(args);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 #[derive(Serialize, Clone)]
 struct StructValue {
@@ -26,7 +48,7 @@ fn benchmark_struct(c: &mut Criterion) {
     .collect();
 
     fn struson_write(
-        mut json_writer: JsonStreamWriter<Sink>,
+        mut json_writer: impl JsonWriter,
         values: &Vec<StructValue>,
     ) -> Result<(), Box<dyn Error>> {
         // Hopefully this is a fair comparison with how Serde behaves
@@ -56,14 +78,14 @@ fn benchmark_struct(c: &mut Criterion) {
 
     group.bench_with_input("struson", &values, |b, values| {
         b.iter(|| {
-            let json_writer = JsonStreamWriter::new(std::io::sink());
+            let json_writer = JsonStreamWriter::new(BlackBoxWriter);
             struson_write(json_writer, values).unwrap()
         })
     });
     group.bench_with_input("struson (pretty)", &values, |b, values| {
         b.iter(|| {
             let json_writer = JsonStreamWriter::new_custom(
-                std::io::sink(),
+                BlackBoxWriter,
                 WriterSettings {
                     pretty_print: true,
                     ..Default::default()
@@ -75,12 +97,12 @@ fn benchmark_struct(c: &mut Criterion) {
 
     group.bench_with_input("serde", &values, |b, values| {
         b.iter(|| {
-            serde_json::to_writer(std::io::sink(), &values).unwrap();
+            serde_json::to_writer(BlackBoxWriter, &values).unwrap();
         })
     });
     group.bench_with_input("serde (pretty)", &values, |b, values| {
         b.iter(|| {
-            serde_json::to_writer_pretty(std::io::sink(), &values).unwrap();
+            serde_json::to_writer_pretty(BlackBoxWriter, &values).unwrap();
         })
     });
 

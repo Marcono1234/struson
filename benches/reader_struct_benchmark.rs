@@ -86,6 +86,9 @@ fn benchmark_struct(c: &mut Criterion) {
     fn serde_read<'a, R: Read<'a>>(read: R) {
         let count = StreamDeserializer::<R, StructValue>::new(read)
             .map(Result::unwrap)
+            .inspect(|r| {
+                black_box(r);
+            })
             .count();
         assert_eq!(COUNT, count);
     }
