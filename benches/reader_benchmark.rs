@@ -9,7 +9,7 @@ fn call_unwrap<F: FnOnce() -> Result<(), Box<dyn Error>>>(f: F) {
     f().unwrap();
 }
 
-fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
+fn bench_compare(c: &mut Criterion, name: &str, json: &str, include_no_path_tracking: bool) {
     let mut group = c.benchmark_group(name);
     group.bench_with_input("struson-skip", json, |b, json| {
         b.iter(|| {
@@ -27,23 +27,25 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
             });
         })
     });
-    group.bench_with_input("struson-skip (no path tracking)", json, |b, json| {
-        b.iter(|| {
-            call_unwrap(|| {
-                let mut json_reader = JsonStreamReader::new_custom(
-                    json.as_bytes(),
-                    ReaderSettings {
-                        track_path: false,
-                        max_nesting_depth: None,
-                        ..Default::default()
-                    },
-                );
-                json_reader.skip_value()?;
-                json_reader.consume_trailing_whitespace()?;
-                Ok(())
-            });
-        })
-    });
+    if include_no_path_tracking {
+        group.bench_with_input("struson-skip (no path tracking)", json, |b, json| {
+            b.iter(|| {
+                call_unwrap(|| {
+                    let mut json_reader = JsonStreamReader::new_custom(
+                        json.as_bytes(),
+                        ReaderSettings {
+                            track_path: false,
+                            max_nesting_depth: None,
+                            ..Default::default()
+                        },
+                    );
+                    json_reader.skip_value()?;
+                    json_reader.consume_trailing_whitespace()?;
+                    Ok(())
+                });
+            })
+        });
+    }
 
     fn struson_read<R: std::io::Read>(
         mut json_reader: JsonStreamReader<R>,
@@ -131,21 +133,23 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
-    group.bench_with_input("struson-read (no path tracking)", json, |b, json| {
-        b.iter(|| {
-            call_unwrap(|| {
-                let json_reader = JsonStreamReader::new_custom(
-                    json.as_bytes(),
-                    ReaderSettings {
-                        track_path: false,
-                        max_nesting_depth: None,
-                        ..Default::default()
-                    },
-                );
-                struson_read(json_reader)
-            });
-        })
-    });
+    if include_no_path_tracking {
+        group.bench_with_input("struson-read (no path tracking)", json, |b, json| {
+            b.iter(|| {
+                call_unwrap(|| {
+                    let json_reader = JsonStreamReader::new_custom(
+                        json.as_bytes(),
+                        ReaderSettings {
+                            track_path: false,
+                            max_nesting_depth: None,
+                            ..Default::default()
+                        },
+                    );
+                    struson_read(json_reader)
+                });
+            })
+        });
+    }
 
     fn serde_skip<'a, R: Read<'a>>(read: R) {
         struct UnitVisitor;
@@ -191,13 +195,13 @@ fn benchmark_large_array(c: &mut Criterion) {
         "[{}true]",
         "true, false, null, 12345689.123e12, \"abcdabcdabcdabcd\",".repeat(1000)
     );
-    bench_compare(c, "read-large-array", &json);
+    bench_compare(c, "read-large-array", &json, true);
 }
 
 fn benchmark_nested_object(c: &mut Criterion) {
     let count = 1000;
     let json = r#"{"member name":"#.repeat(count) + "true" + "}".repeat(count).as_str();
-    bench_compare(c, "read-nested-object", &json);
+    bench_compare(c, "read-nested-object", &json, true);
 }
 
 fn benchmark_nested_object_pretty(c: &mut Criterion) {
@@ -215,7 +219,7 @@ fn benchmark_nested_object_pretty(c: &mut Criterion) {
         json.push('}');
     }
 
-    bench_compare(c, "read-nested-object-pretty", &json);
+    bench_compare(c, "read-nested-object-pretty", &json, true);
 }
 
 fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
@@ -305,7 +309,13 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
 
 fn benchmark_large_ascii_string(c: &mut Criterion) {
     let json = format!("\"{}\"", "this is a test string".repeat(10_000));
-    bench_compare(c, "read-large-ascii-string", &json);
+    bench_compare(
+        c,
+        "read-large-ascii-string",
+        &json,
+        // Path tracking makes no difference since this is just one top-level value
+        false,
+    );
     bench_compare_string_reading(c, "read-large-ascii-string (string reading)", &json);
 }
 
@@ -314,7 +324,13 @@ fn benchmark_large_unicode_string(c: &mut Criterion) {
         "\"{}\"",
         "ab\u{0080}cd\u{0800}ef\u{1234}gh\u{10FFFF}".repeat(10_000)
     );
-    bench_compare(c, "read-large-unicode-string", &json);
+    bench_compare(
+        c,
+        "read-large-unicode-string",
+        &json,
+        // Path tracking makes no difference since this is just one top-level value
+        false,
+    );
     bench_compare_string_reading(c, "read-large-unicode-string (string reading)", &json);
 }
 
@@ -323,7 +339,13 @@ fn benchmark_escapes_string(c: &mut Criterion) {
         "\"{}\"",
         r#"a\nb\tc\\d\"e\u0000f\u0080g\u0800h\u1234i\uD800\uDC00"#.repeat(10_000)
     );
-    bench_compare(c, "read-large-escapes-string", &json);
+    bench_compare(
+        c,
+        "read-large-escapes-string",
+        &json,
+        // Path tracking makes no difference since this is just one top-level value
+        false,
+    );
     bench_compare_string_reading(c, "read-large-escapes-string (string reading)", &json);
 }
 
