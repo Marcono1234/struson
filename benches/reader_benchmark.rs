@@ -279,7 +279,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
     group.bench_with_input("serde-string (reader)", json, |b, json| {
         b.iter(|| {
             serde_read(IoRead::new(json.as_bytes()), |deserializer| {
-                deserializer.deserialize_str(StringVisitor).unwrap()
+                deserializer.deserialize_string(StringVisitor).unwrap()
             });
         })
     });
@@ -287,7 +287,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
     group.bench_with_input("serde-str (string)", json, |b, json| {
         b.iter(|| {
             serde_read(StrRead::new(json), |deserializer| {
-                deserializer.deserialize_string(StringVisitor).unwrap()
+                deserializer.deserialize_str(StringVisitor).unwrap()
             });
         })
     });
