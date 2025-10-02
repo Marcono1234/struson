@@ -1,33 +1,10 @@
-use std::{error::Error, hint::black_box, io::Write};
+use std::error::Error;
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use serde::ser::Serializer;
 use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
 
-use serde::ser::Serializer;
-
-struct BlackBoxWriter;
-impl Write for BlackBoxWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        black_box(buf);
-        Ok(buf.len())
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        black_box(buf);
-        Ok(())
-    }
-
-    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        black_box(args);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-fn bench_compare<SF: Fn(&mut JsonStreamWriter<BlackBoxWriter>) -> Result<(), Box<dyn Error>>>(
+fn bench_compare<SF: Fn(&mut JsonStreamWriter<&mut Vec<u8>>) -> Result<(), Box<dyn Error>>>(
     c: &mut Criterion,
     name: &str,
     struson_function: SF,
@@ -35,9 +12,11 @@ fn bench_compare<SF: Fn(&mut JsonStreamWriter<BlackBoxWriter>) -> Result<(), Box
     let mut group = c.benchmark_group(name);
     group.bench_with_input("struson-write", &struson_function, |b, write_function| {
         b.iter(|| {
-            let mut json_writer = JsonStreamWriter::new(BlackBoxWriter);
+            let mut writer = Vec::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
             write_function(&mut json_writer).unwrap();
             json_writer.finish_document().unwrap();
+            writer
         })
     });
     group.bench_with_input(
@@ -45,8 +24,9 @@ fn bench_compare<SF: Fn(&mut JsonStreamWriter<BlackBoxWriter>) -> Result<(), Box
         &struson_function,
         |b, write_function| {
             b.iter(|| {
+                let mut writer = Vec::new();
                 let mut json_writer = JsonStreamWriter::new_custom(
-                    BlackBoxWriter,
+                    &mut writer,
                     WriterSettings {
                         pretty_print: true,
                         ..Default::default()
@@ -54,6 +34,7 @@ fn bench_compare<SF: Fn(&mut JsonStreamWriter<BlackBoxWriter>) -> Result<(), Box
                 );
                 write_function(&mut json_writer).unwrap();
                 json_writer.finish_document().unwrap();
+                writer
             })
         },
     );
@@ -105,16 +86,20 @@ fn bench_compare_string_writing(c: &mut Criterion, name: &str, string_value: &st
 
     group.bench_with_input("struson", string_value, |b, string_value| {
         b.iter(|| {
-            let mut json_writer = JsonStreamWriter::new(BlackBoxWriter);
+            let mut writer = Vec::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
             json_writer.string_value(string_value).unwrap();
             json_writer.finish_document().unwrap();
+            writer
         })
     });
 
     group.bench_with_input("serde", string_value, |b, string_value| {
         b.iter(|| {
-            let mut serializer = serde_json::ser::Serializer::new(BlackBoxWriter);
+            let mut writer = Vec::new();
+            let mut serializer = serde_json::ser::Serializer::new(&mut writer);
             serializer.serialize_str(string_value).unwrap();
+            writer
         })
     });
 

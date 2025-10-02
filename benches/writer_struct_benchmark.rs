@@ -1,30 +1,8 @@
-use std::{error::Error, hint::black_box, io::Write};
+use std::error::Error;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Serialize;
 use struson::writer::{JsonStreamWriter, JsonWriter, WriterSettings};
-
-struct BlackBoxWriter;
-impl Write for BlackBoxWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        black_box(buf);
-        Ok(buf.len())
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        black_box(buf);
-        Ok(())
-    }
-
-    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        black_box(args);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 #[derive(Serialize, Clone)]
 struct StructValue {
@@ -78,31 +56,39 @@ fn benchmark_struct(c: &mut Criterion) {
 
     group.bench_with_input("struson", &values, |b, values| {
         b.iter(|| {
-            let json_writer = JsonStreamWriter::new(BlackBoxWriter);
-            struson_write(json_writer, values).unwrap()
+            let mut writer = Vec::new();
+            let json_writer = JsonStreamWriter::new(&mut writer);
+            struson_write(json_writer, values).unwrap();
+            writer
         })
     });
     group.bench_with_input("struson (pretty)", &values, |b, values| {
         b.iter(|| {
+            let mut writer = Vec::new();
             let json_writer = JsonStreamWriter::new_custom(
-                BlackBoxWriter,
+                &mut writer,
                 WriterSettings {
                     pretty_print: true,
                     ..Default::default()
                 },
             );
-            struson_write(json_writer, values).unwrap()
+            struson_write(json_writer, values).unwrap();
+            writer
         })
     });
 
     group.bench_with_input("serde", &values, |b, values| {
         b.iter(|| {
-            serde_json::to_writer(BlackBoxWriter, &values).unwrap();
+            let mut writer = Vec::new();
+            serde_json::to_writer(&mut writer, &values).unwrap();
+            writer
         })
     });
     group.bench_with_input("serde (pretty)", &values, |b, values| {
         b.iter(|| {
-            serde_json::to_writer_pretty(BlackBoxWriter, &values).unwrap();
+            let mut writer = Vec::new();
+            serde_json::to_writer_pretty(&mut writer, &values).unwrap();
+            writer
         })
     });
 

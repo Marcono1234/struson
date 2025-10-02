@@ -1,5 +1,3 @@
-use std::{hint::black_box, io::Write};
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Serialize;
 use struson::{
@@ -7,41 +5,23 @@ use struson::{
     writer::{JsonStreamWriter, JsonWriter},
 };
 
-struct BlackBoxWriter;
-impl Write for BlackBoxWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        black_box(buf);
-        Ok(buf.len())
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        black_box(buf);
-        Ok(())
-    }
-
-    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        black_box(args);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 fn bench_compare<S: Serialize>(c: &mut Criterion, name: &str, value: S) {
     let mut group = c.benchmark_group(name);
     group.bench_with_input("struson", &value, |b, value| {
         b.iter(|| {
-            let mut json_writer = JsonStreamWriter::new(BlackBoxWriter);
+            let mut writer = Vec::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
             let mut serializer = JsonWriterSerializer::new(&mut json_writer);
             value.serialize(&mut serializer).unwrap();
             json_writer.finish_document().unwrap();
+            writer
         });
     });
     group.bench_with_input("serde-json", &value, |b, value| {
         b.iter(|| {
-            serde_json::to_writer(BlackBoxWriter, value).unwrap();
+            let mut writer = Vec::new();
+            serde_json::to_writer(&mut writer, value).unwrap();
+            writer
         });
     });
 
