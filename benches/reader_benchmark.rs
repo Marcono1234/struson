@@ -73,7 +73,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str, include_no_path_trac
                     }
                     StackValue::Object => {
                         if json_reader.has_next()? {
-                            json_reader.next_name()?;
+                            black_box(json_reader.next_name()?);
                             // fall through to value reading
                         } else {
                             stack.pop();
@@ -99,13 +99,13 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str, include_no_path_trac
                     stack.push(StackValue::Object)
                 }
                 ValueType::String => {
-                    json_reader.next_str()?;
+                    black_box(json_reader.next_str()?);
                 }
                 ValueType::Number => {
-                    json_reader.next_number_as_str()?;
+                    black_box(json_reader.next_number_as_str()?);
                 }
                 ValueType::Boolean => {
-                    json_reader.next_bool()?;
+                    black_box(json_reader.next_bool()?);
                 }
                 ValueType::Null => json_reader.next_null()?,
             }
@@ -229,7 +229,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         b.iter(|| {
             call_unwrap(|| {
                 let mut json_reader = JsonStreamReader::new(json.as_bytes());
-                json_reader.next_str()?;
+                black_box(json_reader.next_str()?);
                 json_reader.consume_trailing_whitespace()?;
 
                 Ok(())

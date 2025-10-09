@@ -1,3 +1,5 @@
+use std::hint::black_box;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use struson::{
@@ -19,20 +21,19 @@ fn bench_compare<D: DeserializeOwned>(c: &mut Criterion, name: &str, json: &str)
                 },
             );
             let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
-            D::deserialize(&mut deserializer).unwrap();
+            black_box(D::deserialize(&mut deserializer).unwrap());
             json_reader.consume_trailing_whitespace().unwrap();
         });
     });
     group.bench_with_input("serde-json", bytes, |b, bytes| {
-        b.iter(|| {
-            serde_json::from_reader::<_, D>(bytes).unwrap();
-        });
+        b.iter(|| serde_json::from_reader::<_, D>(bytes).unwrap());
     });
 
     group.finish();
 }
 
 fn benchmark_number_vec(c: &mut Criterion) {
+    // Prepare JSON input
     let value = (0..10)
         .map(|x| (0..10).map(|y| x * y).collect())
         .collect::<Vec<Vec<u8>>>();
@@ -64,6 +65,7 @@ fn benchmark_structs(c: &mut Criterion) {
         enum_value: Enum,
     }
 
+    // Prepare JSON input
     let value = (0..30)
         .map(|i| Struct {
             name: format!("some name {i}"),
