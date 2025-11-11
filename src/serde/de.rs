@@ -2112,7 +2112,10 @@ mod tests {
                     |$map_result:ident, $visited:ident| $map_result_handler:block
                 ) => {{
                     let $json = "{\"".to_owned() + $key_content + "\": true}";
-                    #[allow(unused_mut)] // for serde_json where `$json_reader == deserializer`
+                    #[allow(
+                        unused_mut,
+                        reason = "for serde_json where `$json_reader == deserializer`"
+                    )]
                     let mut $json_reader = $reader_factory;
                     let mut deserializer = $deserializer_factory;
 

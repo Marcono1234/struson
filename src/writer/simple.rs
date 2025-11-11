@@ -321,7 +321,10 @@ mod error_safe_writer {
             use_delegate!(self, |w| w.string_value(value))
         }
 
-        #[allow(refining_impl_trait)] // this `JsonWriter` impl is for an internal struct, so should not cause issues?
+        #[expect(
+            refining_impl_trait,
+            reason = "this `JsonWriter` impl is for an internal struct, so should not cause issues?"
+        )]
         fn string_value_writer(
             &mut self,
         ) -> Result<ErrorSafeStringValueWriter<'_, impl AdvancedStringValueWriter>, IoError>
@@ -482,7 +485,7 @@ impl<J: JsonWriter> SimpleJsonWriter<J> {
     /// # use struson::writer::*;
     /// # use struson::writer::simple::*;
     /// let mut writer = Vec::<u8>::new();
-    /// # #[allow(unused_variables)]
+    /// # #[expect(unused_variables)]
     /// let json_writer = SimpleJsonWriter::from_json_writer(
     ///     JsonStreamWriter::new_custom(
     ///         &mut writer,

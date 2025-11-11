@@ -323,7 +323,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     fn next_string_reader(&mut self) -> Result<impl std::io::Read + '_, ReaderError> {
         unimplemented!();
         // Unreachable; allow the compiler to infer the type of `impl std::io::Read`
-        #[allow(unreachable_code)]
+        #[expect(unreachable_code)]
         Ok(std::io::empty())
     }
 
@@ -437,7 +437,6 @@ macro_rules! deserialize_partial {
     }};
 }
 
-#[allow(clippy::useless_vec)] // https://github.com/rust-lang/rust-clippy/issues/11958
 #[test]
 fn test() {
     #[derive(Debug, Deserialize, Clone, PartialEq)]

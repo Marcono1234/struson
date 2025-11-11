@@ -7,8 +7,10 @@ use struson::{
 
 use crate::test_lib::get_test_data_file_path;
 
-// Ignore dead code warnings because this test does not use all functions from `test_lib`
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "this test does not use all functions from `test_lib`"
+)]
 mod test_lib;
 
 #[test]

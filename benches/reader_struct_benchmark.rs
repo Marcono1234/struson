@@ -9,7 +9,7 @@ use serde_json::{
 use struson::reader::{JsonReader, JsonStreamReader, ReaderSettings};
 
 #[derive(Deserialize)]
-#[allow(dead_code)] // suppress warnings for not read fields
+#[expect(dead_code, reason = "benchmark does not read fields")]
 struct StructValue {
     bool_value: bool,
     integer: u32,

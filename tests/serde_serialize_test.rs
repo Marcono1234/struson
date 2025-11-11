@@ -151,7 +151,7 @@ fn serialize_skipped_field() {
     #[derive(Serialize)]
     struct S {
         a: u32,
-        #[allow(dead_code)]
+        #[expect(dead_code, reason = "field is skipped during serialization")]
         #[serde(skip)]
         b: u32,
     }

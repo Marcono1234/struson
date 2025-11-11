@@ -1253,7 +1253,10 @@ mod error_safe_reader {
     pub(super) fn clone_original_io_error(error: &IoError) -> IoError {
         // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
         // because it considers the original error kind as safe to retry
-        #[allow(clippy::to_string_in_format_args)] // make it explicit that this uses `to_string()`
+        #[expect(
+            clippy::to_string_in_format_args,
+            reason = "make it explicit that this uses `to_string()`"
+        )]
         IoError::other(format!(
             "previous error '{}': {}",
             error.kind(),
@@ -1375,7 +1378,10 @@ mod error_safe_reader {
             use_delegate!(self, |r| r.next_string())
         }
 
-        #[allow(refining_impl_trait)] // this `JsonReader` impl is for an internal struct, so should not cause issues?
+        #[expect(
+            refining_impl_trait,
+            reason = "this `JsonReader` impl is for an internal struct, so should not cause issues?"
+        )]
         fn next_string_reader(
             &mut self,
         ) -> Result<ErrorSafeStringValueReader<'_, impl Read>, ReaderError> {
@@ -1568,7 +1574,7 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     ///     ]
     ///     ".as_bytes();
     ///
-    /// # #[allow(unused_variables)]
+    /// # #[expect(unused_variables)]
     /// let json_reader = SimpleJsonReader::from_json_reader(
     ///     JsonStreamReader::new_custom(
     ///         json,

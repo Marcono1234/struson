@@ -354,7 +354,10 @@ pub struct JsonReaderPosition {
 }
 impl JsonReaderPosition {
     /// Creates an 'unknown' position, with all position information being [`None`]
-    #[allow(dead_code)] // called by Simple API (but currently guarded by feature flag)
+    #[allow(
+        dead_code,
+        reason = "called by Simple API (but guarded by feature flag)"
+    )]
     pub(crate) fn unknown_position() -> Self {
         JsonReaderPosition {
             path: None,
@@ -598,7 +601,10 @@ impl ReaderError {
     /// For most of the variants of this error this acts like a regular [`Clone`]. The only
     /// exception is [`ReaderError::IoError`] where it might not be possible to fully preserve
     /// all data of the original error.
-    #[allow(dead_code)] // called by Simple API (but currently guarded by feature flag)
+    #[allow(
+        dead_code,
+        reason = "called by Simple API (but guarded by feature flag)"
+    )]
     pub(crate) fn rough_clone(&self) -> Self {
         match self {
             Self::SyntaxError(e) => Self::SyntaxError(e.clone()),
@@ -1808,7 +1814,7 @@ pub trait JsonReader {
     ///     let pos = json_reader.current_position(true);
     ///     let encoded_point = json_reader.next_str()?;
     ///
-    /// #   #[allow(unused_variables)]
+    /// #   #[expect(unused_variables)]
     ///     if let Some((x, y)) = encoded_point.split_once('|') {
     ///         // ...
     ///     } else {

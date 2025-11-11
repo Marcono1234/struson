@@ -7,10 +7,12 @@ use thiserror::Error;
 use self::bytes_value_reader::{
     AsUnicodeEscapeReader, AsUtf8MultibyteReader, BytesValue, BytesValueReader,
 };
-use super::{json_path::JsonPathPiece, *};
-// Ignore false positive for unused import of `json_path!` macro
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "false positive for import of `json_path!` macro"
+)]
 use super::json_path::json_path;
+use super::{json_path::JsonPathPiece, *};
 use crate::{
     json_number::{NumberBytesProvider, consume_json_number},
     utf8,
@@ -1386,7 +1388,10 @@ mod bytes_value_reader {
             }
             // Else continue filling `json_reader.buf` behind previously read data
             else {
-                #[allow(clippy::collapsible_else_if)]
+                #[allow(
+                    clippy::collapsible_else_if,
+                    reason = "to conceptually separate branches"
+                )]
                 if self.json_reader.fill_buffer(end_pos)? {
                     Ok(Some(self.json_reader.buf[end_pos]))
                 } else if let Some(eof_error_kind) = eof_error_kind {

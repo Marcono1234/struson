@@ -1016,7 +1016,7 @@ mod tests {
                 let mut $string_value_writer = json_writer.string_value_writer().unwrap();
 
                 // Use a closure here to allow `$writing_expr` to use the `?` operator for error handling
-                #[allow(unused_mut)] // only for some callers the closure has to be mutable
+                #[allow(unused_mut, reason = "only for some callers of the macro the closure has to be mutable")]
                 let mut writing_function = || -> Result<(), IoError> {
                     $writing_expr
                 };

@@ -740,13 +740,21 @@ impl FiniteNumber for type_template {
 
     fn as_u64(&self) -> Option<u64> {
         // TODO: Should this only use `into()` and for all unsupported types (e.g. signed or u128, ...) always return None?
-        #[allow(clippy::useless_conversion, clippy::unnecessary_fallible_conversions /* reason = "for u64 -> u64" */)]
+        #[allow(
+            clippy::useless_conversion,
+            clippy::unnecessary_fallible_conversions,
+            reason = "for u64 -> u64"
+        )]
         (*self).try_into().ok()
     }
 
     fn as_i64(&self) -> Option<i64> {
         // TODO: Should this only use `into()` and for all unsupported types (u64, u128, i128, usize and isize) always return None?
-        #[allow(clippy::useless_conversion, clippy::unnecessary_fallible_conversions /* reason = "for i64 -> i64" */)]
+        #[allow(
+            clippy::useless_conversion,
+            clippy::unnecessary_fallible_conversions,
+            reason = "for i64 -> i64"
+        )]
         (*self).try_into().ok()
     }
 }
@@ -776,7 +784,7 @@ impl FloatingPointNumber for type_template {
     }
 
     fn as_f64(&self) -> Option<f64> {
-        #[allow(clippy::useless_conversion)] // for f64 -> f64
+        #[allow(clippy::useless_conversion, reason = "for f64 -> f64")]
         Some((*self).into())
     }
 }
