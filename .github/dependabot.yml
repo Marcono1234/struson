@@ -6,16 +6,22 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    cooldown:
+      default-days: 14
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "monthly"
+    cooldown:
+      default-days: 14
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    cooldown:
+      default-days: 14
     ignore:
       # Ignore patch updates for 'taiki-e/install-action' because they seem to only update the tool
       # versions; however GitHub workflow here has intentionally pinned tool version
