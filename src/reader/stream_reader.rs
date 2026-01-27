@@ -1388,7 +1388,7 @@ mod bytes_value_reader {
             }
             // Else continue filling `json_reader.buf` behind previously read data
             else {
-                #[allow(
+                #[expect(
                     clippy::collapsible_else_if,
                     reason = "to conceptually separate branches"
                 )]
@@ -2011,7 +2011,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             let name = name_bytes.get_str_peek(self).to_owned();
             // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
             // would be two mutable borrows of `self` then at the same time)
-            #[allow(
+            #[expect(
                 clippy::unnecessary_unwrap,
                 reason = "there is an intermediate `self` borrow"
             )]
@@ -2110,7 +2110,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
             // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
             // would be two mutable borrows of `self` then at the same time)
-            #[allow(
+            #[expect(
                 clippy::unnecessary_unwrap,
                 reason = "there is an intermediate `self` borrow"
             )]
