@@ -34,7 +34,7 @@ type IoError = std::io::Error;
 ///     - [`null_value`](Self::null_value): Writing a JSON null value
 ///     - [`serialize_value`](Self::serialize_value): Serializes a Serde [`Serialize`](serde_core::ser::Serialize) as next value (optional feature)
 ///  - Other:
-///     - [`finish_document`](Self::finish_document): Ensuring that the JSON document is complete and flushing the buffer
+///     - [`finish_document`](Self::finish_document): Ensuring that the JSON document is complete and flushing buffers
 ///
 /// JSON documents have at least one top-level value which can be either a JSON array, object,
 /// string, number, boolean or null value. For JSON arrays and objects the opening brackets
@@ -531,6 +531,11 @@ pub trait JsonWriter {
     /// The result might not be relevant for all JSON writer implementations, for example
     /// a JSON writer writing to a `Write` will already produce the JSON document during
     /// usage, so the `WriterResult` returned by this method can be ignored.
+    ///
+    /// Depending on the implementation this method might flush internal buffers,
+    /// and might also perform a flush operation on the underlying destination of the data.
+    /// For example a JSON writer writing to a `Write` might first write all remaining
+    /// data to it and afterwards call its `flush` method.
     ///
     /// This method **must** be called explicitly. Dropping the JSON writer will not
     /// verify that the JSON document is complete and, depending on the JSON writer

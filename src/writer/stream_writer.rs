@@ -154,7 +154,7 @@ pub struct JsonStreamWriter<W: Write> {
     writer_settings: WriterSettings,
 }
 
-// Implementation with public constructor methods
+// Implementation with public non-JsonWriter-trait methods
 impl<W: Write> JsonStreamWriter<W> {
     /// Creates a JSON writer with [default settings](WriterSettings::default)
     pub fn new(writer: W) -> Self {
@@ -173,6 +173,22 @@ impl<W: Write> JsonStreamWriter<W> {
             is_string_value_writer_active: false,
             writer_settings,
         }
+    }
+
+    /// Verifies that the JSON document is complete
+    ///
+    /// This method is identical to [`finish_document`](Self::finish_document), except that it does
+    /// not call `flush` on the underlying writer. This is intended for use cases where flushing
+    /// the underlying writer is expensive and where it is desired to have greater control over when
+    /// it will happen. However, this requires that the writer is manually flushed, otherwise it
+    /// might only happen implicitly on drop, and errors reported by the writer are discarded.
+    /*
+     * Note: For now keep `Result` as return type even though it is always `Ok` currently, in case
+     * the implementation is changed in the future and can fail
+     */
+    pub fn finish_document_no_flush(self) -> Result<<Self as JsonWriter>::WriterResult, IoError> {
+        self.on_finish();
+        Ok(self.writer.0)
     }
 }
 
@@ -260,6 +276,28 @@ impl<W: Write> JsonStreamWriter<W> {
         // If after pop() call above currently in object, then expecting a member name
         self.expects_member_name = self.is_in_object();
         Ok(())
+    }
+
+    fn on_finish(&self) {
+        if self.is_string_value_writer_active {
+            panic!(
+                "Incorrect writer usage: Cannot finish document when string value writer is still active"
+            );
+        }
+        if self.expects_member_name {
+            panic!("Incorrect writer usage: Cannot finish document when member name is expected");
+        }
+        if self.stack.is_empty() {
+            if self.is_empty {
+                panic!(
+                    "Incorrect writer usage: Cannot finish document when no value has been written yet"
+                );
+            }
+        } else {
+            panic!(
+                "Incorrect writer usage: Cannot finish document when top-level value is not finished"
+            );
+        }
     }
 }
 
@@ -482,26 +520,21 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         // might not be necessary because Serde's Serialize API enforces this
     }
 
+    /// Verifies that the JSON document is complete and flushes the underlying writer
+    ///
+    /// Returns the underlying writer on success. This method should be called explicitly
+    /// when writing is finished; it will not be called when the JSON writer is dropped.
+    /// See the [`JsonWriter::finish_document`] documentation for details.
+    ///
+    /// If flushing the underlying writer is undesired, use [`finish_document_no_flush`](Self::finish_document_no_flush)
+    /// instead.
     fn finish_document(mut self) -> Result<Self::WriterResult, IoError> {
-        if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when string value writer is still active"
-            );
-        }
-        if self.expects_member_name {
-            panic!("Incorrect writer usage: Cannot finish document when member name is expected");
-        }
-        if self.stack.is_empty() {
-            if self.is_empty {
-                panic!(
-                    "Incorrect writer usage: Cannot finish document when no value has been written yet"
-                );
-            }
-        } else {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when top-level value is not finished"
-            );
-        }
+        self.on_finish();
+        // Flush the underlying writer to
+        // - fail fast if there is an issue writing the data
+        //   (otherwise this might only happen implicitly when the underlying writer is dropped,
+        //    and the error is silently discarded or reported as panic)
+        // - avoid that the user has to obtain the writer again and manually call `flush`
         self.writer.flush()?;
         Ok(self.writer.0)
     }
@@ -697,7 +730,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cmp::min;
+    use std::{cell::Cell, cmp::min};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1474,38 +1507,90 @@ mod tests {
         Ok(())
     }
 
-    /// Verify that `finish_document` returns the wrapped writer.
+    #[duplicate::duplicate_item(
+        method;
+        [finish_document];
+        [finish_document_no_flush];
+    )]
+    // Nest tests in module named after the tested method
+    mod method {
+        use super::*;
+
+        /// Verify that `finish_document` returns the wrapped writer.
+        #[test]
+        fn result() -> TestResult {
+            let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
+            json_writer.string_value("text")?;
+            let written_bytes = json_writer.method()?;
+            assert_eq!("\"text\"", String::from_utf8(written_bytes)?);
+
+            Ok(())
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect writer usage: Cannot finish document when no value has been written yet"
+        )]
+        fn empty_document() {
+            let mut writer = Vec::<u8>::new();
+            let json_writer = JsonStreamWriter::new(&mut writer);
+
+            let _ = json_writer.method();
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect writer usage: Cannot finish document when top-level value is not finished"
+        )]
+        fn incomplete_document() {
+            let mut writer = Vec::<u8>::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
+            json_writer.begin_array().unwrap();
+
+            let _ = json_writer.method();
+        }
+    }
+
     #[test]
-    fn finish_document_result() -> TestResult {
-        let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
-        json_writer.string_value("text")?;
-        let written_bytes = json_writer.finish_document()?;
-        assert_eq!("\"text\"", String::from_utf8(written_bytes)?);
+    fn finish_document_flush() -> TestResult {
+        struct FlushTrackingWriter<'a> {
+            was_flushed: &'a Cell<bool>,
+        }
+        impl Write for FlushTrackingWriter<'_> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                // do nothing; pretend complete value was written
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.was_flushed.set(true);
+                Ok(())
+            }
+        }
+
+        let was_flushed = Cell::new(false);
+        let mut writer = FlushTrackingWriter {
+            was_flushed: &was_flushed,
+        };
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.bool_value(true)?;
+        assert!(!was_flushed.get());
+        json_writer.finish_document()?;
+        // `finish_document()` should have flushed underlying writer
+        assert!(was_flushed.get());
+
+        let was_flushed = Cell::new(false);
+        let mut writer = FlushTrackingWriter {
+            was_flushed: &was_flushed,
+        };
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.bool_value(true)?;
+        assert!(!was_flushed.get());
+        json_writer.finish_document_no_flush()?;
+        // `finish_document_no_flush()` should not have flushed underlying writer
+        assert!(!was_flushed.get());
 
         Ok(())
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "Incorrect writer usage: Cannot finish document when no value has been written yet"
-    )]
-    fn finish_empty_document() {
-        let mut writer = Vec::<u8>::new();
-        let json_writer = JsonStreamWriter::new(&mut writer);
-
-        let _ = json_writer.finish_document();
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "Incorrect writer usage: Cannot finish document when top-level value is not finished"
-    )]
-    fn finish_incomplete_document() {
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = JsonStreamWriter::new(&mut writer);
-        json_writer.begin_array().unwrap();
-
-        let _ = json_writer.finish_document();
     }
 
     /// Writer which returns `ErrorKind::Interrupted` most of the time
