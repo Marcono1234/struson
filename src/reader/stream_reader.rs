@@ -2521,8 +2521,8 @@ mod tests {
         {
             for t in self.into_iter() {
                 let result = assert(&t);
-                if result.is_err() {
-                    panic!("Failed for '{t}': {}", result.unwrap_err());
+                if let Err(error) = result {
+                    panic!("Failed for '{t}': {error}");
                 }
             }
         }
