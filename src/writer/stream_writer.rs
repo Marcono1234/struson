@@ -826,7 +826,7 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_object().unwrap();
 
-        json_writer.end_array().unwrap();
+        let _ = json_writer.end_array();
     }
 
     #[test]
@@ -863,7 +863,7 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_array().unwrap();
 
-        json_writer.end_object().unwrap();
+        let _ = json_writer.end_object();
     }
 
     #[test]
@@ -876,7 +876,7 @@ mod tests {
         json_writer.begin_object().unwrap();
         json_writer.name("a").unwrap();
 
-        json_writer.end_object().unwrap();
+        let _ = json_writer.end_object();
     }
 
     #[test]
@@ -1244,7 +1244,7 @@ mod tests {
         let string_writer = json_writer.string_value_writer().unwrap();
         drop(string_writer);
 
-        json_writer.end_array().unwrap();
+        let _ = json_writer.end_array();
     }
 
     #[test]
@@ -1260,7 +1260,7 @@ mod tests {
         let string_writer = json_writer.string_value_writer().unwrap();
         drop(string_writer);
 
-        json_writer.end_object().unwrap();
+        let _ = json_writer.end_object();
     }
 
     #[test]
@@ -1274,7 +1274,7 @@ mod tests {
         let string_writer = json_writer.string_value_writer().unwrap();
         drop(string_writer);
 
-        json_writer.finish_document().unwrap();
+        let _ = json_writer.finish_document();
     }
 
     #[test]
@@ -1284,7 +1284,7 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_object().unwrap();
 
-        json_writer.string_value_writer().unwrap();
+        let _ = json_writer.string_value_writer();
     }
 
     #[test]
@@ -1295,7 +1295,7 @@ mod tests {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
 
-        json_writer.name("test").unwrap();
+        let _ = json_writer.name("test");
     }
 
     #[test]
@@ -1308,7 +1308,7 @@ mod tests {
         json_writer.begin_object().unwrap();
         json_writer.name("a").unwrap();
 
-        json_writer.name("test").unwrap();
+        let _ = json_writer.name("test");
     }
 
     #[test]
@@ -1360,7 +1360,7 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.bool_value(true).unwrap();
 
-        json_writer.bool_value(false).unwrap();
+        let _ = json_writer.bool_value(false);
     }
 
     #[test]
@@ -1493,7 +1493,7 @@ mod tests {
         let mut writer = Vec::<u8>::new();
         let json_writer = JsonStreamWriter::new(&mut writer);
 
-        json_writer.finish_document().unwrap();
+        let _ = json_writer.finish_document();
     }
 
     #[test]
@@ -1505,7 +1505,7 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_array().unwrap();
 
-        json_writer.finish_document().unwrap();
+        let _ = json_writer.finish_document();
     }
 
     /// Writer which returns `ErrorKind::Interrupted` most of the time
@@ -1659,7 +1659,7 @@ mod tests {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             json_writer.begin_object().unwrap();
 
-            json_writer.serialize_value(&"test").unwrap();
+            let _ = json_writer.serialize_value(&"test");
         }
     }
 }

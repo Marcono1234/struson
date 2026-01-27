@@ -2478,8 +2478,8 @@ mod tests {
         fn unexpected_key() {
             use_map_access!(|m| {
                 m.next_key::<String>().unwrap().unwrap();
-                m.next_key::<String>().unwrap().unwrap();
-                Ok("".to_owned())
+                let _ = m.next_key::<String>();
+                unreachable!()
             });
         }
 
@@ -2747,15 +2747,14 @@ mod tests {
                 Ok(())
             }
         }
-        deserializer
-            .deserialize_enum(
-                "name",
-                &["a"],
-                V {
-                    consume_variant_name,
-                },
-            )
-            .unwrap();
+        let _ = deserializer.deserialize_enum(
+            "name",
+            &["a"],
+            V {
+                consume_variant_name,
+            },
+        );
+        unreachable!()
     }
 
     #[test]

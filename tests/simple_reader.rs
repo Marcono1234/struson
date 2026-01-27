@@ -454,13 +454,11 @@ fn object_borrowed_member_not_consumed() -> Result<(), Box<dyn Error>> {
 #[should_panic(expected = "name has already been consumed")]
 fn object_borrowed_name_read_twice() {
     let json_reader = new_reader(r#"{"a":1}"#);
-    json_reader
-        .read_object_borrowed_names(|mut member_reader| {
-            member_reader.read_name()?;
-            member_reader.read_name()?;
-            Ok(())
-        })
-        .unwrap();
+    let _ = json_reader.read_object_borrowed_names(|mut member_reader| {
+        member_reader.read_name()?;
+        let _ = member_reader.read_name();
+        unreachable!()
+    });
 }
 
 /// Tests the behavior when for [`ValueReader::read_object_owned_names`] an object

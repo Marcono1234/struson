@@ -3258,7 +3258,7 @@ mod tests {
         assert_eq!(1, reader.read(&mut buf).unwrap());
         drop(reader);
 
-        json_reader.next_bool().unwrap();
+        let _ = json_reader.next_bool();
     }
 
     /// Test string reading behavior for a reader which provides one byte at a time
@@ -3472,7 +3472,7 @@ mod tests {
         let mut json_reader = new_reader("[}");
         json_reader.begin_array().unwrap();
 
-        json_reader.end_object().unwrap();
+        let _ = json_reader.end_object();
     }
 
     #[test]
@@ -3850,7 +3850,7 @@ mod tests {
         let mut json_reader = new_reader("{true: 1}");
         json_reader.begin_object().unwrap();
 
-        json_reader.next_bool().unwrap();
+        let _ = json_reader.next_bool();
     }
 
     #[test]
@@ -3861,7 +3861,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1}"#);
         json_reader.begin_object().unwrap();
 
-        json_reader.next_string().unwrap();
+        let _ = json_reader.next_string();
     }
 
     #[test]
@@ -3870,7 +3870,7 @@ mod tests {
         let mut json_reader = new_reader("{]");
         json_reader.begin_object().unwrap();
 
-        json_reader.end_array().unwrap();
+        let _ = json_reader.end_array();
     }
 
     #[test]
@@ -3882,7 +3882,7 @@ mod tests {
         json_reader.begin_object().unwrap();
         assert_eq!("a", json_reader.next_name_owned().unwrap());
 
-        json_reader.end_object().unwrap();
+        let _ = json_reader.end_object();
     }
 
     fn new_reader_with_limit(json: &str, limit: Option<u32>) -> JsonStreamReader<&[u8]> {
@@ -4150,7 +4150,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1}"#);
         json_reader.begin_object().unwrap();
 
-        json_reader.skip_value().unwrap();
+        let _ = json_reader.skip_value();
     }
 
     #[test]
@@ -4160,7 +4160,7 @@ mod tests {
     fn skip_name_expecting_value() {
         let mut json_reader = new_reader("\"a\"");
 
-        json_reader.skip_name().unwrap();
+        let _ = json_reader.skip_name();
     }
 
     #[test]
@@ -4434,7 +4434,7 @@ mod tests {
         let mut json_reader = new_reader(r#"{"a": 1}"#);
         json_reader.begin_object().unwrap();
 
-        json_reader.transfer_to(&mut json_writer).unwrap();
+        let _ = json_reader.transfer_to(&mut json_writer);
     }
 
     #[test]
@@ -4637,7 +4637,7 @@ mod tests {
     fn consume_trailing_whitespace_top_level_not_started() {
         let json_reader = new_reader("");
 
-        json_reader.consume_trailing_whitespace().unwrap();
+        let _ = json_reader.consume_trailing_whitespace();
     }
 
     #[test]
@@ -4648,7 +4648,7 @@ mod tests {
         let mut json_reader = new_reader("[]");
         json_reader.begin_array().unwrap();
 
-        json_reader.consume_trailing_whitespace().unwrap();
+        let _ = json_reader.consume_trailing_whitespace();
     }
 
     /// Byte order mark U+FEFF should not be allowed
@@ -4985,7 +4985,7 @@ mod tests {
         let mut json_reader = new_reader("1 2");
         assert_eq!("1", json_reader.next_number_as_string().unwrap());
 
-        json_reader.next_number_as_string().unwrap();
+        let _ = json_reader.next_number_as_string();
     }
 
     #[test]
@@ -5001,7 +5001,7 @@ mod tests {
             },
         );
 
-        json_reader.has_next().unwrap();
+        let _ = json_reader.has_next();
     }
 
     #[test]
@@ -5013,7 +5013,7 @@ mod tests {
         json_reader.begin_object().unwrap();
         assert_eq!("a", json_reader.next_name_owned().unwrap());
 
-        json_reader.has_next().unwrap();
+        let _ = json_reader.has_next();
     }
 
     #[test]
@@ -5948,7 +5948,7 @@ mod tests {
             let mut json_reader = new_reader(r#"{"a": 1}"#);
             json_reader.begin_object().unwrap();
 
-            json_reader.deserialize_next::<String>().unwrap();
+            let _ = json_reader.deserialize_next::<String>();
         }
     }
 }
