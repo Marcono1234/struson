@@ -2670,68 +2670,59 @@ mod tests {
         Ok(())
     }
 
-    duplicate::duplicate! {
+    #[duplicate::duplicate_item(
+        method;
+        [next_number_as_str];
+        [next_number_as_string];
+    )]
+    #[test]
+    fn method() -> TestResult {
+        let mut json_reader =
+            new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
+
+        json_reader.begin_array()?;
+
         [
-            method;
-            [next_number_as_str];
-            [next_number_as_string];
+            "0",
+            "-0",
+            "-1",
+            "-9",
+            "123",
+            "56.0030",
+            "-0.1",
+            "1.01e+03",
+            "-4.50E-40",
         ]
-        #[test]
-        fn method() -> TestResult {
-            let mut json_reader =
-                new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
-
-            json_reader.begin_array()?;
-
-            [
-                "0",
-                "-0",
-                "-1",
-                "-9",
-                "123",
-                "56.0030",
-                "-0.1",
-                "1.01e+03",
-                "-4.50E-40",
-            ].assert_all(|expected| {
-                assert_eq!(*expected, json_reader.method()?);
-                Ok(())
-            });
-
-            json_reader.end_array()?;
-            json_reader.consume_trailing_whitespace()?;
-
-
-            // Also include large number to make sure value buffer is correctly reused / replaced
-            let large_number = "123".repeat(READER_BUF_SIZE);
-            let json = format!("[1, {large_number}, {large_number}, 2, {large_number}, 3]");
-            let mut json_reader = JsonStreamReader::new_custom(
-                json.as_bytes(),
-                ReaderSettings {
-                    restrict_number_values: false,
-                    ..Default::default()
-                },
-            );
-
-            json_reader.begin_array()?;
-
-            [
-                "1",
-                &large_number,
-                &large_number,
-                "2",
-                &large_number,
-                "3",
-            ].assert_all(|expected| {
-                assert_eq!(*expected, json_reader.method()?);
-                Ok(())
-            });
-
-            json_reader.end_array()?;
-            json_reader.consume_trailing_whitespace()?;
-
+        .assert_all(|expected| {
+            assert_eq!(*expected, json_reader.method()?);
             Ok(())
-        }
+        });
+
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        // Also include large number to make sure value buffer is correctly reused / replaced
+        let large_number = "123".repeat(READER_BUF_SIZE);
+        let json = format!("[1, {large_number}, {large_number}, 2, {large_number}, 3]");
+        let mut json_reader = JsonStreamReader::new_custom(
+            json.as_bytes(),
+            ReaderSettings {
+                restrict_number_values: false,
+                ..Default::default()
+            },
+        );
+
+        json_reader.begin_array()?;
+
+        ["1", &large_number, &large_number, "2", &large_number, "3"].assert_all(|expected| {
+            assert_eq!(*expected, json_reader.method()?);
+            Ok(())
+        });
+
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
     }
 
     #[test]
@@ -2869,61 +2860,76 @@ mod tests {
         Ok(())
     }
 
-    duplicate::duplicate! {
-        [
-            method;
-            [next_str];
-            [next_string];
-        ]
-        #[test]
-        fn method() -> TestResult {
-            fn pair(json_string: &str, expected_value: &str) -> (String, String) {
-                (json_string.to_owned(), expected_value.to_owned())
-            }
-
-            let test_data = [
-                pair("", ""),
-                pair("a", "a"),
-                pair("\\n", "\n"),
-                pair("\\na", "\na"),
-                pair("\\n\\na", "\n\na"),
-                pair("a\\n", "a\n"),
-                pair("a\\na\\n\\na", "a\na\n\na"),
-                pair("a\u{10FFFF}", "a\u{10FFFF}"),
-                ("a".repeat(READER_BUF_SIZE - 2), "a".repeat(READER_BUF_SIZE - 2)),
-                ("a".repeat(READER_BUF_SIZE - 1), "a".repeat(READER_BUF_SIZE - 1)),
-                ("a".repeat(READER_BUF_SIZE), "a".repeat(READER_BUF_SIZE)),
-                ("a".repeat(READER_BUF_SIZE + 1), "a".repeat(READER_BUF_SIZE + 1)),
-                ("a".repeat(READER_BUF_SIZE - 1) + "\\n", "a".repeat(READER_BUF_SIZE - 1) + "\n"),
-                ("a".repeat(READER_BUF_SIZE) + "\\na", "a".repeat(READER_BUF_SIZE) + "\na"),
-            ];
-            for (json_string, expected_value) in test_data {
-                let json_value = format!("\"{json_string}\"");
-                let mut json_reader = new_reader(&json_value);
-                assert_eq!(expected_value, json_reader.method()?);
-                json_reader.consume_trailing_whitespace()?;
-            }
-
-            // Also test reading array of multiple string values, including ones which cannot
-            // be read directly from reader buf array, to verify that value buffer is correctly
-            // reused / replaced
-            let large_json_string = "abc".repeat(READER_BUF_SIZE);
-            let json_value = format!("[\"a\", \"{large_json_string}\", \"\\n\", \"{large_json_string}\", \"a\", \"\\n\"]");
-            let mut json_reader = new_reader(&json_value);
-            json_reader.begin_array()?;
-
-            assert_eq!("a", json_reader.method()?);
-            assert_eq!(large_json_string, json_reader.method()?);
-            assert_eq!("\n", json_reader.method()?);
-            assert_eq!(large_json_string, json_reader.method()?);
-            assert_eq!("a", json_reader.method()?);
-            assert_eq!("\n", json_reader.method()?);
-
-            json_reader.end_array()?;
-            json_reader.consume_trailing_whitespace()?;
-
-            Ok(())
+    #[duplicate::duplicate_item(
+        method;
+        [next_str];
+        [next_string];
+    )]
+    #[test]
+    fn method() -> TestResult {
+        fn pair(json_string: &str, expected_value: &str) -> (String, String) {
+            (json_string.to_owned(), expected_value.to_owned())
         }
+
+        let test_data = [
+            pair("", ""),
+            pair("a", "a"),
+            pair("\\n", "\n"),
+            pair("\\na", "\na"),
+            pair("\\n\\na", "\n\na"),
+            pair("a\\n", "a\n"),
+            pair("a\\na\\n\\na", "a\na\n\na"),
+            pair("a\u{10FFFF}", "a\u{10FFFF}"),
+            (
+                "a".repeat(READER_BUF_SIZE - 2),
+                "a".repeat(READER_BUF_SIZE - 2),
+            ),
+            (
+                "a".repeat(READER_BUF_SIZE - 1),
+                "a".repeat(READER_BUF_SIZE - 1),
+            ),
+            ("a".repeat(READER_BUF_SIZE), "a".repeat(READER_BUF_SIZE)),
+            (
+                "a".repeat(READER_BUF_SIZE + 1),
+                "a".repeat(READER_BUF_SIZE + 1),
+            ),
+            (
+                "a".repeat(READER_BUF_SIZE - 1) + "\\n",
+                "a".repeat(READER_BUF_SIZE - 1) + "\n",
+            ),
+            (
+                "a".repeat(READER_BUF_SIZE) + "\\na",
+                "a".repeat(READER_BUF_SIZE) + "\na",
+            ),
+        ];
+        for (json_string, expected_value) in test_data {
+            let json_value = format!("\"{json_string}\"");
+            let mut json_reader = new_reader(&json_value);
+            assert_eq!(expected_value, json_reader.method()?);
+            json_reader.consume_trailing_whitespace()?;
+        }
+
+        // Also test reading array of multiple string values, including ones which cannot
+        // be read directly from reader buf array, to verify that value buffer is correctly
+        // reused / replaced
+        let large_json_string = "abc".repeat(READER_BUF_SIZE);
+        let json_value = format!(
+            "[\"a\", \"{large_json_string}\", \"\\n\", \"{large_json_string}\", \"a\", \"\\n\"]"
+        );
+        let mut json_reader = new_reader(&json_value);
+        json_reader.begin_array()?;
+
+        assert_eq!("a", json_reader.method()?);
+        assert_eq!(large_json_string, json_reader.method()?);
+        assert_eq!("\n", json_reader.method()?);
+        assert_eq!(large_json_string, json_reader.method()?);
+        assert_eq!("a", json_reader.method()?);
+        assert_eq!("\n", json_reader.method()?);
+
+        json_reader.end_array()?;
+        json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
     }
 
     #[test]
@@ -3534,86 +3540,96 @@ mod tests {
         Ok(())
     }
 
-    duplicate::duplicate! {
-        [
-            method;
-            [next_name];
-            [next_name_owned];
-        ]
-        #[test]
-        fn method() -> TestResult {
-            fn pair(json_name: &str, expected_name: &str) -> (String, String) {
-                (json_name.to_owned(), expected_name.to_owned())
-            }
+    #[duplicate::duplicate_item(
+        method;
+        [next_name];
+        [next_name_owned];
+    )]
+    #[test]
+    fn method() -> TestResult {
+        fn pair(json_name: &str, expected_name: &str) -> (String, String) {
+            (json_name.to_owned(), expected_name.to_owned())
+        }
 
-            let test_data = [
-                pair("", ""),
-                pair("a", "a"),
-                pair("\\n", "\n"),
-                pair("\\na", "\na"),
-                pair("a\\n", "a\n"),
-                pair("a\\na\\n\\na", "a\na\n\na"),
-                pair("a\u{10FFFF}", "a\u{10FFFF}"),
-                ("a".repeat(READER_BUF_SIZE - 10), "a".repeat(READER_BUF_SIZE - 10)),
-                ("a".repeat(READER_BUF_SIZE) + "\\n", "a".repeat(READER_BUF_SIZE) + "\n"),
-                ("a".repeat(READER_BUF_SIZE) + "\\na", "a".repeat(READER_BUF_SIZE) + "\na"),
-            ];
-            for (json_name, expected_name) in test_data {
-                let json_value = "{\"".to_owned() + &json_name + "\": 1}";
-                let mut json_reader = new_reader(&json_value);
-
-                json_reader.begin_object()?;
-                assert_eq!(expected_name, json_reader.method()?);
-                assert_eq!("1", json_reader.next_number_as_string()?);
-                json_reader.end_object()?;
-
-                json_reader.consume_trailing_whitespace()?;
-            }
-
-
-            // Also test reading objects with multiple names, including ones which cannot
-            // be read directly from reader buf array, to verify that value buffer is correctly
-            // reused / replaced
-
-            let large_name = "abc".repeat(READER_BUF_SIZE);
-            let json = "{\"a\": 1, \"".to_owned() + &large_name + "\": 2, \"\\n\": 3, \"b\": 4, \"" + &large_name + "\": {\"c\": {\"\\n\": 5}}}";
-
-            let mut json_reader = new_reader(&json);
+        let test_data = [
+            pair("", ""),
+            pair("a", "a"),
+            pair("\\n", "\n"),
+            pair("\\na", "\na"),
+            pair("a\\n", "a\n"),
+            pair("a\\na\\n\\na", "a\na\n\na"),
+            pair("a\u{10FFFF}", "a\u{10FFFF}"),
+            (
+                "a".repeat(READER_BUF_SIZE - 10),
+                "a".repeat(READER_BUF_SIZE - 10),
+            ),
+            (
+                "a".repeat(READER_BUF_SIZE) + "\\n",
+                "a".repeat(READER_BUF_SIZE) + "\n",
+            ),
+            (
+                "a".repeat(READER_BUF_SIZE) + "\\na",
+                "a".repeat(READER_BUF_SIZE) + "\na",
+            ),
+        ];
+        for (json_name, expected_name) in test_data {
+            let json_value = "{\"".to_owned() + &json_name + "\": 1}";
+            let mut json_reader = new_reader(&json_value);
 
             json_reader.begin_object()?;
-            assert_eq!("a", json_reader.method()?);
+            assert_eq!(expected_name, json_reader.method()?);
             assert_eq!("1", json_reader.next_number_as_string()?);
-
-            assert_eq!(large_name, json_reader.method()?);
-            assert_eq!("2", json_reader.next_number_as_string()?);
-
-            assert_eq!("\n", json_reader.method()?);
-            assert_eq!("3", json_reader.next_number_as_string()?);
-
-            assert_eq!("b", json_reader.method()?);
-            assert_eq!("4", json_reader.next_number_as_string()?);
-
-            assert_eq!(large_name, json_reader.method()?);
-            json_reader.begin_object()?;
-            assert_eq!("c", json_reader.method()?);
-            json_reader.begin_object()?;
-            assert_eq!("\n", json_reader.method()?);
-            assert_eq!("5", json_reader.next_number_as_string()?);
-            let expected_path = vec![
-                JsonPathPiece::ObjectMember(large_name),
-                JsonPathPiece::ObjectMember("c".to_owned()),
-                JsonPathPiece::ObjectMember("\n".to_owned()),
-            ];
-            assert_eq!(Some(expected_path), json_reader.json_path);
-            json_reader.end_object()?;
-            json_reader.end_object()?;
-
             json_reader.end_object()?;
 
             json_reader.consume_trailing_whitespace()?;
-
-            Ok(())
         }
+
+        // Also test reading objects with multiple names, including ones which cannot
+        // be read directly from reader buf array, to verify that value buffer is correctly
+        // reused / replaced
+
+        let large_name = "abc".repeat(READER_BUF_SIZE);
+        let json = "{\"a\": 1, \"".to_owned()
+            + &large_name
+            + "\": 2, \"\\n\": 3, \"b\": 4, \""
+            + &large_name
+            + "\": {\"c\": {\"\\n\": 5}}}";
+
+        let mut json_reader = new_reader(&json);
+
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.method()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+
+        assert_eq!(large_name, json_reader.method()?);
+        assert_eq!("2", json_reader.next_number_as_string()?);
+
+        assert_eq!("\n", json_reader.method()?);
+        assert_eq!("3", json_reader.next_number_as_string()?);
+
+        assert_eq!("b", json_reader.method()?);
+        assert_eq!("4", json_reader.next_number_as_string()?);
+
+        assert_eq!(large_name, json_reader.method()?);
+        json_reader.begin_object()?;
+        assert_eq!("c", json_reader.method()?);
+        json_reader.begin_object()?;
+        assert_eq!("\n", json_reader.method()?);
+        assert_eq!("5", json_reader.next_number_as_string()?);
+        let expected_path = vec![
+            JsonPathPiece::ObjectMember(large_name),
+            JsonPathPiece::ObjectMember("c".to_owned()),
+            JsonPathPiece::ObjectMember("\n".to_owned()),
+        ];
+        assert_eq!(Some(expected_path), json_reader.json_path);
+        json_reader.end_object()?;
+        json_reader.end_object()?;
+
+        json_reader.end_object()?;
+
+        json_reader.consume_trailing_whitespace()?;
+
+        Ok(())
     }
 
     #[test]
