@@ -32,7 +32,7 @@ jobs:
       - name: Install cargo-make
         uses: taiki-e/install-action@7fe7b8c79a3c5569643cf27dfc32456883a4cd4d  #v2.62.16
         with:
-          tool: cargo-make@0.37.23
+          tool: cargo-make@0.37.24
 
       - name: Build
         run: cargo make
