@@ -1,6 +1,6 @@
 # Release process
 
-> [!TIP]\
+> [!TIP]
 > During development already create a draft GitHub Release and write down all relevant changes, so that
 > on release you don't have to go in detail through all commits again.
 
