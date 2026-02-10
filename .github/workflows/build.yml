@@ -40,7 +40,7 @@ jobs:
       - name: Install cargo-hack
         uses: taiki-e/install-action@7fe7b8c79a3c5569643cf27dfc32456883a4cd4d  #v2.62.16
         with:
-          tool: cargo-hack@0.6.28
+          tool: cargo-hack@0.6.42
       # See https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version
       - name: Check 'rust-version' compatibility
         run: cargo hack check --rust-version --workspace --all-targets --all-features
