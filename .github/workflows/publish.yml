@@ -71,6 +71,12 @@ jobs:
       # TODO: Once this project is more stable, maybe include SemVer checks, e.g.
       # https://github.com/rust-lang/rust-semverver or https://github.com/obi1kenobi/cargo-semver-checks
 
+      # Push changes before trying to publish them; otherwise if pushing fails the version might have been published
+      # already but the corresponding project version change and Git tag will be missing
+      - name: Push Git changes
+        shell: bash
+        run: git push --follow-tags
+
       # Clean up results from build to not affect publish in any way
       - name: Clean
         shell: bash
@@ -86,7 +92,3 @@ jobs:
         run: cargo publish --all-features
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-
-      - name: Push Git changes
-        shell: bash
-        run: git push --follow-tags
