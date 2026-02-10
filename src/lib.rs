@@ -6,7 +6,7 @@
 #![doc(test(attr(deny(warnings))))]
 // When `docsrs` configuration flag is set enable banner for features in documentation
 // See https://stackoverflow.com/q/61417452
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! Struson is an [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
 //!

@@ -21,7 +21,24 @@ env:
 # let it check API SemVer compliance, see also https://github.com/crate-ci/cargo-release/issues/62
 
 jobs:
+  # Build the documentation similar (but not completely identical) to how docs.rs would do it,
+  # to notice any potential configuration issues in advance; see https://github.com/dtolnay/cargo-docs-rs
+  # Run this as separate job with minimal permissions because the used actions cannot be pinned
+  # easily, and to avoid that the Nightly toolchain somehow affects publishing
+  check-docs-rs-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RUSTDOCFLAGS: --deny warnings
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/install@cargo-docs-rs
+      - run: cargo docs-rs
+
   publish:
+    needs: check-docs-rs-build
     runs-on: ubuntu-latest
     environment: publishing
     permissions:
