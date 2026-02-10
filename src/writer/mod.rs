@@ -734,7 +734,8 @@ impl FiniteNumber for type_template {
         &self,
         consumer: C,
     ) -> Result<(), IoError> {
-        // TODO: Use https://docs.rs/itoa/latest/itoa/ for better performance? (used also by serde_json)
+        // TODO: Use https://docs.rs/itoa for better performance? (used also by serde_json)
+        //   see https://github.com/Marcono1234/struson/issues/2
         let string = self.to_string();
         debug_assert!(
             is_valid_json_number(&string),
@@ -772,7 +773,8 @@ impl FloatingPointNumber for type_template {
         consumer: C,
     ) -> Result<(), JsonNumberError> {
         if self.is_finite() {
-            // TODO: Use https://docs.rs/ryu/latest/ryu/ for better performance? (used also by serde_json)
+            // TODO: Use https://docs.rs/ryu or https://docs.rs/zmij for better performance? (used also by serde_json)
+            //   see https://github.com/Marcono1234/struson/issues/2
             //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
             let string = self.to_string();
             debug_assert!(
