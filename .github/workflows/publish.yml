@@ -13,9 +13,6 @@ on:
         - minor
         - patch
 
-permissions:
-  contents: write # read repository content and push updated version and tag
-
 env:
   # Enable colored terminal output, see https://doc.rust-lang.org/cargo/reference/config.html#termcolor
   CARGO_TERM_COLOR: always
@@ -28,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: publishing
     permissions:
+      contents: write  # read repository content and push updated version and tag
       id-token: write  # Required for OIDC token exchange for trusted publishing, see below
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
