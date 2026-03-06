@@ -2110,10 +2110,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
             // `unwrap` call here is safe due to `is_some` check above (cannot easily rewrite this because there
             // would be two mutable borrows of `self` then at the same time)
-            #[expect(
-                clippy::unnecessary_unwrap,
-                reason = "there is an intermediate `self` borrow"
-            )]
             match self.json_path.as_mut().unwrap().last_mut().unwrap() {
                 JsonPathPiece::ObjectMember(path_name) => *path_name = name,
                 _ => unreachable!("Path should be object member"),
