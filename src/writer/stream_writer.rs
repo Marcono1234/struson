@@ -133,7 +133,8 @@ impl<W: Write> Writer<W> {
 ///
 /// This JSON writer does not perform any internal buffering. Depending on the type of the
 /// underlying `Write` it is therefore recommended to use a [`std::io::BufWriter`], for example
-/// when writing to a file or a network connection.
+/// when writing to a file or a network connection.\
+/// Struson versions before 0.7 did perform internal buffering.
 ///
 /// The data written to the underlying writer will be valid UTF-8 data if the JSON document
 /// is finished properly by calling [`JsonWriter::finish_document`]. No leading byte order mark (BOM)
