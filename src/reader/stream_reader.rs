@@ -2789,6 +2789,47 @@ mod tests {
     }
 
     #[test]
+    fn array_missing_end() -> TestResult {
+        // `has_next`
+        let mut json_reader = new_reader("[1");
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.has_next(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path![1],
+            2,
+        );
+
+        // `has_next` (trailing comma)
+        let mut json_reader = new_reader("[1,");
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.has_next(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path![1],
+            3,
+        );
+
+        // `end_array`
+        let mut json_reader = new_reader("[1");
+        json_reader.begin_array()?;
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.end_array(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path![1],
+            2,
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn object_trailing_comma() -> TestResult {
         let mut json_reader = new_reader("{,}");
         json_reader.begin_object()?;
@@ -3191,6 +3232,50 @@ mod tests {
         assert_eq!("a", json_reader.next_name_owned().unwrap());
 
         let _ = json_reader.end_object();
+    }
+
+    #[test]
+    fn object_missing_end() -> TestResult {
+        // `has_next`
+        let mut json_reader = new_reader("{\"a\": 1");
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.has_next(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path!["a"],
+            7,
+        );
+
+        // `has_next` (trailing comma)
+        let mut json_reader = new_reader("{\"a\": 1,");
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.has_next(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path!["a"],
+            8,
+        );
+
+        // `end_object`
+        let mut json_reader = new_reader("{\"a\": 1");
+        json_reader.begin_object()?;
+        assert_eq!("a", json_reader.next_name()?);
+        assert_eq!("1", json_reader.next_number_as_string()?);
+        assert_parse_error_with_path(
+            None,
+            json_reader.end_object(),
+            SyntaxErrorKind::IncompleteDocument,
+            &json_path!["a"],
+            7,
+        );
+
+        Ok(())
     }
 
     fn new_reader_with_limit(json: &str, limit: Option<u32>) -> JsonStreamReader<&[u8]> {
@@ -4289,11 +4374,22 @@ mod tests {
     #[should_panic(
         expected = "Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings"
     )]
-    fn multiple_top_level_disallowed() {
+    fn multiple_top_level_disallowed_peek() {
         let mut json_reader = new_reader("1 2");
         assert_eq!("1", json_reader.next_number_as_string().unwrap());
 
         let _ = json_reader.next_number_as_string();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect reader usage: Cannot check for multiple top-level values when not enabled in the reader settings"
+    )]
+    fn multiple_top_level_disallowed_has_next() {
+        let mut json_reader = new_reader("1 2");
+        assert_eq!("1", json_reader.next_number_as_string().unwrap());
+
+        let _ = json_reader.has_next();
     }
 
     #[test]
