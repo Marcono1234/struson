@@ -85,8 +85,9 @@ mod custom_writer {
     }
 
     fn serde_number_from_f64(f: f64) -> Result<Number, JsonNumberError> {
-        Number::from_f64(f)
-            .ok_or_else(|| JsonNumberError::InvalidNumber(format!("non-finite number: {f}")))
+        Number::from_f64(f).ok_or_else(|| JsonNumberError::InvalidNumber {
+            message: format!("non-finite number: {f}"),
+        })
     }
 
     impl JsonWriter for JsonValueWriter {
@@ -171,7 +172,9 @@ mod custom_writer {
             // TODO: `parse::<f64>` might not match JSON number string format (might allow more / less than allowed by JSON)?
             let f = value
                 .parse::<f64>()
-                .map_err(|e| JsonNumberError::InvalidNumber(e.to_string()))?;
+                .map_err(|e| JsonNumberError::InvalidNumber {
+                    message: e.to_string(),
+                })?;
             self.add_value(Value::Number(serde_number_from_f64(f)?));
             Ok(())
         }
@@ -190,9 +193,9 @@ mod custom_writer {
                 value.use_json_number(|number_str| {
                     self.number_value_from_string(number_str)
                         .map_err(|e| match e {
-                            JsonNumberError::InvalidNumber(e) => {
+                            JsonNumberError::InvalidNumber {message } => {
                                 panic!(
-                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                    "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
                             }
                             JsonNumberError::IoError(e) => IoError::other(e),
@@ -221,9 +224,9 @@ mod custom_writer {
                     self.number_value_from_string(number_str).map_err(|e| {
                         match e {
                             // `use_json_number` should have verified that value is valid finite JSON number
-                            JsonNumberError::InvalidNumber(e) => {
+                            JsonNumberError::InvalidNumber { message } => {
                                 panic!(
-                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                    "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
                             }
                             JsonNumberError::IoError(e) => IoError::other(e),
@@ -285,12 +288,12 @@ mod custom_writer {
 fn write() -> Result<(), Box<dyn std::error::Error>> {
     fn assert_invalid_number(expected_message: Option<&str>, result: Result<(), JsonNumberError>) {
         match result {
-            Err(JsonNumberError::InvalidNumber(message)) => {
+            Err(JsonNumberError::InvalidNumber { message }) => {
                 if let Some(expected_message) = expected_message {
                     assert_eq!(expected_message, message)
                 }
             }
-            _ => panic!("Unexpected result: {result:?}"),
+            _ => panic!("unexpected result: {result:?}"),
         }
     }
 

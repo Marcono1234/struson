@@ -500,9 +500,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             self.writer.write(value.as_bytes())?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(format!(
-                "invalid JSON number: {value}"
-            )))
+            Err(JsonNumberError::InvalidNumber {
+                message: format!("invalid JSON number: {value}"),
+            })
         }
     }
 
@@ -773,13 +773,10 @@ mod tests {
     fn numbers_invalid() {
         fn assert_invalid_number(result: Result<(), JsonNumberError>, expected_message: &str) {
             match result {
-                Ok(_) => panic!("Should have failed"),
-                Err(e) => match e {
-                    JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!(expected_message, message)
-                    }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error: {e:?}"),
-                },
+                Err(JsonNumberError::InvalidNumber { message }) => {
+                    assert_eq!(expected_message, message)
+                }
+                r => panic!("unexpected result: {r:?}"),
             }
         }
 
@@ -1651,7 +1648,7 @@ mod tests {
             Ok(n) => assert_eq!(string_bytes.len(), n),
             // For current implementation no error should have occurred
             // Especially regardless of implementation, `ErrorKind::Interrupted` must not have been returned
-            r => panic!("Unexpected result: {r:?}"),
+            r => panic!("unexpected result: {r:?}"),
         }
 
         string_writer.finish_value()?;
@@ -1730,10 +1727,10 @@ mod tests {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             let number = f32::NAN;
             match json_writer.serialize_value(&number) {
-                Err(SerializerError::InvalidNumber(message)) => {
+                Err(SerializerError::InvalidNumber { message }) => {
                     assert_eq!(format!("non-finite number: {number}"), message);
                 }
-                r => panic!("Unexpected result: {r:?}"),
+                r => panic!("unexpected result: {r:?}"),
             }
         }
 

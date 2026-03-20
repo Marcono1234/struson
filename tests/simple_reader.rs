@@ -13,7 +13,7 @@ use std::{
 use struson::{
     json_path,
     reader::{
-        JsonStreamReader, JsonSyntaxError, ReaderError, SyntaxErrorKind, ValueType,
+        JsonStreamReader, ReaderError, ReaderErrorKind, SyntaxErrorKind, ValueType,
         simple::{SimpleJsonReader, ValueReader},
     },
 };
@@ -57,10 +57,10 @@ fn read() -> Result<(), Box<dyn Error>> {
 fn read_trailing_data() {
     let json_reader = new_reader("true 1");
     match json_reader.read_bool() {
-        Err(ReaderError::SyntaxError(JsonSyntaxError {
-            kind: SyntaxErrorKind::TrailingData,
+        Err(ReaderError {
+            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingData),
             ..
-        })) => {}
+        }) => {}
         r => panic!("unexpected result: {r:?}"),
     }
 }
@@ -109,6 +109,17 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
         Ok(value)
     })?;
     assert_eq!(b"\xF0" as &[u8], value);
+
+    let json_reader = new_reader("[\"some string\", 12]");
+    let value = json_reader.read_array(|array_reader| {
+        array_reader.read_string_with_reader(|_| {
+            // Implicitly skip complete string
+            Ok(())
+        })?;
+
+        Ok(array_reader.read_number_as_string()?)
+    })?;
+    assert_eq!("12", value);
 
     let json_reader = new_reader("[\"some string\", 12]");
     let value = json_reader.read_array(|array_reader| {
@@ -545,7 +556,7 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
     // Seeking empty path
     let result = json_reader.read_seeked(&json_path![], |_| Ok(()));
     assert_eq!(
-        "syntax error: JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
+        "JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
         result.unwrap_err().to_string()
     );
 
@@ -661,7 +672,7 @@ mod read_seeked_multi {
         // Seeking empty path
         let result = json_reader.read_seeked_multi(&multi_json_path![], true, |_| Ok(()));
         assert_eq!(
-            "syntax error: JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
+            "JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
             result.unwrap_err().to_string()
         );
 
@@ -711,7 +722,7 @@ mod read_seeked_multi {
             panic!("should not have been called");
         });
         assert_eq!(
-            "unexpected JSON structure TooShortArray(expected_index = 1) at path '$[1]', line 0, column 5 (data pos 5)",
+            "unexpected JSON structure TooShortArray(expected_index = 1, actual_len = 1) at path '$[1]', line 0, column 5 (data pos 5)",
             result.unwrap_err().to_string()
         );
 
@@ -1305,7 +1316,7 @@ mod read_seeked_multi {
         });
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+            "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
 
@@ -1322,7 +1333,7 @@ mod read_seeked_multi {
         });
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
+            "JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
             result.unwrap_err().to_string()
         );
 
@@ -1340,7 +1351,7 @@ mod read_seeked_multi {
         });
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "syntax error: JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
+            "JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
             result.unwrap_err().to_string()
         );
 
@@ -1358,7 +1369,7 @@ mod read_seeked_multi {
         });
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "syntax error: JSON syntax error IncompleteDocument at path '$[0].<?>', line 0, column 2 (data pos 2)",
+            "JSON syntax error IncompleteDocument at path '$[0].<?>', line 0, column 2 (data pos 2)",
             result.unwrap_err().to_string()
         );
 
@@ -1376,7 +1387,7 @@ mod read_seeked_multi {
         });
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+            "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
     }
@@ -1438,7 +1449,7 @@ fn errors() {
     let json_reader = new_reader("?");
     assert_error(
         json_reader.read_bool().map_err(|e| e.into()),
-        "syntax error: JSON syntax error MalformedJson at path '$', line 0, column 0 (data pos 0)",
+        "JSON syntax error MalformedJson at path '$', line 0, column 0 (data pos 0)",
     );
 
     let json_reader = new_reader("1");
@@ -1559,7 +1570,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
@@ -1570,7 +1581,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
@@ -1582,7 +1593,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
@@ -1594,7 +1605,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$.a', line 0, column 6 (data pos 6)",
+        "JSON syntax error IncompleteDocument at path '$.a', line 0, column 6 (data pos 6)",
         result.unwrap_err().to_string()
     );
 
@@ -1605,7 +1616,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+        "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
@@ -1615,7 +1626,7 @@ fn discarded_error_handling() {
         Ok(())
     });
     assert_eq!(
-        "syntax error: JSON syntax error MalformedJson at path '$[0]', line 0, column 1 (data pos 1)",
+        "JSON syntax error MalformedJson at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
@@ -1626,7 +1637,7 @@ fn discarded_error_handling() {
     });
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "syntax error: JSON syntax error IncompleteDocument at <location unavailable>",
+        "JSON syntax error IncompleteDocument at <location unavailable>",
         result.unwrap_err().to_string()
     );
 

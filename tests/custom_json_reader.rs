@@ -12,7 +12,7 @@ use serde_json::json;
 use std::io::Read;
 use struson::{
     reader::{
-        JsonReader, ReaderError, UnexpectedStructureKind, ValueType,
+        JsonReader, ReaderError, ReaderErrorKind, UnexpectedStructureKind, ValueType,
         json_path::{JsonPath, json_path},
     },
     writer::{JsonStreamWriter, JsonWriter},
@@ -23,8 +23,8 @@ mod custom_reader {
     use std::{io::Read, iter::Peekable};
     use struson::{
         reader::{
-            JsonReader, JsonReaderPosition, ReaderError, TransferError, UnexpectedStructureKind,
-            ValueType, json_path::JsonPathPiece,
+            JsonReader, JsonReaderPosition, ReaderError, ReaderErrorKind, TransferError,
+            UnexpectedStructureKind, ValueType, json_path::JsonPathPiece,
         },
         writer::{JsonNumberError, JsonWriter},
     };
@@ -77,9 +77,8 @@ mod custom_reader {
             if actual == expected {
                 Ok(())
             } else {
-                Err(ReaderError::UnexpectedValueType {
-                    expected,
-                    actual,
+                Err(ReaderError {
+                    kind: ReaderErrorKind::UnexpectedValueType { expected, actual },
                     location: self.create_error_location(),
                 })
             }
@@ -113,8 +112,10 @@ mod custom_reader {
                         if let Some(value) = iter.next() {
                             self.next_value = Some(value);
                         } else {
-                            return Err(ReaderError::UnexpectedStructure {
-                                kind: UnexpectedStructureKind::FewerElementsThanExpected,
+                            return Err(ReaderError {
+                                kind: ReaderErrorKind::UnexpectedStructure(
+                                    UnexpectedStructureKind::FewerElementsThanExpected,
+                                ),
                                 location: self.create_error_location(),
                             });
                         }
@@ -155,8 +156,10 @@ mod custom_reader {
             }
             if let Some(StackValue::Object(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError::UnexpectedStructure {
-                        kind: UnexpectedStructureKind::MoreElementsThanExpected,
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::UnexpectedStructure(
+                            UnexpectedStructureKind::MoreElementsThanExpected,
+                        ),
                         location: self.create_error_location(),
                     })
                 } else {
@@ -189,8 +192,10 @@ mod custom_reader {
         fn end_array(&mut self) -> Result<(), ReaderError> {
             if let Some(StackValue::Array(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError::UnexpectedStructure {
-                        kind: UnexpectedStructureKind::MoreElementsThanExpected,
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::UnexpectedStructure(
+                            UnexpectedStructureKind::MoreElementsThanExpected,
+                        ),
                         location: self.create_error_location(),
                     })
                 } else {
@@ -235,8 +240,10 @@ mod custom_reader {
                             name = n.as_str();
                             self.next_value = Some(v);
                         } else {
-                            return Err(ReaderError::UnexpectedStructure {
-                                kind: UnexpectedStructureKind::FewerElementsThanExpected,
+                            return Err(ReaderError {
+                                kind: ReaderErrorKind::UnexpectedStructure(
+                                    UnexpectedStructureKind::FewerElementsThanExpected,
+                                ),
                                 location: self.create_error_location(),
                             });
                         }
@@ -430,8 +437,8 @@ mod custom_reader {
                             // Should not fail since next_number_as_string would have returned Err for invalid JSON number
                             if let Err(e) = json_writer.number_value_from_string(number) {
                                 match e {
-                                    JsonNumberError::InvalidNumber(e) => panic!(
-                                        "Unexpected: JSON writer rejected valid JSON number '{number}': {e}"
+                                    JsonNumberError::InvalidNumber { message } => panic!(
+                                        "Unexpected: JSON writer rejected valid JSON number '{number}': {message}"
                                     ),
                                     JsonNumberError::IoError(e) => {
                                         return Err(TransferError::WriterError(e));
@@ -672,19 +679,19 @@ fn transfer() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
     macro_rules! assert_unexpected_structure {
-        ($value:expr, $kind:pat_param, {$assertion:expr}) => {
+        ($result:expr, $kind:pat_param, {$assertion:expr}) => {
             // Separate block to drop result of `next_string_reader` properly after assertion
             {
-                let value = $value;
-                match value {
-                    Err(ReaderError::UnexpectedStructure { kind: $kind, .. }) => $assertion,
-                    // Note: Cannot include `{value:?}` because for `next_string_reader` value does not implement Debug
-                    _ => panic!("Unexpected value"),
+                let result = $result;
+                match result {
+                    Err(ReaderError { kind: ReaderErrorKind::UnexpectedStructure($kind), .. }) => $assertion,
+                    // Note: Cannot include `{result:?}` because for `next_string_reader` value does not implement Debug
+                    _ => panic!("unexpected result"),
                 }
             }
         };
-        ($value:expr, $kind:pat_param) => {
-            assert_unexpected_structure!($value, $kind, { () });
+        ($result:expr, $kind:pat_param) => {
+            assert_unexpected_structure!($result, $kind, { () });
         };
     }
 
@@ -739,7 +746,10 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
     let mut json_reader = JsonValueReader::new(&json);
     assert_unexpected_structure!(
         json_reader.seek_to(&json_path![0]),
-        UnexpectedStructureKind::TooShortArray { expected_index: 0 }
+        UnexpectedStructureKind::TooShortArray {
+            expected_index: 0,
+            actual_len: 0
+        }
     );
 
     let json = json!({});
@@ -756,18 +766,17 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn unexpected_value_type() -> Result<(), Box<dyn std::error::Error>> {
     macro_rules! assert_unexpected_value_type {
-        ($value:expr, $expected:ident, $actual:ident) => {
+        ($result:expr, $expected:ident, $actual:ident) => {
             // Separate block to drop result of `next_string_reader` properly after assertion
             {
-                let value = $value;
-                match value {
-                    Err(ReaderError::UnexpectedValueType {
+                let result = $result;
+                match result {
+                    Err(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
                         expected: ValueType::$expected,
                         actual: ValueType::$actual,
-                        ..
-                    }) => {}
-                    // Note: Cannot include `{value:?}` because for `next_string_reader` value does not implement Debug
-                    _ => panic!("Unexpected value"),
+                    }, ..}) => {}
+                    // Note: Cannot include `{result:?}` because for `next_string_reader` value does not implement Debug
+                    _ => panic!("unexpected result"),
                 }
             }
         };

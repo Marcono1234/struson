@@ -717,10 +717,11 @@ mod private {
 #[derive(Error, Debug)]
 pub enum JsonNumberError {
     /// The number is not a valid JSON number
-    ///
-    /// The data of this enum variant is a message explaining why the number is not valid.
-    #[error("{0}")]
-    InvalidNumber(String),
+    #[error("{message}")]
+    InvalidNumber {
+        /// Error message
+        message: String,
+    },
     /// An IO error occurred while writing the number
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
@@ -784,9 +785,9 @@ impl FloatingPointNumber for type_template {
             consumer(&string)?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(format!(
-                "non-finite number: {self}"
-            )))
+            Err(JsonNumberError::InvalidNumber {
+                message: format!("non-finite number: {self}"),
+            })
         }
     }
 
@@ -881,13 +882,10 @@ mod tests {
 
         fn assert_non_finite<T: FloatingPointNumber + Display>(number: T) {
             match number.use_json_number(|_| panic!("Should have failed for: {number}")) {
-                Ok(_) => panic!("Should have failed for: {number}"),
-                Err(e) => match e {
-                    JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!(format!("non-finite number: {number}"), message)
-                    }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error for '{number}': {e:?}"),
-                },
+                Err(JsonNumberError::InvalidNumber { message }) => {
+                    assert_eq!(format!("non-finite number: {number}"), message)
+                }
+                r => panic!("unexpected result for {number}: {r:?}"),
             }
         }
 

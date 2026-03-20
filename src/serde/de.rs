@@ -34,40 +34,51 @@ use crate::{
 #[derive(Error, Debug)]
 pub enum DeserializerError {
     /// A custom error, normally created by the `DeserializerError::custom` function
-    ///
-    /// The data of this enum variant is a message describing the error.
-    #[error("{0}")]
-    Custom(String),
+    #[error("{message}")]
+    Custom {
+        /// Error message
+        message: String,
+    },
     /// The maximum nesting depth was exceeded while deserializing
     ///
     /// See [`JsonReaderDeserializer::new_with_custom_nesting_limit`] for more information.
-    #[error("maximum nesting depth {0} exceeded")]
-    MaxNestingDepthExceeded(u32),
+    #[error("maximum nesting depth {max_nesting_depth} exceeded")]
+    MaxNestingDepthExceeded {
+        /// The maximum nesting depth
+        max_nesting_depth: u32,
+    },
     /// The underlying [`JsonReader`] encountered an error
     #[error("{0}")]
     // TODO: Rename to `JsonReaderError`? see `reader::ReaderError` TODO
     ReaderError(#[from] ReaderError),
     /// Parsing a number failed
-    ///
-    /// The data of this enum variant is a message describing the error.
-    #[error("{0}")]
-    InvalidNumber(String),
+    #[error("invalid number: {message}")]
+    InvalidNumber {
+        /// Error message
+        message: String,
+    },
 }
 
 impl serde_core::de::Error for DeserializerError {
     fn custom<T: Display>(msg: T) -> Self {
-        DeserializerError::Custom(msg.to_string())
+        DeserializerError::Custom {
+            message: msg.to_string(),
+        }
     }
 }
 
 impl From<ParseIntError> for DeserializerError {
     fn from(value: ParseIntError) -> Self {
-        DeserializerError::InvalidNumber(value.to_string())
+        DeserializerError::InvalidNumber {
+            message: value.to_string(),
+        }
     }
 }
 impl From<ParseFloatError> for DeserializerError {
     fn from(value: ParseFloatError) -> Self {
-        DeserializerError::InvalidNumber(value.to_string())
+        DeserializerError::InvalidNumber {
+            message: value.to_string(),
+        }
     }
 }
 
@@ -264,9 +275,9 @@ fn err_unexpected_type<'de, V: Visitor<'de>>(
 macro_rules! check_nesting {
     ($self:ident, $body:block) => {
         if $self.depth >= $self.max_nesting_depth {
-            Err(DeserializerError::MaxNestingDepthExceeded(
-                $self.max_nesting_depth,
-            ))
+            Err(DeserializerError::MaxNestingDepthExceeded {
+                max_nesting_depth: $self.max_nesting_depth,
+            })
         } else {
             $self.depth += 1;
             let result = $body;
@@ -848,14 +859,14 @@ macro_rules! deserialize_number_key {
                 // key as str is available here
                 match key.parse() {
                     Ok(number) => visitor.$visit(number),
-                    Err(e) => Err(DeserializerError::InvalidNumber(format!(
-                        "number {key} cannot be parsed as desired type: {e}"
-                    ))),
+                    Err(e) => Err(DeserializerError::InvalidNumber {
+                        message: format!("number {key} cannot be parsed as desired type: {e}"),
+                    }),
                 }
             } else {
-                Err(DeserializerError::InvalidNumber(format!(
-                    "invalid number: {key}"
-                )))
+                Err(DeserializerError::InvalidNumber {
+                    message: format!("invalid number: {key}"),
+                })
             }
         }
     };
@@ -1077,8 +1088,8 @@ mod tests {
 
     use super::*;
     use crate::reader::{
-        JsonReaderPosition, JsonStreamReader, LinePosition, ReaderSettings, SyntaxErrorKind,
-        UnexpectedStructureKind,
+        JsonReaderPosition, JsonStreamReader, LinePosition, ReaderErrorKind, ReaderSettings,
+        SyntaxErrorKind, UnexpectedStructureKind,
     };
 
     #[derive(PartialEq, Clone, Debug)]
@@ -1458,7 +1469,7 @@ mod tests {
             let result = $deserializing_block;
             match result {
                 Err($expected_pattern) => $assertion,
-                r => panic!("Unexpected result for '{}': {r:?}", $json),
+                r => panic!("unexpected result for '{}': {r:?}", $json),
             }
         };
     }
@@ -1466,7 +1477,7 @@ mod tests {
     macro_rules! assert_parse_number_error {
         ($method:ident, [$($json:expr),+]) => {
             for json in [$($json),+] {
-                assert_deserialize_error!(json, $method, DeserializerError::InvalidNumber(_) => {});
+                assert_deserialize_error!(json, $method, DeserializerError::InvalidNumber{..} => {});
             }
         };
     }
@@ -1534,10 +1545,10 @@ mod tests {
         assert_deserialize_error!(
             "1",
             deserialize_bool,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Boolean, expected);
-                assert_eq!(ValueType::Number, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Boolean,
+                actual: ValueType::Number
+            }, ..}) => {}
         );
     }
 
@@ -1562,10 +1573,10 @@ mod tests {
             assert_deserialize_error!(
                 "true",
                 $method,
-                DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                    assert_eq!(ValueType::Number, expected);
-                    assert_eq!(ValueType::Boolean, actual);
-                }
+                DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                    expected: ValueType::Number,
+                    actual: ValueType::Boolean
+                }, ..}) => {}
             );
         };
     }
@@ -1619,10 +1630,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_i128,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Number, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Number,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1675,10 +1686,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_u128,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Number, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Number,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1707,10 +1718,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_f32,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Number, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Number,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1750,10 +1761,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_f64,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Number, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Number,
+                actual: ValueType::Boolean
+            }, .. }) => {}
         );
     }
 
@@ -1782,10 +1793,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             method,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::String, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::String,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1834,16 +1845,19 @@ mod tests {
         assert_deserialize_error!(
             "\"\\uD800\"",
             method,
-            DeserializerError::ReaderError(ReaderError::SyntaxError(e)) => {
-                assert_eq!(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence, e.kind);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::SyntaxError(
+                SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence
+            ), ..}) => {}
         );
         let mut json_reader = JsonStreamReader::new(b"\"\x80\"" as &[u8]); // malformed single byte
         let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
         let visitor = &mut TrackingVisitor::new(EnumVariantHandling::Unit);
         let result = deserializer.method(visitor);
         match result {
-            Err(DeserializerError::ReaderError(ReaderError::IoError { error, location })) => {
+            Err(DeserializerError::ReaderError(ReaderError {
+                kind: ReaderErrorKind::IoError(error),
+                location,
+            })) => {
                 assert_eq!(ErrorKind::InvalidData, error.kind());
                 assert_eq!("invalid UTF-8 data", error.to_string());
                 assert_eq!(
@@ -1855,13 +1869,13 @@ mod tests {
                     location
                 );
             }
-            r => panic!("Unexpected result: {r:?}"),
+            r => panic!("unexpected result: {r:?}"),
         }
 
         assert_deserialize_error!(
             "true",
             method,
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: bool, expected custom-test-value", message);
             }
         );
@@ -1884,10 +1898,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_unit,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Null, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Null,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1903,10 +1917,10 @@ mod tests {
             "true",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_unit_struct("name", v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Null, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Null,
+                actual: ValueType::Boolean
+            }, .. }) => {}
         );
     }
 
@@ -1945,10 +1959,10 @@ mod tests {
         assert_deserialize_error!(
             "true",
             deserialize_seq,
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Array, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -1981,7 +1995,7 @@ mod tests {
             "[1]",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple(0, v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 1, expected array of length 0", message);
             }
         );
@@ -1989,7 +2003,7 @@ mod tests {
             "[]",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple(1, v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 0, expected array of length 1", message);
             }
         );
@@ -1998,10 +2012,10 @@ mod tests {
             "true",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple(1, v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Array, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean
+            }, ..}) => {}
         );
     }
 
@@ -2034,7 +2048,7 @@ mod tests {
             "[1]",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple_struct("name", 0, v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 1, expected array of length 0", message);
             }
         );
@@ -2042,7 +2056,7 @@ mod tests {
             "[]",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple_struct("name", 1, v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 0, expected array of length 1", message);
             }
         );
@@ -2051,10 +2065,10 @@ mod tests {
             "true",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_tuple_struct("name", 1, v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Array, expected);
-                assert_eq!(ValueType::Boolean, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean
+            }, .. }) => {}
         );
     }
 
@@ -2105,10 +2119,10 @@ mod tests {
             assert_deserialize_error!(
                 "true",
                 deserialize_map,
-                DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                    assert_eq!(ValueType::Object, expected);
-                    assert_eq!(ValueType::Boolean, actual);
-                }
+                DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                    expected: ValueType::Object,
+                    actual: ValueType::Boolean
+                }, ..}) => {}
             );
         }
 
@@ -2417,25 +2431,25 @@ mod tests {
             assert_deserialized_key_error!(
                 "text",
                 |d, v| { d.deserialize_bool(v) },
-                DeserializerError::Custom(message) => assert_eq!("invalid type: string \"text\", expected custom-test-value", message)
+                DeserializerError::Custom { message } => assert_eq!("invalid type: string \"text\", expected custom-test-value", message)
             );
 
             assert_deserialized_key_error!(
                 "text",
                 |d, v| { d.deserialize_i32(v) },
-                DeserializerError::InvalidNumber(message) => assert_eq!("invalid number: text", message)
+                DeserializerError::InvalidNumber { message } => assert_eq!("invalid number: text", message)
             );
             assert_deserialized_key_error!(
                 "NaN",
                 |d, v| { d.deserialize_f32(v) },
-                DeserializerError::InvalidNumber(message) => assert_eq!("invalid number: NaN", message)
+                DeserializerError::InvalidNumber { message } => assert_eq!("invalid number: NaN", message)
             );
             // Deserializes as u128 here because for other number types this only fails for Struson but not serde_json
             // because serde_json ignores which exact `deserialize_...` was called and deserializes based on the JSON number format
             assert_deserialized_key_error!(
                 "-5",
                 |d, v| { d.deserialize_u128(v) },
-                DeserializerError::InvalidNumber(message) => {
+                DeserializerError::InvalidNumber { message } => {
                     // Only check prefix because suffix of message comes from Rust standard library
                     assert!(message.starts_with("number -5 cannot be parsed as desired type: "))
                 }
@@ -2447,7 +2461,7 @@ mod tests {
             assert_deserialized_key_error!(
                 number_str,
                 |d, v| { d.deserialize_u32(v) },
-                DeserializerError::InvalidNumber(message) => assert_eq!(format!("invalid number: {number_str}"), message)
+                DeserializerError::InvalidNumber { message } => assert_eq!(format!("invalid number: {number_str}"), message)
             );
 
             // Should validate that number is valid JSON number, even if normal parsing functions can parse it
@@ -2456,7 +2470,7 @@ mod tests {
             assert_deserialized_key_error!(
                 number_str,
                 |d, v| { d.deserialize_f32(v) },
-                DeserializerError::InvalidNumber(message) => assert_eq!(format!("invalid number: {number_str}"), message)
+                DeserializerError::InvalidNumber { message } => assert_eq!(format!("invalid number: {number_str}"), message)
             );
         }
 
@@ -2575,7 +2589,7 @@ mod tests {
             "true",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_struct("name", &["a"], v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: bool, expected custom-test-value", message);
             }
         );
@@ -2610,28 +2624,28 @@ mod tests {
             "{}",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedStructure{kind, ..}) => {
-                assert_eq!(UnexpectedStructureKind::FewerElementsThanExpected, kind);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::FewerElementsThanExpected
+            ), ..}) => {}
         );
 
         assert_deserialize_error!(
             r#"{"a": null, "a": 1}"#,
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedStructure{kind, ..}) => {
-                assert_eq!(UnexpectedStructureKind::MoreElementsThanExpected, kind);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::MoreElementsThanExpected
+            ), ..}) => {}
         );
 
         assert_deserialize_error!(
             r#"{"a": 1}"#,
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Null, expected);
-                assert_eq!(ValueType::Number, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Null,
+                actual: ValueType::Number
+            }, ..}) => {}
         );
 
         assert_deserialized_cmp!(
@@ -2664,7 +2678,7 @@ mod tests {
             r#"{"a": []}"#,
             EnumVariantHandling::Tuple(1),
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 0, expected array of length 1", message);
             }
         );
@@ -2673,10 +2687,10 @@ mod tests {
             r#"{"a": 1}"#,
             EnumVariantHandling::Tuple(1),
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-                assert_eq!(ValueType::Array, expected);
-                assert_eq!(ValueType::Number, actual);
-            }
+            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Number
+            }, .. }) => {}
         );
 
         assert_deserialized_cmp!(
@@ -2728,7 +2742,7 @@ mod tests {
             r#"{"a": 1}"#,
             EnumVariantHandling::Struct(&["f"]),
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: number, expected custom-test-value", message);
             }
         );
@@ -2737,7 +2751,7 @@ mod tests {
             "true",
             EnumVariantHandling::Unit,
             |d, v| { d.deserialize_enum("name", &["a"], v) },
-            DeserializerError::Custom(message) => {
+            DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: bool, expected custom-test-value", message);
             }
         );
@@ -2823,7 +2837,7 @@ mod tests {
                 "\"a\"",
                 enum_variant_handling,
                 |d, v| {d.deserialize_enum("name", &["a"], v)},
-                DeserializerError::Custom(message) => assert_eq!(expected_error_message, message)
+                DeserializerError::Custom { message } => assert_eq!(expected_error_message, message)
             );
         }
 
@@ -2890,10 +2904,10 @@ mod tests {
         );
 
         match deserialize_custom_max_depth(r#"[[{"n": {"n": {"n": null}}}]]"#) {
-            Err(DeserializerError::MaxNestingDepthExceeded(max_depth)) => {
-                assert_eq!(4, max_depth);
+            Err(DeserializerError::MaxNestingDepthExceeded { max_nesting_depth }) => {
+                assert_eq!(4, max_nesting_depth);
             }
-            r => panic!("Unexpected result: {r:?}"),
+            r => panic!("unexpected result: {r:?}"),
         }
 
         fn deserialize_default_map_depth(json: &str) -> Result<Nested, DeserializerError> {
@@ -2923,10 +2937,10 @@ mod tests {
             "}".repeat(expected_depth)
         );
         match deserialize_default_map_depth(&json) {
-            Err(DeserializerError::MaxNestingDepthExceeded(max_depth)) => {
-                assert_eq!((expected_depth - 1) as u32, max_depth);
+            Err(DeserializerError::MaxNestingDepthExceeded { max_nesting_depth }) => {
+                assert_eq!((expected_depth - 1) as u32, max_nesting_depth);
             }
-            r => panic!("Unexpected result: {r:?}"),
+            r => panic!("unexpected result: {r:?}"),
         }
     }
 }

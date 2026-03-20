@@ -4,7 +4,10 @@ use std::{collections::HashMap, fmt::Debug};
 
 use serde::{Deserialize, de::DeserializeOwned};
 use struson::{
-    reader::{JsonReader, JsonStreamReader, ReaderError, UnexpectedStructureKind, ValueType},
+    reader::{
+        JsonReader, JsonStreamReader, ReaderError, ReaderErrorKind, UnexpectedStructureKind,
+        ValueType,
+    },
     serde::{DeserializerError, JsonReaderDeserializer},
 };
 
@@ -31,12 +34,12 @@ macro_rules! assert_deserialize_error {
         let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
         match $type::deserialize(&mut deserializer) {
             Err($expected_pattern) => $assertion,
-            r => panic!("Unexpected result for '{}': {r:?}", $json),
+            r => panic!("unexpected result for '{}': {r:?}", $json),
         }
 
         match serde_json::from_str::<$type>($json) {
             Err($serde_error) => $assertion_serde,
-            r => panic!("Unexpected result for Serde JSON for '{}': {r:?}", $json),
+            r => panic!("unexpected result for Serde JSON for '{}': {r:?}", $json),
         }
     };
 }
@@ -62,7 +65,7 @@ fn deserialize_enum() {
     assert_deserialize_error!(
         "\"B\"",
         E,
-        DeserializerError::Custom(message) => assert_eq!("invalid type: unit variant, expected newtype variant", message),
+        DeserializerError::Custom { message } => assert_eq!("invalid type: unit variant, expected newtype variant", message),
         serde_error => assert_eq!("invalid type: unit variant, expected newtype variant", serde_error.to_string())
     );
 
@@ -70,10 +73,10 @@ fn deserialize_enum() {
     assert_deserialize_error!(
         r#"{"C": 5}"#,
         E,
-        DeserializerError::ReaderError(ReaderError::UnexpectedValueType { expected, actual, .. }) => {
-            assert_eq!(ValueType::Array, expected);
-            assert_eq!(ValueType::Number, actual);
-        },
+        DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
+            expected: ValueType::Array,
+            actual: ValueType::Number
+        }, ..}) => {},
         serde_error => assert_eq!("invalid type: integer `5`, expected tuple variant E::C at line 1 column 7", serde_error.to_string())
     );
 
@@ -94,14 +97,14 @@ fn deserialize_enum() {
     assert_deserialize_error!(
         r#"{"D": 1.2}"#,
         E,
-        DeserializerError::Custom(message) => assert_eq!("invalid type: number, expected struct variant E::D", message),
+        DeserializerError::Custom { message } => assert_eq!("invalid type: number, expected struct variant E::D", message),
         serde_error => assert_eq!("invalid type: floating point `1.2`, expected struct variant E::D at line 1 column 9", serde_error.to_string())
     );
 
     assert_deserialize_error!(
         r#"{"E": 1}"#,
         E,
-        DeserializerError::Custom(message) => assert_eq!("unknown variant `E`, expected one of `A`, `B`, `C`, `D`", message),
+        DeserializerError::Custom { message } => assert_eq!("unknown variant `E`, expected one of `A`, `B`, `C`, `D`", message),
         serde_error => assert_eq!("unknown variant `E`, expected one of `A`, `B`, `C`, `D` at line 1 column 4", serde_error.to_string())
     );
 }
@@ -150,13 +153,15 @@ fn deserialize_tuple_struct() {
     assert_deserialize_error!(
         "[1]",
         S,
-        DeserializerError::Custom(message) => assert_eq!("invalid length 1, expected tuple struct S with 2 elements", message),
+        DeserializerError::Custom { message } => assert_eq!("invalid length 1, expected tuple struct S with 2 elements", message),
         serde_error => assert_eq!("invalid length 1, expected tuple struct S with 2 elements at line 1 column 3", serde_error.to_string())
     );
     assert_deserialize_error!(
         "[1, \"test\", 2]",
         S,
-        DeserializerError::ReaderError(ReaderError::UnexpectedStructure { kind, .. }) => assert_eq!(UnexpectedStructureKind::MoreElementsThanExpected, kind),
+        DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedStructure(
+            UnexpectedStructureKind::MoreElementsThanExpected
+        ), .. }) => {},
         serde_error => assert_eq!("trailing characters at line 1 column 13", serde_error.to_string())
     );
 }
@@ -187,20 +192,22 @@ fn deserialize_struct() {
     assert_deserialize_error!(
         r#"{"a": 1, "a": 2}"#,
         S,
-        DeserializerError::Custom(message) => assert_eq!("duplicate field `a`", message),
+        DeserializerError::Custom { message } => assert_eq!("duplicate field `a`", message),
         serde_error => assert_eq!("duplicate field `a` at line 1 column 12", serde_error.to_string())
     );
 
     assert_deserialize_error!(
         "[1]",
         S,
-        DeserializerError::Custom(message) => assert_eq!("invalid length 1, expected struct S with 2 elements", message),
+        DeserializerError::Custom { message } => assert_eq!("invalid length 1, expected struct S with 2 elements", message),
         serde_error => assert_eq!("invalid length 1, expected struct S with 2 elements at line 1 column 3", serde_error.to_string())
     );
     assert_deserialize_error!(
         "[1, [true], false]",
         S,
-        DeserializerError::ReaderError(ReaderError::UnexpectedStructure { kind, .. }) => assert_eq!(UnexpectedStructureKind::MoreElementsThanExpected, kind),
+        DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedStructure(
+            UnexpectedStructureKind::MoreElementsThanExpected
+        ), .. }) => {},
         serde_error => assert_eq!("trailing characters at line 1 column 13", serde_error.to_string())
     );
 }
