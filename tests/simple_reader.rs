@@ -1691,14 +1691,17 @@ fn discarded_error_handling() {
             "JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
             result.unwrap_err().to_string()
         );
-        reader.read_to_end(&mut buf).unwrap_err();
+
+        // Trying to read again should still fail
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "previous error: JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
+            result.unwrap_err().to_string()
+        );
         Ok(())
     });
     assert_eq!(
-        format!(
-            "IO error 'previous error '{}': JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)' at (roughly) <location unavailable>",
-            ErrorKind::Other
-        ),
+        "JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
         result.unwrap_err().to_string()
     );
 
@@ -1711,32 +1714,65 @@ fn discarded_error_handling() {
             "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
-        reader.read_to_end(&mut buf).unwrap_err();
+
+        // Trying to read again should still fail
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "previous error: IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
+            result.unwrap_err().to_string()
+        );
         Ok(())
     });
     assert_eq!(
-        format!(
-            "IO error 'previous error '{}': IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)' at (roughly) <location unavailable>",
-            ErrorKind::Other
-        ),
+        "IO error 'previous error 'invalid data': invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
-    let json_reader = new_reader("[\"a]");
-    let result = json_reader.read_array(|array_reader| {
+    let json_reader = new_reader("[\"a\\, true]");
+    json_reader.read_array(|array_reader| {
         array_reader
-            .read_string_with_reader(|_| {
-                // Does not read from string; remainder should be implicitly skipped
+            .read_string_with_reader(|mut reader| {
+                let mut buf = String::new();
+                let result = reader.read_to_string(&mut buf);
+                assert_eq!(
+                    "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
+                    result.unwrap_err().to_string()
+                );
+                // Don't propagate error
                 Ok(())
             })
             .unwrap_err();
+
+        // Error should have been stored not only for string reader, but also for enclosing JSON reader
+        let result = array_reader.has_next();
+        assert_eq!(
+            "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }).unwrap_err();
+
+    let json_reader = new_reader("[\"a\\, true]");
+    let result = json_reader.read_array(|array_reader| {
+        array_reader
+            .read_string_with_reader(|_| {
+                // Does not read from string; remainder should be implicitly skipped and trigger the error
+                Ok(())
+            })
+            .unwrap_err();
+
+        // Error should have been stored not only for string reader, but also for enclosing JSON reader
+        let result = array_reader.has_next();
+        assert_eq!(
+            "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
+            result.unwrap_err().to_string()
+        );
+
         Ok(())
     });
     assert_eq!(
-        format!(
-            "IO error 'previous error '{}': JSON syntax error IncompleteDocument at path '$[0]', line 0, column 4 (data pos 4)' at (roughly) <location unavailable>",
-            ErrorKind::Other
-        ),
+        "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
         result.unwrap_err().to_string()
     );
 }

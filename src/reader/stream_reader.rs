@@ -36,7 +36,8 @@ enum PeekedValue {
 
 #[derive(Error, Debug)]
 #[error("IO error '{0}' at (roughly) {1}")]
-struct ReaderIoError(IoError, JsonReaderPosition);
+// `pub(crate)` because this is used by simple-api
+pub(crate) struct ReaderIoError(pub(crate) IoError, pub(crate) JsonReaderPosition);
 
 impl From<ReaderIoError> for ReaderError {
     fn from(value: ReaderIoError) -> Self {
@@ -48,7 +49,8 @@ impl From<ReaderIoError> for ReaderError {
 }
 
 #[derive(Error, Debug)]
-enum StringReadingError {
+// `pub(crate)` because this is used by simple-api
+pub(crate) enum StringReadingError {
     #[error("JSON syntax error {kind} at {location}")]
     SyntaxError {
         kind: SyntaxErrorKind,

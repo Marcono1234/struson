@@ -932,7 +932,7 @@ fn read_string_with_reader<J: JsonReader, T>(
     let result = f(string_reader)?;
 
     // Check if there is error which was not propagated by function
-    if let Some(error) = delegate.error {
+    if let Some(error) = delegate.reader_error {
         return Err(error.rough_clone().into());
     }
 
@@ -1247,7 +1247,7 @@ fn read_seeked_multi<J: JsonReader>(
 
 mod error_safe_reader {
     use super::*;
-    use crate::reader::ReaderErrorKind;
+    use crate::reader::{ReaderErrorKind, ReaderIoError, StringReadingError};
 
     type IoError = std::io::Error;
 
@@ -1389,11 +1389,13 @@ mod error_safe_reader {
             &mut self,
         ) -> Result<ErrorSafeStringValueReader<'_, impl Read>, ReaderError> {
             let string_reader_delegate = use_delegate!(self, |r| r.next_string_reader())?;
+            // Error should be None, otherwise `use_delegate` call above should have failed already
+            debug_assert!(self.error.is_none());
             Ok(ErrorSafeStringValueReader {
                 delegate: string_reader_delegate,
-                // Store errors in the `error` field of this `ErrorSafeStringValueReader`, so they are
-                // available to the original JsonReader afterwards
-                error: &mut self.error,
+                // Use `self.error` to make errors available to the original JsonReader afterwards
+                reader_error: &mut self.error,
+                error: None,
             })
         }
 
@@ -1492,7 +1494,11 @@ mod error_safe_reader {
     // this itself as well; but that is not guaranteed for all JsonReader implementations
     pub(super) struct ErrorSafeStringValueReader<'a, D: Read> {
         delegate: D,
-        pub(super) error: &'a mut Option<ReaderError>,
+        /// If an error occurred during reading, stores its `ReaderError` representation for usage
+        /// by the enclosing JsonReader afterwards.
+        /// Initially None, see call site of struct creation.
+        pub(super) reader_error: &'a mut Option<ReaderError>,
+        error: Option<String>,
     }
     impl<D: Read> ErrorSafeStringValueReader<'_, D> {
         fn use_delegate<T>(
@@ -1500,26 +1506,37 @@ mod error_safe_reader {
             f: impl FnOnce(&mut D) -> std::io::Result<T>,
         ) -> std::io::Result<T> {
             if let Some(error) = &self.error {
-                return Err(match error.rough_clone() {
-                    // Ignore `location`; assuming that IO error was set here by ErrorSafeStringValueReader
-                    // and therefore no real location exists (or original location would already be included
-                    // in error message)
-                    ReaderError {
-                        kind: ReaderErrorKind::IoError(error),
-                        ..
-                    } => error,
-                    // Error should have only been set by ErrorSafeStringValueReader, and therefore be IoError;
-                    // any previous other error type should have prevented creation of ErrorSafeStringValueReader
-                    e => unreachable!("unexpected error type: {e:?}"),
-                });
+                // When reporting previous error again, just use string representation for simplicity, and kind `Other`
+                // to avoid caller indefinitely retrying because it considers the original error kind as safe to retry
+                return Err(IoError::other(format!("previous error: {error}")));
             }
 
             let result = f(&mut self.delegate);
             if let Err(error) = &result {
-                *self.error = Some(ReaderError {
-                    kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
-                    location: JsonReaderPosition::unknown_position(),
-                });
+                let reader_error = error
+                    .get_ref()
+                    // Check if this error originates from JsonStreamReader implementation
+                    .and_then(|error| error.downcast_ref::<StringReadingError>())
+                    // Try to reconstruct ReaderError, without losing information or redundantly wrapping error
+                    .map(|error| match error {
+                        StringReadingError::SyntaxError { kind, location } => ReaderError {
+                            kind: ReaderErrorKind::SyntaxError(*kind),
+                            location: location.clone(),
+                        },
+                        StringReadingError::IoError(ReaderIoError(error, location)) => {
+                            ReaderError {
+                                kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
+                                location: location.clone(),
+                            }
+                        }
+                    })
+                    // For non-JsonStreamReader error wrap it in a generic IO error
+                    .unwrap_or_else(|| ReaderError {
+                        kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
+                        location: JsonReaderPosition::unknown_position(),
+                    });
+                *self.reader_error = Some(reader_error);
+                self.error = Some(error.to_string());
             }
             result
         }
