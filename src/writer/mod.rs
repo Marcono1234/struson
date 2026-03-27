@@ -645,7 +645,12 @@ pub trait StringValueWriter: Write {
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
-pub trait FiniteNumber: private::Sealed {
+/*
+ * Note: Might be more convenient to define `TryInto<u64>`, ... as supertraits here instead
+ * of defining custom methods `as_u64(&self)`, ...; however TryInto consumes `self`, which
+ * then makes for the user conversion with fallback more difficult (e.g. first try u64, then i64, ...)
+ */
+pub trait FiniteNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
@@ -699,6 +704,11 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The `f64` number can be NaN or Infinity, which is not allowed by the
     /// JSON specification. Callers of this method may want to reject these
     /// values when writing them as JSON data.
+    /*
+     * This is defined as custom method instead of adding `TryInto<f64>` as supertrait so
+     * that the documentation here can highlight that this can have non-finite values as
+     * result. Otherwise, for TryInto it might be more likely that the user overlooks that.
+     */
     fn as_f64(&self) -> Option<f64>;
 }
 
