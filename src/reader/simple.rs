@@ -531,11 +531,16 @@ pub trait ValueReader<J: JsonReader> {
         f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>>;
 
-    /// Consumes and returns a JSON number value
+    /// Consumes and returns a parsed JSON number value
     ///
-    /// The result is either the parsed number or the parse error. It might be necessary to
-    /// help the Rust compiler a bit by explicitly specifying the number type in case it cannot
-    /// be inferred automatically.
+    /// This method passes the string representation of the JSON number to the `FromStr`
+    /// implementation and afterwards returns the result. The result is either the parsed
+    /// number or the parse error. It might be necessary to help the Rust compiler a bit by
+    /// explicitly specifying the number type in case it cannot be inferred automatically,
+    /// for example `read_number::<u32>()`.\
+    /// Note that while the JSON number is guaranteed to be a finite number, the `FromStr`
+    /// implementation might return a non-finite result. For example `f64::from_str` can
+    /// return Infinity for large numbers.
     ///
     /// # Examples
     /// ```
