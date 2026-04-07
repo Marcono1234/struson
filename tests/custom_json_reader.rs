@@ -34,6 +34,11 @@ mod custom_reader {
         Object(Peekable<serde_json::map::Iter<'a>>),
     }
 
+    #[cold]
+    fn panic_incorrect_usage(message: &str) -> ! {
+        panic!("Incorrect reader usage: {message}")
+    }
+
     pub struct JsonValueReader<'a> {
         /// Contains the next value to consume
         ///
@@ -64,7 +69,7 @@ mod custom_reader {
     impl JsonValueReader<'_> {
         fn verify_string_reader_inactive(&self) {
             if self.is_string_value_reader_active {
-                panic!("Incorrect reader usage: String value reader is active");
+                panic_incorrect_usage("String value reader is active");
             }
         }
 
@@ -99,11 +104,11 @@ mod custom_reader {
         fn peek(&mut self) -> Result<ValueType, ReaderError> {
             self.verify_string_reader_inactive();
             if self.next_value.is_none() && self.stack.is_empty() {
-                panic!("Incorrect reader usage: Value has been consumed already")
+                panic_incorrect_usage("Value has been consumed already");
             }
 
             if self.expects_name {
-                panic!("Incorrect reader usage: Cannot peek when name is expected");
+                panic_incorrect_usage("Cannot peek when name is expected");
             }
 
             if self.next_value.is_none() {
@@ -152,7 +157,7 @@ mod custom_reader {
 
         fn end_object(&mut self) -> Result<(), ReaderError> {
             if self.next_value.is_some() {
-                panic!("Incorrect reader usage: Cannot end object; unconsumed value");
+                panic_incorrect_usage("Cannot end object; unconsumed value");
             }
             if let Some(StackValue::Object(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
@@ -174,7 +179,7 @@ mod custom_reader {
                     Ok(())
                 }
             } else {
-                panic!("Incorrect reader usage: Cannot end object; not inside object")
+                panic_incorrect_usage("Cannot end object; not inside object");
             }
         }
 
@@ -206,7 +211,7 @@ mod custom_reader {
                     Ok(())
                 }
             } else {
-                panic!("Incorrect reader usage: Cannot end array; not inside array")
+                panic_incorrect_usage("Cannot end array; not inside array");
             }
         }
 
@@ -220,14 +225,14 @@ mod custom_reader {
                         if self.expects_name {
                             iter.peek().is_some()
                         } else {
-                            panic!(
-                                "Incorrect reader usage: Cannot check for next when member value is expected"
+                            panic_incorrect_usage(
+                                "Cannot check for next when member value is expected",
                             );
                         }
                     }
                 })
             } else {
-                panic!("Incorrect reader usage: Not inside array or object");
+                panic_incorrect_usage("Not inside array or object");
             }
         }
 
@@ -259,7 +264,7 @@ mod custom_reader {
                 }
                 Ok(name)
             } else {
-                panic!("Incorrect reader usage: Name is not expected");
+                panic_incorrect_usage("Name is not expected");
             }
         }
 
@@ -398,7 +403,7 @@ mod custom_reader {
 
         fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
             if self.expects_name {
-                panic!("Incorrect reader usage: Cannot transfer value when expecting member name");
+                panic_incorrect_usage("Cannot transfer value when expecting member name");
             }
 
             let mut depth: u32 = 0;
@@ -468,7 +473,7 @@ mod custom_reader {
             self.verify_string_reader_inactive();
 
             if self.next_value.is_some() || !self.stack.is_empty() {
-                panic!("Incorrect reader usage: Value has not been fully consumed")
+                panic_incorrect_usage("Value has not been fully consumed");
             }
             Ok(())
         }

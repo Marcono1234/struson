@@ -29,6 +29,11 @@ mod custom_writer {
         Object(Map<String, Value>),
     }
 
+    #[cold]
+    fn panic_incorrect_usage(message: &str) -> ! {
+        panic!("Incorrect writer usage: {message}")
+    }
+
     pub struct JsonValueWriter {
         stack: Vec<StackValue>,
         pending_name: Option<String>,
@@ -50,18 +55,18 @@ mod custom_writer {
     impl JsonValueWriter {
         fn verify_string_writer_inactive(&self) {
             if self.is_string_value_writer_active {
-                panic!("Incorrect writer usage: String value writer is active");
+                panic_incorrect_usage("String value writer is active");
             }
         }
 
         fn check_before_value(&self) {
             self.verify_string_writer_inactive();
             if self.final_value.is_some() {
-                panic!("Incorrect writer usage: Top-level value has already been written")
+                panic_incorrect_usage("Top-level value has already been written");
             }
             if let Some(StackValue::Object(_)) = self.stack.last() {
                 if self.pending_name.is_none() {
-                    panic!("Incorrect writer usage: Member name is expected");
+                    panic_incorrect_usage("Member name is expected");
                 }
             }
         }
@@ -105,7 +110,7 @@ mod custom_writer {
                 self.add_value(Value::Object(map));
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot end object; not inside object");
+                panic_incorrect_usage("Cannot end object; not inside object");
             }
         }
 
@@ -121,7 +126,7 @@ mod custom_writer {
                 self.add_value(Value::Array(vec));
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot end array; not inside array");
+                panic_incorrect_usage("Cannot end array; not inside array");
             }
         }
 
@@ -129,14 +134,12 @@ mod custom_writer {
             self.verify_string_writer_inactive();
             if let Some(StackValue::Object(_)) = self.stack.last() {
                 if self.pending_name.is_some() {
-                    panic!(
-                        "Incorrect writer usage: Member name has already been written; expecting value"
-                    );
+                    panic_incorrect_usage("Member name has already been written; expecting value");
                 }
                 self.pending_name = Some(name.to_owned());
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot write name; not inside object");
+                panic_incorrect_usage("Cannot write name; not inside object");
             }
         }
 
@@ -253,7 +256,7 @@ mod custom_writer {
             if let Some(value) = self.final_value {
                 Ok(value)
             } else {
-                panic!("Incorrect writer usage: Top-level value is incomplete")
+                panic_incorrect_usage("Top-level value is incomplete");
             }
         }
     }

@@ -72,6 +72,14 @@ impl serde_core::ser::Error for SerializerError {
     }
 }
 
+/// Panics always
+///
+/// To be called when the user used the API incorrectly.
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("Incorrect usage: {message}")
+}
+
 /// Serde `Serializer` which delegates to a [`JsonWriter`]
 ///
 /// Normally there is no need to directly use this serializer. Instead, the method
@@ -725,7 +733,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Self::Error> {
         if self.expects_entry_value {
-            panic!("Incorrect usage: Cannot serialize key when value is expected")
+            panic_incorrect_usage("Cannot serialize key when value is expected");
         }
 
         if let Some(expected_len) = self.expected_len {
@@ -746,7 +754,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
         if !self.expects_entry_value {
-            panic!("Incorrect usage: Cannot serialize value when key is expected")
+            panic_incorrect_usage("Cannot serialize value when key is expected");
         }
         self.expects_entry_value = false;
         value.serialize(&mut *self.ser)
@@ -754,7 +762,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         if self.expects_entry_value {
-            panic!("Incorrect usage: Cannot end map when value is expected")
+            panic_incorrect_usage("Cannot end map when value is expected");
         }
 
         if let Some(expected_len) = self.expected_len {

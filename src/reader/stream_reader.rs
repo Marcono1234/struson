@@ -80,6 +80,14 @@ enum StackValue {
 
 const INITIAL_STRING_VALUE_BUF_CAPACITY: usize = 32;
 
+/// Panics always
+///
+/// To be called when the user used the API incorrectly.
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("Incorrect reader usage: {message}")
+}
+
 /// A JSON reader implementation which consumes data from a [`Read`]
 ///
 /// This JSON reader does not perform any extensive internal buffering. Depending on the type
@@ -139,7 +147,7 @@ pub struct JsonStreamReader<R: Read> {
 
     peeked: Option<PeekedValue>,
     /// Whether the current array or object is empty, or at top-level whether
-    /// at least one value has been consumed already
+    /// no value has been consumed yet
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
@@ -608,7 +616,7 @@ impl<R: Read> JsonStreamReader<R> {
     /// top-level values are allowed.
     fn peek_internal_optional(&mut self) -> Result<Option<PeekedValue>, ReaderError> {
         if self.is_string_value_reader_active {
-            panic!("Incorrect reader usage: Cannot peek when string value reader is active");
+            panic_incorrect_usage("Cannot peek when string value reader is active");
         }
 
         if self.peeked.is_some() {
@@ -616,8 +624,8 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         if self.is_behind_top_level() && !self.reader_settings.allow_multiple_top_level {
-            panic!(
-                "Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings"
+            panic_incorrect_usage(
+                "Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings",
             );
         }
         if self.expects_member_value() {
@@ -794,7 +802,7 @@ impl<R: Read> JsonStreamReader<R> {
         check_depth: bool,
     ) -> Result<PeekedValue, ReaderError> {
         if self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot read value when expecting member name");
+            panic_incorrect_usage("Cannot read value when expecting member name");
         }
 
         let peeked_internal = self.peek_internal()?;
@@ -1153,12 +1161,10 @@ impl<R: Read> JsonStreamReader<R> {
     // to reuse this code
     fn before_name(&mut self) -> Result<(), ReaderError> {
         if !self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot consume member name when not expecting it");
+            panic_incorrect_usage("Cannot consume member name when not expecting it");
         }
         if self.is_string_value_reader_active {
-            panic!(
-                "Incorrect reader usage: Cannot consume member name when string value reader is active"
-            );
+            panic_incorrect_usage("Cannot consume member name when string value reader is active");
         }
 
         if !self.has_next()? {
@@ -1302,7 +1308,7 @@ impl NumberBytesCollector<()> for SkippingNumberBytesCollector {
 impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn peek(&mut self) -> Result<ValueType, ReaderError> {
         if self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot peek value when expecting member name");
+            panic_incorrect_usage("Cannot peek value when expecting member name");
         }
         let peeked = self.peek_internal()?;
         self.map_peeked(peeked)
@@ -1322,7 +1328,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn end_array(&mut self) -> Result<(), ReaderError> {
         if !self.is_in_array() {
-            panic!("Incorrect reader usage: Cannot end array when not inside array");
+            panic_incorrect_usage("Cannot end array when not inside array");
         }
         let peeked = self.peek_internal()?;
         if peeked != PeekedValue::ArrayEnd {
@@ -1370,10 +1376,10 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn end_object(&mut self) -> Result<(), ReaderError> {
         if !self.is_in_object() {
-            panic!("Incorrect reader usage: Cannot end object when not inside object");
+            panic_incorrect_usage("Cannot end object when not inside object");
         }
         if self.expects_member_value() {
-            panic!("Incorrect reader usage: Cannot end object when member value is expected");
+            panic_incorrect_usage("Cannot end object when member value is expected");
         }
         let peeked = self.peek_internal()?;
         if peeked != PeekedValue::ObjectEnd {
@@ -1409,20 +1415,18 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn has_next(&mut self) -> Result<bool, ReaderError> {
         if self.expects_member_value() {
-            panic!(
-                "Incorrect reader usage: Cannot check for next element when member value is expected"
-            );
+            panic_incorrect_usage("Cannot check for next element when member value is expected");
         }
 
         let peeked: PeekedValue;
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!(
-                    "Incorrect reader usage: Cannot check for next element when top-level value has not been started"
+                panic_incorrect_usage(
+                    "Cannot check for next element when top-level value has not been started",
                 );
             } else if !self.reader_settings.allow_multiple_top_level {
-                panic!(
-                    "Incorrect reader usage: Cannot check for multiple top-level values when not enabled in the reader settings"
+                panic_incorrect_usage(
+                    "Cannot check for multiple top-level values when not enabled in the reader settings",
                 );
             } else {
                 peeked = match self.peek_internal_optional()? {
@@ -1457,7 +1461,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn skip_value(&mut self) -> Result<(), ReaderError> {
         if self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot skip value when expecting member name");
+            panic_incorrect_usage("Cannot skip value when expecting member name");
         }
 
         let mut depth: u32 = 0;
@@ -1565,9 +1569,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
-            panic!(
-                "Incorrect reader usage: Cannot skip to top-level when string value reader is active"
-            );
+            panic_incorrect_usage("Cannot skip to top-level when string value reader is active");
         }
 
         // Handle expected member value separately because has_next() calls below are not allowed when
@@ -1598,7 +1600,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
         if self.expects_member_name {
-            panic!("Incorrect reader usage: Cannot transfer value when expecting member name");
+            panic_incorrect_usage("Cannot transfer value when expecting member name");
         }
 
         let mut depth: u32 = 0;
@@ -1689,19 +1691,19 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
 
     fn consume_trailing_whitespace(mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
-            panic!(
-                "Incorrect reader usage: Cannot consume trailing whitespace when string value reader is active"
+            panic_incorrect_usage(
+                "Cannot consume trailing whitespace when string value reader is active",
             );
         }
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!(
-                    "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet"
+                panic_incorrect_usage(
+                    "Cannot skip trailing whitespace when top-level value has not been consumed yet",
                 );
             }
         } else {
-            panic!(
-                "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet"
+            panic_incorrect_usage(
+                "Cannot skip trailing whitespace when top-level value has not been fully consumed yet",
             );
         }
 

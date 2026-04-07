@@ -42,6 +42,11 @@ impl PeekedValue {
     }
 }
 
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("{message}")
+}
+
 struct PartialJsonReader<J: JsonReader> {
     delegate: J,
     reached_eof: bool,
@@ -207,7 +212,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         match self.is_in_object.last() {
             Some(true) => {}
             // Covers `None` (neither in array nor object), and `Some(false)` (in array)
-            _ => panic!("not inside object"),
+            _ => panic_incorrect_usage("not inside object"),
         }
 
         if self.has_next()? {
@@ -247,7 +252,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         match self.is_in_object.last() {
             Some(false) => {}
             // Covers `None` (neither in array nor object), and `Some(true)` (in object)
-            _ => panic!("not inside array"),
+            _ => panic_incorrect_usage("not inside array"),
         }
 
         if self.has_next()? {
@@ -305,7 +310,7 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         match self.is_in_object.last() {
             Some(true) => {}
             // Covers `None` (neither in array nor object), and `Some(false)` (in array)
-            _ => panic!("not inside object"),
+            _ => panic_incorrect_usage("not inside object"),
         }
 
         if self.has_next()? {

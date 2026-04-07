@@ -82,6 +82,14 @@ impl From<ParseFloatError> for DeserializerError {
     }
 }
 
+/// Panics always
+///
+/// To be called when the user used the API incorrectly.
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("Incorrect usage: {message}")
+}
+
 // TODO: Should use `serde_core::de::Error`'s error functions instead of using own error types?
 
 /// Serde `Deserializer` which delegates to a [`JsonReader`]
@@ -663,7 +671,7 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
             let result = visitor.visit_map(&mut map_access)?;
             // Check this explicitly in case custom JsonReader implementation does not detect this
             if map_access.expects_entry_value {
-                panic!("Incorrect usage: Did not deserialize trailing value");
+                panic_incorrect_usage("Did not deserialize trailing value");
             }
 
             self.json_reader.end_object()?;
@@ -730,7 +738,7 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
                     let result = visitor.visit_enum(&mut variant_access)?;
 
                     if !variant_access.consumed_variant_value {
-                        panic!("Incorrect usage: Did not consume variant value");
+                        panic_incorrect_usage("Did not consume variant value");
                     }
 
                     self.json_reader.end_object()?;
@@ -746,7 +754,7 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
                 // Use `?` here to already fail fast before checking if value was consumed
                 let result = visitor.visit_enum(&mut variant_access)?;
                 if !variant_access.consumed_variant_value {
-                    panic!("Incorrect usage: Did not consume variant value");
+                    panic_incorrect_usage("Did not consume variant value");
                 }
                 Ok(result)
             }
@@ -818,7 +826,7 @@ impl<'de, R: JsonReader> serde_core::de::MapAccess<'de> for &mut MapAccess<'_, '
         seed: K,
     ) -> Result<Option<K::Value>, Self::Error> {
         if self.expects_entry_value {
-            panic!("Incorrect usage: Cannot deserialize key when value is expected")
+            panic_incorrect_usage("Cannot deserialize key when value is expected");
         }
         if self.de.json_reader.has_next()? {
             let key = seed.deserialize(MapKeyDeserializer {
@@ -837,7 +845,7 @@ impl<'de, R: JsonReader> serde_core::de::MapAccess<'de> for &mut MapAccess<'_, '
         seed: V,
     ) -> Result<V::Value, Self::Error> {
         if !self.expects_entry_value {
-            panic!("Incorrect usage: Cannot deserialize value when key is expected")
+            panic_incorrect_usage("Cannot deserialize value when key is expected");
         }
         self.expects_entry_value = false;
         seed.deserialize(&mut *self.de)
