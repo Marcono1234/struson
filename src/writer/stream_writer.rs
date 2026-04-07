@@ -233,9 +233,7 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn before_value(&mut self) -> Result<(), IoError> {
         if self.is_string_value_writer_active {
-            panic_incorrect_usage(
-                "Cannot finish document when string value writer is still active",
-            );
+            panic_incorrect_usage("Cannot write value when string value writer is still active");
         }
         if self.expects_member_name {
             panic_incorrect_usage("Cannot write value when name is expected");
@@ -416,9 +414,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             panic_incorrect_usage("Cannot write name when name is not expected");
         }
         if self.is_string_value_writer_active {
-            panic_incorrect_usage(
-                "Cannot finish document when string value writer is still active",
-            );
+            panic_incorrect_usage("Cannot write name when string value writer is still active");
         }
         self.before_container_element()?;
         self.write_string_value(name)?;
@@ -1267,7 +1263,7 @@ mod tests {
     #[should_panic(
         expected = "Incorrect writer usage: Cannot end array when string value writer is still active"
     )]
-    fn string_writer_array_incomplete() {
+    fn string_writer_incomplete_end_array() {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_array().unwrap();
@@ -1282,7 +1278,7 @@ mod tests {
     #[should_panic(
         expected = "Incorrect writer usage: Cannot end object when string value writer is still active"
     )]
-    fn string_writer_object_incomplete() {
+    fn string_writer_incomplete_end_object() {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_object().unwrap();
@@ -1292,6 +1288,37 @@ mod tests {
         drop(string_writer);
 
         let _ = json_writer.end_object();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect writer usage: Cannot write value when string value writer is still active"
+    )]
+    fn string_writer_incomplete_next_value() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.begin_array().unwrap();
+
+        let string_writer = json_writer.string_value_writer().unwrap();
+        drop(string_writer);
+
+        let _ = json_writer.bool_value(true);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect writer usage: Cannot write name when string value writer is still active"
+    )]
+    fn string_writer_incomplete_next_name() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.begin_object().unwrap();
+        json_writer.name("name").unwrap();
+
+        let string_writer = json_writer.string_value_writer().unwrap();
+        drop(string_writer);
+
+        let _ = json_writer.name("other-name");
     }
 
     #[test]
