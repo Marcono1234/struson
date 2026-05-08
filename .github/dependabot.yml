@@ -5,21 +5,21 @@ updates:
   - package-ecosystem: "rust-toolchain"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
     cooldown:
       default-days: 14
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
     cooldown:
       default-days: 14
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
     cooldown:
       default-days: 14
     ignore:
