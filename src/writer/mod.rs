@@ -657,6 +657,10 @@ pub trait FiniteNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// as for example `f64` could lead to a non-finite result such as Infinity for
+    /// large numbers.
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
@@ -692,6 +696,10 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The JSON number string is passed to the given `consumer`.
     /// Returns an error if this number is not a valid JSON number, for example
     /// because it is NaN or Infinity.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// as for example `f64` could lead to a non-finite result such as Infinity for
+    /// large numbers.
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
