@@ -315,7 +315,7 @@ impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
             // Use `?` here to already fail fast before calling end_array()
             let result = visitor.visit_seq(&mut seq)?;
             if let Some(expected_len) = expected_len
-                && seq.len < expected_len
+                && seq.len != expected_len
             {
                 return Err(DeserializerError::invalid_length(
                     seq.len,

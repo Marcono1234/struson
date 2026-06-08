@@ -592,7 +592,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         if let Some(expected_len) = self.expected_len
-            && self.len < expected_len
+            && self.len != expected_len
         {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: expected_len,
@@ -630,7 +630,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeTuple for SerializeTuple<'_, '_, W
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
+        if self.len != self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: self.expected_len,
                 actual: self.len,
@@ -667,7 +667,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeTupleStruct for SerializeTupleStru
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
+        if self.len != self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: self.expected_len,
                 actual: self.len,
@@ -704,7 +704,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeTupleVariant for SerializeTupleVar
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
+        if self.len != self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: self.expected_len,
                 actual: self.len,
@@ -766,7 +766,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
         }
 
         if let Some(expected_len) = self.expected_len
-            && self.len < expected_len
+            && self.len != expected_len
         {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: expected_len,
@@ -809,7 +809,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_,
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
+        if self.len != self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: self.expected_len,
                 actual: self.len,
@@ -851,7 +851,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeStructVariant for SerializeStructV
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.len < self.expected_len {
+        if self.len != self.expected_len {
             return Err(SerializerError::IncorrectElementsCount {
                 expected: self.expected_len,
                 actual: self.len,
