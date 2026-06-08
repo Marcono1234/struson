@@ -206,6 +206,7 @@ pub mod json_path {
 use std::{
     fmt::{Debug, Display, Formatter},
     io::Read,
+    num::ParseIntError,
     str::FromStr,
 };
 
@@ -241,6 +242,26 @@ pub enum ValueType {
 
     // No ArrayEnd and ObjectEnd, should use has_next()
 }
+
+/// Sealed trait for integer number types such as `u32`
+///
+/// Implementing this trait for custom number types is not possible. Use the
+/// methods [`JsonReader::next_number`] or [`JsonReader::next_number_as_str`] to read
+/// numbers of other types.
+///
+/// Custom JSON reader implementations can use the `FromStr` supertrait to parse
+/// numbers of this type.
+/*
+ * This is intentionally a separate type and does not re-use the FiniteNumber trait
+ * of this crate because 'integer' and 'finite number' are two distinct concepts;
+ * for example FiniteNumber is implemented by the internal TransferredNumber struct,
+ * which also supports non-integer numbers.
+ */
+#[expect(
+    private_bounds,
+    reason = "IntNumberImpl is intentionally internal; acts as sealed trait"
+)]
+pub trait IntegerNumber: FromStr<Err = ParseIntError> + IntNumberImpl + Debug {}
 
 /// Line and column position
 ///
@@ -354,10 +375,7 @@ pub struct JsonReaderPosition {
 }
 impl JsonReaderPosition {
     /// Creates an 'unknown' position, with all position information being [`None`]
-    #[allow(
-        dead_code,
-        reason = "called by Simple API (but guarded by feature flag)"
-    )]
+    #[cfg(feature = "simple-api")] // only needed by simple-api at the moment
     pub(crate) fn unknown_position() -> Self {
         JsonReaderPosition {
             path: None,
@@ -398,31 +416,19 @@ impl Display for JsonReaderPosition {
     }
 }
 
-/// JSON syntax error
-/*
- * This is a separate public struct because StringValueReader uses it when wrapping syntax error
- * inside std::io::Error. Otherwise, this should be private, and `ReaderError::SyntaxError` should
- * be a struct with these fields for consistency with the other error variants and for easier usage.
- */
-#[derive(Error, PartialEq, Eq, Clone, Debug)]
-#[error("JSON syntax error {kind} at {location}")]
-pub struct JsonSyntaxError {
-    /// Kind of the error
-    pub kind: SyntaxErrorKind,
-    /// Location where the error occurred in the JSON document
-    pub location: JsonReaderPosition,
-}
-
-/// Describes why a syntax error occurred
+/// Kind of a [`ReaderErrorKind::SyntaxError`]
+///
+/// Describes why the JSON data is considered to have invalid syntax.
 #[non_exhaustive]
 #[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not [enabled in the `ReaderSettings`](ReaderSettings::allow_comments)
     CommentsNotEnabled,
     /// A comment is incomplete
+    ///
+    /// For example, only a single `/` without subsequent `/` or `*` was encountered, or for
+    /// a block comment the closing `*/` is missing or incomplete.
     IncompleteComment,
-    /// A block comment is missing the closing `*/`
-    BlockCommentNotClosed,
 
     /// A literal value is incomplete or invalid, for example `tru` instead of `true`
     InvalidLiteral,
@@ -479,19 +485,28 @@ pub enum SyntaxErrorKind {
     TrailingData,
 }
 
-/// Describes why the JSON document is considered to have an unexpected structure
+/// Kind of [`ReaderErrorKind::UnexpectedStructure`]
+///
+/// Describes why the JSON document is considered to have an unexpected structure.
 #[derive(PartialEq, Eq, Clone, strum::Display, Debug)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
-    /* include field value; not included by default */
-    #[strum(to_string = "TooShortArray(expected_index = {expected_index})")]
+    /* include field values in string; not included by default */
+    #[strum(
+        to_string = "TooShortArray(expected_index = {expected_index}, actual_len = {actual_len})"
+    )]
     TooShortArray {
         /// Index (starting at 0) of the expected item
         expected_index: u32,
+        /// The actual length of the array
+        ///
+        /// If the length is not 0, the maximum (inclusive) index is: `max_index = actual_len - 1`
+        /* a field `max_index` (inclusive) might be more convenient, but that would underflow for `0 - 1` */
+        actual_len: u32,
     },
 
     /// A JSON object does not have a member with a certain name
-    /* include field value; not included by default */
+    /* include field value in string; not included by default */
     #[strum(to_string = "MissingObjectMember(\"{member_name}\")")]
     MissingObjectMember {
         /// Name of the expected member
@@ -509,34 +524,37 @@ pub enum UnexpectedStructureKind {
     MoreElementsThanExpected,
 }
 
-/// Error which occurred while reading from a JSON reader
+/// Kind of a [`ReaderError`]
 #[non_exhaustive]
-#[derive(Error, Debug)]
-// TODO: Rename to `JsonReaderError? current name might sound like this is only for errors from underlying `Read`
-pub enum ReaderError {
-    /// A syntax error was encountered
-    #[error("syntax error: {0}")]
-    SyntaxError(#[from] JsonSyntaxError),
+// Cannot derive PartialEq, Eq or Clone because std::io::Error does not implement them
+#[derive(strum::Display, Debug)]
+// TODO: Rename to `JsonReaderErrorKind`? (see ReaderError TODO)
+pub enum ReaderErrorKind {
+    /// A JSON syntax error was encountered
+    #[strum(to_string = "JSON syntax error {0}")]
+    SyntaxError(SyntaxErrorKind),
 
     /// The next JSON value had an unexpected type
     ///
     /// This error can occur for example when trying to read a JSON number when the next value is actually
-    /// a JSON boolean.
-    #[error("expected JSON value type {expected} but got {actual} at {location}")]
+    /// a JSON boolean.\
+    /// If the type of a JSON value is unknown in advance, [`JsonReader::peek`] can be used
+    /// to determine the type and then the corresponding value reading method can be used.
+    #[strum(to_string = "expected JSON value type {expected} but got {actual}")]
     UnexpectedValueType {
         /// The expected JSON value type
         expected: ValueType,
         /// The actual JSON value type
         actual: ValueType,
-        /// Location where the error occurred in the JSON document
-        location: JsonReaderPosition,
     },
 
     /// The JSON document had an unexpected structure
     ///
     /// This error occurs when trying to consume more elements than a JSON array or object has, or
-    /// when trying to end a JSON array or object when there are still unprocessed elements in it.
-    /// If these remaining elements should be ignored they can be skipped like this:
+    /// when trying to end a JSON array or object when there are still unprocessed elements in it.\
+    /// If the exact number of elements is unknown in advance, [`JsonReader::has_next`] can be used
+    /// to check if there are more elements. If all remaining elements should be ignored they can
+    /// be skipped like this:
     /// ```
     /// # use struson::reader::*;
     /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
@@ -548,94 +566,111 @@ pub enum ReaderError {
     /// ```
     /// Note: For a JSON object [`skip_name`](JsonReader::skip_name) and [`skip_value`](JsonReader::skip_value)
     /// have to be called for every member to skip its name and value.
-    #[error("unexpected JSON structure {kind} at {location}")]
-    UnexpectedStructure {
-        /// Describes why the JSON document is considered to have an invalid structure
-        kind: UnexpectedStructureKind,
-        /// Location where the error occurred in the JSON document
-        location: JsonReaderPosition,
-    },
+    #[strum(to_string = "unexpected JSON structure {0}")]
+    UnexpectedStructure(UnexpectedStructureKind),
 
     /// The maximum nesting depth was exceeded while reading
     ///
     /// See [`ReaderSettings::max_nesting_depth`] for more information.
-    #[error("maximum nesting depth {max_nesting_depth} exceeded at {location}")]
+    #[strum(to_string = "maximum nesting depth {max_nesting_depth} exceeded")]
     MaxNestingDepthExceeded {
         /// The maximum nesting depth
         max_nesting_depth: u32,
-        /// Location within the JSON document
-        location: JsonReaderPosition,
     },
 
     /// An unsupported JSON number value was encountered
     ///
     /// See [`ReaderSettings::restrict_number_values`] for more information.
-    #[error("unsupported number value '{number}' at {location}")]
+    #[strum(to_string = "unsupported number value '{number}'")]
     UnsupportedNumberValue {
         /// The unsupported number value
         number: String,
-        /// Location of the number value within the JSON document
-        location: JsonReaderPosition,
     },
+
+    /// A JSON number is not a valid integer
+    ///
+    /// This error is reported by [`JsonReader::next_number_int`] when a value is presumably
+    /// a valid JSON number but cannot be parsed as integer, for example because it is a
+    /// decimal number.
+    ///
+    /// If the value is not a valid JSON number in the first place, a syntax error of
+    /// kind [`SyntaxErrorKind::MalformedNumber`] is reported instead. However, JSON reader
+    /// implementations might report an `InvalidIntError` even if the value is not a valid
+    /// JSON number (and `MalformedNumber` would be more appropriate) when they fail fast,
+    /// for example when parsing an unsigned `u64` but the number starts with a `-`.
+    /* use Debug string `:?` because `IntErrorKind` does not implement Display */
+    #[strum(to_string = "invalid integer number due to '{0:?}'")]
+    InvalidIntError(std::num::IntErrorKind), // reuse stdlib error kind; is this a good idea?
 
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
-    #[error("IO error '{error}' at (roughly) {location}")]
-    IoError {
-        /// The IO error which occurred
-        error: IoError,
-        /// Rough location where the error occurred within the JSON document
-        ///
-        /// The location might not be completely accurate. Since the IO error might have
-        /// been returned by the underlying reader, it might not be related to the content
-        /// of the JSON document. For example the location might still point to the beginning
-        /// of the current JSON value while the IO error actually occurred multiple bytes
-        /// ahead while fetching more data from the underlying reader.
-        location: JsonReaderPosition,
-    },
+    ///
+    /// The [location](ReaderError::location) for errors of this kind might not be completely
+    /// accurate. Since the IO error might have been returned by the underlying reader, it might
+    /// not be related to the content of the JSON document. For example the location might still
+    /// point to the beginning of the current JSON value while the IO error actually occurred
+    /// multiple bytes ahead while fetching more data from the underlying reader.
+    #[strum(to_string = "IO error '{0}'")]
+    IoError(IoError),
+}
+
+impl ReaderErrorKind {
+    /// Creates a clone of this error kind
+    ///
+    /// For most of the variants of this error kind this acts like a regular [`Clone`]. The only
+    /// exception is [`ReaderErrorKind::IoError`] where it might not be possible to fully preserve
+    /// all data of the original error.
+    #[cfg(feature = "simple-api")] // only needed by simple-api at the moment
+    pub(crate) fn rough_clone(&self) -> Self {
+        match self {
+            Self::SyntaxError(e) => Self::SyntaxError(*e),
+            Self::UnexpectedValueType { expected, actual } => Self::UnexpectedValueType {
+                expected: *expected,
+                actual: *actual,
+            },
+            Self::UnexpectedStructure(kind) => Self::UnexpectedStructure(kind.clone()),
+            Self::MaxNestingDepthExceeded { max_nesting_depth } => Self::MaxNestingDepthExceeded {
+                max_nesting_depth: *max_nesting_depth,
+            },
+            Self::UnsupportedNumberValue { number } => Self::UnsupportedNumberValue {
+                number: number.clone(),
+            },
+            Self::InvalidIntError(kind) => Self::InvalidIntError(*kind),
+            Self::IoError(error) => Self::IoError(IoError::new(error.kind(), error.to_string())),
+        }
+    }
+}
+
+/// Error which occurred while reading from a JSON reader
+#[derive(Error, Debug)]
+// TODO: Rename to `JsonReaderError`? current name might sound like this is only for errors from underlying `Read`
+pub struct ReaderError {
+    /// Error kind
+    pub kind: ReaderErrorKind,
+    /// Location within the JSON document
+    ///
+    /// For some error kinds, such as [`ReaderErrorKind::IoError`], the location is not completely accurate.
+    pub location: JsonReaderPosition,
+}
+
+impl Display for ReaderError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let location_prefix = match self.kind {
+            // Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
+            ReaderErrorKind::IoError(_) => "(roughly) ",
+            _ => "",
+        };
+        write!(f, "{} at {location_prefix}{}", self.kind, self.location)
+    }
 }
 
 impl ReaderError {
-    /// Creates a clone of this Error
-    ///
-    /// For most of the variants of this error this acts like a regular [`Clone`]. The only
-    /// exception is [`ReaderError::IoError`] where it might not be possible to fully preserve
-    /// all data of the original error.
-    #[allow(
-        dead_code,
-        reason = "called by Simple API (but guarded by feature flag)"
-    )]
+    /// Creates a clone of this Error, preserving as much information as possible
+    #[cfg(feature = "simple-api")] // only needed by simple-api at the moment
     pub(crate) fn rough_clone(&self) -> Self {
-        match self {
-            Self::SyntaxError(e) => Self::SyntaxError(e.clone()),
-            Self::UnexpectedValueType {
-                expected,
-                actual,
-                location,
-            } => Self::UnexpectedValueType {
-                expected: *expected,
-                actual: *actual,
-                location: location.clone(),
-            },
-            Self::UnexpectedStructure { kind, location } => Self::UnexpectedStructure {
-                kind: kind.clone(),
-                location: location.clone(),
-            },
-            Self::MaxNestingDepthExceeded {
-                max_nesting_depth,
-                location,
-            } => Self::MaxNestingDepthExceeded {
-                max_nesting_depth: *max_nesting_depth,
-                location: location.clone(),
-            },
-            Self::UnsupportedNumberValue { number, location } => Self::UnsupportedNumberValue {
-                number: number.clone(),
-                location: location.clone(),
-            },
-            Self::IoError { error, location } => Self::IoError {
-                error: IoError::new(error.kind(), error.to_string()),
-                location: location.clone(),
-            },
+        Self {
+            kind: self.kind.rough_clone(),
+            location: self.location.clone(),
         }
     }
 }
@@ -666,7 +701,7 @@ pub enum TransferError {
 ///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
 ///     - [`next_name`](Self::next_name), [`next_name_owned`](Self::next_name_owned): Reading the name of a JSON object member
 ///     - [`next_str`](Self::next_str), [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
-///     - [`next_number`](Self::next_number), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
+///     - [`next_number`](Self::next_number), [`next_number_int`](Self::next_number_int), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
 ///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value (optional feature)
@@ -727,12 +762,12 @@ pub enum TransferError {
 /// reader, a JSON syntax error or an unexpected structure of the JSON document.
 /// See [`ReaderError`] for more details.
 ///
-/// When encountering [`ReaderError::SyntaxError`] and [`ReaderError::IoError`] processing the
+/// When encountering [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`] processing the
 /// JSON document **must** be aborted. Trying to call any reader methods afterwards can lead
 /// to unspecified behavior, such as errors, panics or incorrect data. However, no _undefined_
 /// behavior occurs.
 ///
-/// When encountering [`ReaderError::UnexpectedValueType`] or [`ReaderError::UnexpectedStructure`]
+/// When encountering [`ReaderErrorKind::UnexpectedValueType`] or [`ReaderErrorKind::UnexpectedStructure`]
 /// depending on the use case it might be possible to continue processing the JSON document
 /// (except for [`seek_to`](Self::seek_to) where it might not be obvious how many elements have already been
 /// skipped). However, these errors can usually be avoided by using either [`peek`](Self::peek) or [`has_next`](Self::has_next)
@@ -765,15 +800,15 @@ pub trait JsonReader {
     /// match json_reader.peek()? {
     ///     ValueType::Boolean => println!("A boolean: {}", json_reader.next_bool()?),
     ///     ValueType::String => println!("A string: {}", json_reader.next_str()?),
-    ///     _ => panic!("Unexpected type"),
+    ///     _ => panic!("unexpected type"),
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The method
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The method
     /// [`has_next`](Self::has_next) can be used to check if there is a next value.
     ///
     /// # Panics
@@ -809,13 +844,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON object but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -830,9 +865,9 @@ pub trait JsonReader {
     /// This method is used to end a JSON object started by [`begin_object`](Self::begin_object).
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there are remaining members in the object a [`ReaderError::UnexpectedStructure`] is returned.
+    /// If there are remaining members in the object a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`skip_name`](Self::skip_name) and [`skip_value`](Self::skip_value) can be used to skip these
     /// remaining members in case they should be ignored:
     /// ```
@@ -882,13 +917,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON array but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -903,9 +938,9 @@ pub trait JsonReader {
     /// This method is used to end a JSON array started by [`begin_array`](Self::begin_array).
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there are remaining items in the array a [`ReaderError::UnexpectedStructure`] is returned.
+    /// If there are remaining items in the array a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`skip_value`](Self::skip_value) can be used to skip these remaining items in case they should be ignored:
     /// ```
     /// # use struson::reader::*;
@@ -985,9 +1020,9 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next object member a [`ReaderError::UnexpectedStructure`] is returned.
+    /// If there is no next object member a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
     ///
     /// # Panics
@@ -1029,13 +1064,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON string value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1095,13 +1130,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON string value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Reader errors
@@ -1122,11 +1157,19 @@ pub trait JsonReader {
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError>;
 
-    /// Consumes and returns a JSON number value
+    /// Consumes and returns a parsed JSON number value
     ///
-    /// The result is either the parsed number or the parse error. It might be necessary to
-    /// help the Rust compiler a bit by explicitly specifying the number type in case it cannot
-    /// be inferred automatically.
+    /// This method passes the string representation of the JSON number to the `FromStr`
+    /// implementation and afterwards returns the result. The result is either the parsed
+    /// number or the parse error. It might be necessary to help the Rust compiler a bit by
+    /// explicitly specifying the number type in case it cannot be inferred automatically,
+    /// for example `next_number::<u32>()`.\
+    /// Note that while the JSON number is guaranteed to be a finite number, the `FromStr`
+    /// implementation might return a non-finite result. For example `f64::from_str` can
+    /// return Infinity for large numbers.
+    ///
+    /// If the number should be parsed as integer number type, the method [`next_number_int`](Self::next_number_int)
+    /// might be more efficient.
     ///
     /// If parsing the number should be deferred to a later point or the exact format of the
     /// JSON number should be preserved, the method [`next_number_as_str`](Self::next_number_as_str)
@@ -1141,16 +1184,16 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON number value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
-    /// If the number is too large or has too many decimal places a [`ReaderError::UnsupportedNumberValue`]
+    /// If the number is too large or has too many decimal places a [`ReaderErrorKind::UnsupportedNumberValue`]
     /// is returned, depending on the [reader settings](ReaderSettings::restrict_number_values).
     ///
     /// # Panics
@@ -1168,6 +1211,73 @@ pub trait JsonReader {
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
         // Default implementation which should be suitable for most JsonReader implementations
         Ok(T::from_str(self.next_number_as_str()?))
+    }
+
+    /// Consumes and returns a JSON number parsed as integer
+    ///
+    /// The default implementation is equivalent to calling [`next_number`](Self::next_number),
+    /// but JSON reader implementations might provide a more efficient implementation.
+    ///
+    /// It might be necessary to help the Rust compiler a bit by explicitly specifying the
+    /// number type in case it cannot be inferred automatically, for example `next_number_int::<u32>()`.
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/167).
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::*;
+    /// let mut json_reader = JsonStreamReader::new("12".as_bytes());
+    /// assert_eq!(json_reader.next_number_int::<u32>()?, 12);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
+    ///
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// method can be used to check if there is a next value.
+    ///
+    /// If the next value is not a JSON number value but is a value of a different type
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// check the type if it is not known in advance.
+    ///
+    /// If the next value is a valid JSON number but cannot be parsed as integer number, for
+    /// example because it is a decimal number, a [`ReaderErrorKind::InvalidIntError`] is returned.
+    /// Note that if the value is not a valid JSON number in the first place, a syntax error of
+    /// kind [`SyntaxErrorKind::MalformedNumber`] is reported instead.
+    ///
+    /// # Panics
+    /// Panics when called on a JSON reader which currently expects a member name, or
+    /// when called after the top-level value has already been consumed and multiple top-level
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
+    /*
+     * Design note:
+     * Alternative to this generic `next_number_int<N>` would be to have dedicated methods for each
+     * of the primitive integer number types (or at least the most common ones), e.g. `next_number_u64`.
+     *
+     * Advantages of `next_number_int<N>`:
+     * - Less API 'clutter'
+     * - (Maybe?) Easier or more convenient to use for users
+     *
+     * Disadvantages:
+     * - Custom JsonReader implementations cannot optimize this; they can only use the supertrait `FromStr`;
+     *   the more optimized methods are only available within this crate
+     * - (Maybe?) Implementing `IntegerNumber` for more types in the future could cause issues for user
+     *   code where `N` is inferred, and the compiler might choose a different type then
+     */
+    fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+        // call peek to position reader in front of value, needed for `current_position` call
+        self.peek()?;
+        // obtain error location for easier troubleshooting; but don't include JSON path to reduce performance
+        // overhead in case no error actually occurs
+        let error_position = self.current_position(false);
+        let number_result = self.next_number::<N>()?;
+        number_result.map_err(|e| ReaderError {
+            kind: ReaderErrorKind::InvalidIntError(*e.kind()),
+            location: error_position,
+        })
     }
 
     /// Consumes and returns the string representation of a JSON number value as `str`
@@ -1194,16 +1304,16 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON number value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
-    /// If the number is too large or has too many decimal places a [`ReaderError::UnsupportedNumberValue`]
+    /// If the number is too large or has too many decimal places a [`ReaderErrorKind::UnsupportedNumberValue`]
     /// is returned, depending on the [reader settings](ReaderSettings::restrict_number_values).
     ///
     /// # Panics
@@ -1234,13 +1344,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON boolean value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1265,13 +1375,13 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// If the next value is not a JSON null value but is a value of a different type
-    /// a [`ReaderError::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
     /// check the type if it is not known in advance.
     ///
     /// # Panics
@@ -1348,9 +1458,10 @@ pub trait JsonReader {
     /// Skips the name of the next JSON object member
     ///
     /// Afterwards one of the value reading methods such as [`next_number`](Self::next_number) can be
-    /// used to read the corresponding member value.
+    /// used to read the corresponding member value. The method [`skip_value`](Self::skip_value) can
+    /// be used to skip the member value.
     ///
-    /// Skipping member names can be useful when the only the values of the JSON object members are
+    /// Skipping member names can be useful when only the values of the JSON object members are
     /// relevant for the application processing the JSON document but the member names don't matter.
     ///
     /// Skipping member names with this method is usually more efficient than calling [`next_name`](Self::next_name)
@@ -1373,9 +1484,9 @@ pub trait JsonReader {
     /// To skip to a specific location in the JSON document the method [`seek_to`](Self::seek_to) can be used.
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next object member a [`ReaderError::UnexpectedStructure`] is returned.
+    /// If there is no next object member a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
     ///
     /// # Panics
@@ -1414,9 +1525,9 @@ pub trait JsonReader {
     /// To skip to a specific location in the JSON document the method [`seek_to`](Self::seek_to) can be used.
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// # Panics
@@ -1464,10 +1575,10 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
     /// If the structure or the value types of the JSON document do not match the structure expected
-    /// by the JSON path, either a [`ReaderError::UnexpectedStructure`] or a [`ReaderError::UnexpectedValueType`]
+    /// by the JSON path, either a [`ReaderErrorKind::UnexpectedStructure`] or a [`ReaderErrorKind::UnexpectedValueType`]
     /// is returned.
     ///
     /// # Panics
@@ -1493,10 +1604,13 @@ pub trait JsonReader {
                     self.begin_array()?;
                     for i in 0..=*index {
                         if !self.has_next()? {
-                            return Err(ReaderError::UnexpectedStructure {
-                                kind: UnexpectedStructureKind::TooShortArray {
-                                    expected_index: *index,
-                                },
+                            return Err(ReaderError {
+                                kind: ReaderErrorKind::UnexpectedStructure(
+                                    UnexpectedStructureKind::TooShortArray {
+                                        expected_index: *index,
+                                        actual_len: i,
+                                    },
+                                ),
                                 location: self.current_position(true),
                             });
                         }
@@ -1521,10 +1635,12 @@ pub trait JsonReader {
                     }
 
                     if !found_member {
-                        return Err(ReaderError::UnexpectedStructure {
-                            kind: UnexpectedStructureKind::MissingObjectMember {
-                                member_name: name.clone(),
-                            },
+                        return Err(ReaderError {
+                            kind: ReaderErrorKind::UnexpectedStructure(
+                                UnexpectedStructureKind::MissingObjectMember {
+                                    member_name: name.clone(),
+                                },
+                            ),
                             location: self.current_position(true),
                         });
                     }
@@ -1661,7 +1777,7 @@ pub trait JsonReader {
     /// ```
     ///
     /// # Errors
-    /// None, besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`].
+    /// None, besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`].
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError>;
 
     /// Consumes the next value and writes it to the given JSON writer
@@ -1711,9 +1827,9 @@ pub trait JsonReader {
     /// JSON reader or an error which occurred for the given JSON writer.
     ///
     /// ## Reader errors
-    /// (besides [`ReaderError::SyntaxError`] and [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
     ///
-    /// If there is no next value a [`ReaderError::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
     /// method can be used to check if there is a next value.
     ///
     /// ## Writer errors
@@ -1738,7 +1854,7 @@ pub trait JsonReader {
     /// Consumes trailing whitespace at the end of the top-level value
     ///
     /// Additionally, if comments are [enabled in the `ReaderSettings`](ReaderSettings::allow_comments)
-    /// also consumes trailing comments. If there is any trailing data a [`ReaderError::SyntaxError`]
+    /// also consumes trailing comments. If there is any trailing data a [`ReaderErrorKind::SyntaxError`]
     /// is returned.
     ///
     /// This method can be useful to verify that a JSON document is wellformed and does not
@@ -1767,9 +1883,9 @@ pub trait JsonReader {
     /// will panic, see "Panics" section below.
     ///
     /// # Errors
-    /// (besides [`ReaderError::IoError`])
+    /// (besides [`ReaderErrorKind::IoError`])
     ///
-    /// If there is trailing data at the end of the top-level value a [`ReaderError::SyntaxError`]
+    /// If there is trailing data at the end of the top-level value a syntax error
     /// of kind [`SyntaxErrorKind::TrailingData`] is returned.
     ///
     /// # Panics
@@ -1830,94 +1946,98 @@ pub trait JsonReader {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
+    use std::error::Error;
+    use std::{cell::Cell, num::IntErrorKind};
 
-    use super::{
-        IoError, JsonReaderPosition, JsonSyntaxError, LinePosition, ReaderError, SyntaxErrorKind,
-        UnexpectedStructureKind, ValueType,
-        json_path::{JsonPathPiece, json_path},
-    };
+    use super::{json_path::*, *};
 
     #[test]
-    fn reader_error_clone() {
+    #[cfg(feature = "simple-api")] // `rough_clone()` is only enabled for simple-api at the moment
+    fn reader_error_rough_clone() {
         let original_location = JsonReaderPosition {
             path: Some(json_path!["a", 1].to_vec()),
             line_pos: Some(LinePosition { line: 0, column: 7 }),
             data_pos: Some(7),
         };
 
-        let syntax_error = JsonSyntaxError {
-            kind: SyntaxErrorKind::MalformedJson,
+        let original = ReaderError {
+            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson),
             location: original_location.clone(),
         };
-        let original = ReaderError::SyntaxError(syntax_error.clone());
         match original.rough_clone() {
-            ReaderError::SyntaxError(e) => assert_eq!(syntax_error, e),
+            ReaderError {
+                kind: ReaderErrorKind::SyntaxError(syntax_error_kind),
+                location,
+            } => {
+                assert_eq!(SyntaxErrorKind::MalformedJson, syntax_error_kind);
+                assert_eq!(original_location, location);
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "simple-api")] // `rough_clone()` is only enabled for simple-api at the moment
+    fn reader_error_kind_rough_clone() {
+        use std::io::ErrorKind;
+
+        let original = ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson);
+        match original.rough_clone() {
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson) => {}
             e => panic!("unexpected error: {e:?}"),
         }
 
-        let original = ReaderError::UnexpectedValueType {
+        let original = ReaderErrorKind::UnexpectedValueType {
             expected: ValueType::Array,
             actual: ValueType::Boolean,
-            location: original_location.clone(),
         };
         match original.rough_clone() {
-            ReaderError::UnexpectedValueType {
+            ReaderErrorKind::UnexpectedValueType {
                 expected: ValueType::Array,
                 actual: ValueType::Boolean,
-                location,
-            } => assert_eq!(original_location, location),
+            } => {}
             e => panic!("unexpected error: {e:?}"),
         }
 
-        let unexpected_structure = UnexpectedStructureKind::TooShortArray { expected_index: 2 };
-        let original = ReaderError::UnexpectedStructure {
-            kind: unexpected_structure.clone(),
-            location: original_location.clone(),
+        let unexpected_structure = UnexpectedStructureKind::TooShortArray {
+            expected_index: 2,
+            actual_len: 1,
         };
+        let original = ReaderErrorKind::UnexpectedStructure(unexpected_structure.clone());
         match original.rough_clone() {
-            ReaderError::UnexpectedStructure { kind, location } => {
+            ReaderErrorKind::UnexpectedStructure(kind) => {
                 assert_eq!(unexpected_structure, kind);
-                assert_eq!(original_location, location);
             }
             e => panic!("unexpected error: {e:?}"),
         }
 
-        let original = ReaderError::MaxNestingDepthExceeded {
+        let original = ReaderErrorKind::MaxNestingDepthExceeded {
             max_nesting_depth: 5,
-            location: original_location.clone(),
         };
         match original.rough_clone() {
-            ReaderError::MaxNestingDepthExceeded {
+            ReaderErrorKind::MaxNestingDepthExceeded {
                 max_nesting_depth: 5,
-                location,
-            } => assert_eq!(original_location, location),
+            } => {}
             e => panic!("unexpected error: {e:?}"),
         }
 
-        let original = ReaderError::UnsupportedNumberValue {
+        let original = ReaderErrorKind::UnsupportedNumberValue {
             number: "1e123456".to_owned(),
-            location: original_location.clone(),
         };
         match original.rough_clone() {
-            ReaderError::UnsupportedNumberValue { number, location } => {
+            ReaderErrorKind::UnsupportedNumberValue { number } => {
                 assert_eq!("1e123456", number);
-                assert_eq!(original_location, location);
             }
             e => panic!("unexpected error: {e:?}"),
         }
 
-        let original = ReaderError::IoError {
-            error: IoError::new(ErrorKind::InvalidData, "custom-message"),
-            location: original_location.clone(),
-        };
+        let original =
+            ReaderErrorKind::IoError(IoError::new(ErrorKind::InvalidData, "custom-message"));
         match original.rough_clone() {
-            ReaderError::IoError { error, location } => {
+            ReaderErrorKind::IoError(error) => {
                 assert_eq!(ErrorKind::InvalidData, error.kind());
                 // Note: Original error cannot be fully preserved, only its `to_string` value is preserved
                 assert_eq!("custom-message", error.get_ref().unwrap().to_string());
-
-                assert_eq!(original_location, location);
             }
             e => panic!("unexpected error: {e:?}"),
         }
@@ -1972,8 +2092,12 @@ mod tests {
     #[test]
     fn unexpected_structure_kind_display() {
         assert_eq!(
-            "TooShortArray(expected_index = 2)",
-            UnexpectedStructureKind::TooShortArray { expected_index: 2 }.to_string()
+            "TooShortArray(expected_index = 2, actual_len = 1)",
+            UnexpectedStructureKind::TooShortArray {
+                expected_index: 2,
+                actual_len: 1
+            }
+            .to_string()
         );
         assert_eq!(
             "MissingObjectMember(\"custom-name\")",
@@ -1991,5 +2115,203 @@ mod tests {
             "MoreElementsThanExpected",
             UnexpectedStructureKind::MoreElementsThanExpected.to_string()
         );
+    }
+
+    struct NumberStringReader {
+        number: String,
+        peeked: bool,
+        expect_peeked: bool,
+        // Cell because it is set by `current_position` which only takes `&self` and not `&mut self`
+        obtained_location: Cell<bool>,
+    }
+    impl NumberStringReader {
+        pub fn new(number: String, expect_peeked: bool) -> Self {
+            NumberStringReader {
+                number,
+                peeked: false,
+                expect_peeked,
+                obtained_location: Cell::new(false),
+            }
+        }
+    }
+    impl JsonReader for NumberStringReader {
+        fn peek(&mut self) -> Result<ValueType, ReaderError> {
+            assert!(!self.peeked);
+            assert!(!self.obtained_location.get());
+            self.peeked = true;
+            Ok(ValueType::Number)
+        }
+
+        fn begin_object(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn end_object(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn begin_array(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn end_array(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn has_next(&mut self) -> Result<bool, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_name(&mut self) -> Result<&str, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_name_owned(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_str(&mut self) -> Result<&str, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_string(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError> {
+            unreachable!();
+            // Unreachable; allow the compiler to infer the type of `impl std::io::Read`
+            #[expect(unreachable_code)]
+            Ok(std::io::empty())
+        }
+
+        fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
+            if self.expect_peeked {
+                assert!(self.peeked);
+                // Should have obtained location before reading number and then manually parsing it
+                assert!(self.obtained_location.get());
+            }
+            Ok(&self.number)
+        }
+
+        fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_bool(&mut self) -> Result<bool, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_null(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        #[cfg(feature = "serde")]
+        fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
+            &mut self,
+        ) -> Result<D, crate::serde::DeserializerError> {
+            unreachable!()
+        }
+
+        fn skip_name(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn skip_value(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn transfer_to<W: JsonWriter>(
+            &mut self,
+            _json_writer: &mut W,
+        ) -> Result<(), TransferError> {
+            unreachable!()
+        }
+
+        fn consume_trailing_whitespace(self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn current_position(&self, _include_path: bool) -> JsonReaderPosition {
+            // Should have peeked before obtaining position, to make sure it points right before
+            // value (and not at beginning of whitespace)
+            assert!(self.peeked);
+            assert!(!self.obtained_location.get());
+            self.obtained_location.set(true);
+
+            // dummy position for error creation
+            JsonReaderPosition {
+                path: None,
+                line_pos: None,
+                data_pos: None,
+            }
+        }
+    }
+
+    /// Tests the default implementation of the `next_number` method
+    #[test]
+    fn default_next_number() -> Result<(), Box<dyn Error>> {
+        fn read_i64(json_number: &str) -> Result<i64, ParseIntError> {
+            let mut reader = NumberStringReader::new(json_number.to_owned(), false);
+            reader.next_number().unwrap()
+        }
+
+        assert_eq!(read_i64("-123")?, -123);
+        assert_eq!(read_i64("-1")?, -1);
+        assert_eq!(read_i64("-0")?, 0);
+        assert_eq!(read_i64("0")?, 0);
+        assert_eq!(read_i64("1")?, 1);
+        assert_eq!(read_i64("123")?, 123);
+
+        assert_eq!(read_i64(&i64::MIN.to_string())?, i64::MIN);
+        assert_eq!(read_i64(&i64::MAX.to_string())?, i64::MAX);
+
+        match read_i64("1.2") {
+            Err(error) => {
+                assert_eq!(*error.kind(), IntErrorKind::InvalidDigit);
+            }
+            result => panic!("unexpected result: {result:?}"),
+        }
+
+        Ok(())
+    }
+
+    /// Tests the default implementation of the `next_number_int` method
+    #[test]
+    fn default_next_number_int() -> Result<(), Box<dyn Error>> {
+        fn read_i64(json_number: &str) -> Result<i64, ReaderError> {
+            let mut reader = NumberStringReader::new(json_number.to_owned(), true);
+            reader.next_number_int()
+        }
+
+        assert_eq!(read_i64("-123")?, -123);
+        assert_eq!(read_i64("-1")?, -1);
+        assert_eq!(read_i64("-0")?, 0);
+        assert_eq!(read_i64("0")?, 0);
+        assert_eq!(read_i64("1")?, 1);
+        assert_eq!(read_i64("123")?, 123);
+
+        assert_eq!(read_i64(&i64::MIN.to_string())?, i64::MIN);
+        assert_eq!(read_i64(&i64::MAX.to_string())?, i64::MAX);
+
+        match read_i64("1.2") {
+            Err(ReaderError {
+                kind: ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit),
+                location:
+                    // dummy location used by custom reader
+                    JsonReaderPosition {
+                        path: None,
+                        line_pos: None,
+                        data_pos: None,
+                    },
+            }) => {}
+            result => panic!("unexpected result: {result:?}"),
+        }
+
+        Ok(())
     }
 }

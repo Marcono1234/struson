@@ -17,8 +17,8 @@ use self::{
 };
 use crate::{
     reader::{
-        JsonReader, JsonReaderPosition, JsonStreamReader, JsonSyntaxError, ReaderError,
-        SyntaxErrorKind, TransferError, ValueType,
+        JsonReader, JsonReaderPosition, JsonStreamReader, ReaderError, SyntaxErrorKind,
+        TransferError, ValueType,
         json_path::{JsonPath, JsonPathPiece},
         simple::error_safe_reader::create_dummy_error,
     },
@@ -531,11 +531,16 @@ pub trait ValueReader<J: JsonReader> {
         f: impl FnOnce(StringValueReader<'_>) -> Result<T, Box<dyn Error>>,
     ) -> Result<T, Box<dyn Error>>;
 
-    /// Consumes and returns a JSON number value
+    /// Consumes and returns a parsed JSON number value
     ///
-    /// The result is either the parsed number or the parse error. It might be necessary to
-    /// help the Rust compiler a bit by explicitly specifying the number type in case it cannot
-    /// be inferred automatically.
+    /// This method passes the string representation of the JSON number to the `FromStr`
+    /// implementation and afterwards returns the result. The result is either the parsed
+    /// number or the parse error. It might be necessary to help the Rust compiler a bit by
+    /// explicitly specifying the number type in case it cannot be inferred automatically,
+    /// for example `read_number::<u32>()`.\
+    /// Note that while the JSON number is guaranteed to be a finite number, the `FromStr`
+    /// implementation might return a non-finite result. For example `f64::from_str` can
+    /// return Infinity for large numbers.
     ///
     /// # Examples
     /// ```
@@ -932,7 +937,7 @@ fn read_string_with_reader<J: JsonReader, T>(
     let result = f(string_reader)?;
 
     // Check if there is error which was not propagated by function
-    if let Some(error) = delegate.error {
+    if let Some(error) = delegate.reader_error {
         return Err(error.rough_clone().into());
     }
 
@@ -1247,6 +1252,7 @@ fn read_seeked_multi<J: JsonReader>(
 
 mod error_safe_reader {
     use super::*;
+    use crate::reader::{IntegerNumber, ReaderErrorKind, ReaderIoError, StringReadingError};
 
     type IoError = std::io::Error;
 
@@ -1266,12 +1272,14 @@ mod error_safe_reader {
 
     /// Creates a [`ReaderError`] for situations where the original error cannot be preserved
     pub(super) fn create_dummy_error(location: &JsonReaderPosition) -> ReaderError {
-        ReaderError::SyntaxError(JsonSyntaxError {
-            // This error kind does not suit that well, but the other kinds suit even worse
-            // Mainly have to return 'any' error; users should not rely on this safeguard in the first place
-            kind: SyntaxErrorKind::IncompleteDocument,
+        ReaderError {
+            kind: ReaderErrorKind::SyntaxError(
+                // This error kind does not suit that well, but the other kinds suit even worse
+                // Mainly have to return 'any' error; users should not rely on this safeguard in the first place
+                SyntaxErrorKind::IncompleteDocument,
+            ),
             location: location.clone(),
-        })
+        }
     }
 
     /// Creates a dummy [`ReaderError`] with unknown position
@@ -1301,22 +1309,23 @@ mod error_safe_reader {
                 $self,
                 |$json_reader| $reading_action,
                 |original_error| {
-                    match original_error {
+                    match &original_error.kind {
                         // Note: List all error types instead of using a 'catch-all' to explicitly decide for each the
                         // correct handling, especially when future error types are being added
-                        e @ ReaderError::SyntaxError(_) => e.rough_clone(),
-                        e @ ReaderError::MaxNestingDepthExceeded { .. } => e.rough_clone(),
-                        e @ ReaderError::UnsupportedNumberValue { .. } => e.rough_clone(),
-                        ReaderError::IoError { error, location } => ReaderError::IoError {
-                            error: clone_original_io_error(error),
-                            location: location.clone(),
+                        ReaderErrorKind::SyntaxError(_) => original_error.rough_clone(),
+                        ReaderErrorKind::MaxNestingDepthExceeded { .. } => original_error.rough_clone(),
+                        ReaderErrorKind::UnsupportedNumberValue { .. } => original_error.rough_clone(),
+                        ReaderErrorKind::InvalidIntError(_) => original_error.rough_clone(),
+                        ReaderErrorKind::IoError(error) => ReaderError {
+                            kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
+                            location: original_error.location.clone(),
                         },
                         // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
                         // therefore use a dummy error
                         // Technically `JsonReader` allows retrying for these errors, but that would be error-prone when they occurred during a
                         // `seek_to` or similar where the reader position is uncertain afterwards; therefore don't allow retrying
-                        ReaderError::UnexpectedValueType { location, .. } => create_dummy_error(location),
-                        ReaderError::UnexpectedStructure { location, .. } => create_dummy_error(location),
+                        ReaderErrorKind::UnexpectedValueType { .. } => create_dummy_error(&original_error.location),
+                        ReaderErrorKind::UnexpectedStructure { .. } => create_dummy_error(&original_error.location),
                     }
                 },
                 |stored_error| stored_error
@@ -1386,11 +1395,13 @@ mod error_safe_reader {
             &mut self,
         ) -> Result<ErrorSafeStringValueReader<'_, impl Read>, ReaderError> {
             let string_reader_delegate = use_delegate!(self, |r| r.next_string_reader())?;
+            // Error should be None, otherwise `use_delegate` call above should have failed already
+            debug_assert!(self.error.is_none());
             Ok(ErrorSafeStringValueReader {
                 delegate: string_reader_delegate,
-                // Store errors in the `error` field of this `ErrorSafeStringValueReader`, so they are
-                // available to the original JsonReader afterwards
-                error: &mut self.error,
+                // Use `self.error` to make errors available to the original JsonReader afterwards
+                reader_error: &mut self.error,
+                error: None,
             })
         }
 
@@ -1404,6 +1415,10 @@ mod error_safe_reader {
 
         fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
             use_delegate!(self, |r| r.next_number())
+        }
+
+        fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+            use_delegate!(self, |r| r.next_number_int())
         }
 
         fn next_bool(&mut self) -> Result<bool, ReaderError> {
@@ -1427,9 +1442,11 @@ mod error_safe_reader {
                     match original_error {
                         DeserializerError::ReaderError(e) => e.rough_clone(),
                         // Cannot easily preserve information for these errors
-                        DeserializerError::Custom(_) => create_unknown_pos_error(),
-                        DeserializerError::MaxNestingDepthExceeded(_) => create_unknown_pos_error(),
-                        DeserializerError::InvalidNumber(_) => create_unknown_pos_error(),
+                        DeserializerError::Custom { .. } => create_unknown_pos_error(),
+                        DeserializerError::MaxNestingDepthExceeded { .. } => {
+                            create_unknown_pos_error()
+                        }
+                        DeserializerError::InvalidNumber { .. } => create_unknown_pos_error(),
                     }
                 },
                 |stored_error| DeserializerError::ReaderError(stored_error)
@@ -1487,7 +1504,11 @@ mod error_safe_reader {
     // this itself as well; but that is not guaranteed for all JsonReader implementations
     pub(super) struct ErrorSafeStringValueReader<'a, D: Read> {
         delegate: D,
-        pub(super) error: &'a mut Option<ReaderError>,
+        /// If an error occurred during reading, stores its `ReaderError` representation for usage
+        /// by the enclosing JsonReader afterwards.
+        /// Initially None, see call site of struct creation.
+        pub(super) reader_error: &'a mut Option<ReaderError>,
+        error: Option<String>,
     }
     impl<D: Read> ErrorSafeStringValueReader<'_, D> {
         fn use_delegate<T>(
@@ -1495,23 +1516,37 @@ mod error_safe_reader {
             f: impl FnOnce(&mut D) -> std::io::Result<T>,
         ) -> std::io::Result<T> {
             if let Some(error) = &self.error {
-                return Err(match error.rough_clone() {
-                    // Ignore `location`; assuming that IO error was set here by ErrorSafeStringValueReader
-                    // and therefore no real location exists (or original location would already be included
-                    // in error message)
-                    ReaderError::IoError { error, .. } => error,
-                    // Error should have only been set by ErrorSafeStringValueReader, and therefore be IoError;
-                    // any previous other error type should have prevented creation of ErrorSafeStringValueReader
-                    e => unreachable!("unexpected error type: {e:?}"),
-                });
+                // When reporting previous error again, just use string representation for simplicity, and kind `Other`
+                // to avoid caller indefinitely retrying because it considers the original error kind as safe to retry
+                return Err(IoError::other(format!("previous error: {error}")));
             }
 
             let result = f(&mut self.delegate);
             if let Err(error) = &result {
-                *self.error = Some(ReaderError::IoError {
-                    error: clone_original_io_error(error),
-                    location: JsonReaderPosition::unknown_position(),
-                });
+                let reader_error = error
+                    .get_ref()
+                    // Check if this error originates from JsonStreamReader implementation
+                    .and_then(|error| error.downcast_ref::<StringReadingError>())
+                    // Try to reconstruct ReaderError, without losing information or redundantly wrapping error
+                    .map(|error| match error {
+                        StringReadingError::SyntaxError { kind, location } => ReaderError {
+                            kind: ReaderErrorKind::SyntaxError(*kind),
+                            location: location.clone(),
+                        },
+                        StringReadingError::IoError(ReaderIoError(error, location)) => {
+                            ReaderError {
+                                kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
+                                location: location.clone(),
+                            }
+                        }
+                    })
+                    // For non-JsonStreamReader error wrap it in a generic IO error
+                    .unwrap_or_else(|| ReaderError {
+                        kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
+                        location: JsonReaderPosition::unknown_position(),
+                    });
+                *self.reader_error = Some(reader_error);
+                self.error = Some(error.to_string());
             }
             result
         }

@@ -29,6 +29,11 @@ mod custom_writer {
         Object(Map<String, Value>),
     }
 
+    #[cold]
+    fn panic_incorrect_usage(message: &str) -> ! {
+        panic!("Incorrect writer usage: {message}")
+    }
+
     pub struct JsonValueWriter {
         stack: Vec<StackValue>,
         pending_name: Option<String>,
@@ -50,18 +55,18 @@ mod custom_writer {
     impl JsonValueWriter {
         fn verify_string_writer_inactive(&self) {
             if self.is_string_value_writer_active {
-                panic!("Incorrect writer usage: String value writer is active");
+                panic_incorrect_usage("String value writer is active");
             }
         }
 
         fn check_before_value(&self) {
             self.verify_string_writer_inactive();
             if self.final_value.is_some() {
-                panic!("Incorrect writer usage: Top-level value has already been written")
+                panic_incorrect_usage("Top-level value has already been written");
             }
             if let Some(StackValue::Object(_)) = self.stack.last() {
                 if self.pending_name.is_none() {
-                    panic!("Incorrect writer usage: Member name is expected");
+                    panic_incorrect_usage("Member name is expected");
                 }
             }
         }
@@ -85,8 +90,9 @@ mod custom_writer {
     }
 
     fn serde_number_from_f64(f: f64) -> Result<Number, JsonNumberError> {
-        Number::from_f64(f)
-            .ok_or_else(|| JsonNumberError::InvalidNumber(format!("non-finite number: {f}")))
+        Number::from_f64(f).ok_or_else(|| JsonNumberError::InvalidNumber {
+            message: format!("non-finite number: {f}"),
+        })
     }
 
     impl JsonWriter for JsonValueWriter {
@@ -104,7 +110,7 @@ mod custom_writer {
                 self.add_value(Value::Object(map));
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot end object; not inside object");
+                panic_incorrect_usage("Cannot end object; not inside object");
             }
         }
 
@@ -120,7 +126,7 @@ mod custom_writer {
                 self.add_value(Value::Array(vec));
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot end array; not inside array");
+                panic_incorrect_usage("Cannot end array; not inside array");
             }
         }
 
@@ -128,14 +134,12 @@ mod custom_writer {
             self.verify_string_writer_inactive();
             if let Some(StackValue::Object(_)) = self.stack.last() {
                 if self.pending_name.is_some() {
-                    panic!(
-                        "Incorrect writer usage: Member name has already been written; expecting value"
-                    );
+                    panic_incorrect_usage("Member name has already been written; expecting value");
                 }
                 self.pending_name = Some(name.to_owned());
                 Ok(())
             } else {
-                panic!("Incorrect writer usage: Cannot write name; not inside object");
+                panic_incorrect_usage("Cannot write name; not inside object");
             }
         }
 
@@ -169,9 +173,12 @@ mod custom_writer {
         fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
             self.check_before_value();
             // TODO: `parse::<f64>` might not match JSON number string format (might allow more / less than allowed by JSON)?
+            // TODO: This fails for large valid JSON numbers which are parsed as f64 Infinity (e.g. "1e999")
             let f = value
                 .parse::<f64>()
-                .map_err(|e| JsonNumberError::InvalidNumber(e.to_string()))?;
+                .map_err(|e| JsonNumberError::InvalidNumber {
+                    message: e.to_string(),
+                })?;
             self.add_value(Value::Number(serde_number_from_f64(f)?));
             Ok(())
         }
@@ -190,9 +197,11 @@ mod custom_writer {
                 value.use_json_number(|number_str| {
                     self.number_value_from_string(number_str)
                         .map_err(|e| match e {
-                            JsonNumberError::InvalidNumber(e) => {
+                            JsonNumberError::InvalidNumber {message } => {
+                                // TODO: This could actually happen when `number_value_from_string` rejects large valid JSON number because
+                                // it is parsed as f64 Infinity (see TODO there); can happen when FiniteNumber is TransferredNumber
                                 panic!(
-                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                    "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
                             }
                             JsonNumberError::IoError(e) => IoError::other(e),
@@ -221,9 +230,11 @@ mod custom_writer {
                     self.number_value_from_string(number_str).map_err(|e| {
                         match e {
                             // `use_json_number` should have verified that value is valid finite JSON number
-                            JsonNumberError::InvalidNumber(e) => {
+                            JsonNumberError::InvalidNumber { message } => {
+                                // TODO: This could actually happen when `number_value_from_string` rejects large valid JSON number because
+                                // it is parsed as f64 Infinity (see TODO there); currently not possible because FloatingPointNumber is only f32 or f64?
                                 panic!(
-                                    "Unexpected: Writer rejected finite number '{number_str}': {e}"
+                                    "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
                             }
                             JsonNumberError::IoError(e) => IoError::other(e),
@@ -250,7 +261,7 @@ mod custom_writer {
             if let Some(value) = self.final_value {
                 Ok(value)
             } else {
-                panic!("Incorrect writer usage: Top-level value is incomplete")
+                panic_incorrect_usage("Top-level value is incomplete");
             }
         }
     }
@@ -285,12 +296,12 @@ mod custom_writer {
 fn write() -> Result<(), Box<dyn std::error::Error>> {
     fn assert_invalid_number(expected_message: Option<&str>, result: Result<(), JsonNumberError>) {
         match result {
-            Err(JsonNumberError::InvalidNumber(message)) => {
+            Err(JsonNumberError::InvalidNumber { message }) => {
                 if let Some(expected_message) = expected_message {
                     assert_eq!(expected_message, message)
                 }
             }
-            _ => panic!("Unexpected result: {result:?}"),
+            _ => panic!("unexpected result: {result:?}"),
         }
     }
 

@@ -231,7 +231,7 @@ mod error_safe_writer {
 
     fn convert_number_error(error: &JsonNumberError) -> StoredIoError {
         match error {
-            JsonNumberError::InvalidNumber(message) => (ErrorKind::Other, message.clone()),
+            JsonNumberError::InvalidNumber { message } => (ErrorKind::Other, message.clone()),
             JsonNumberError::IoError(e) => convert_io_error(e),
         }
     }

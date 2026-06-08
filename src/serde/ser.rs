@@ -17,18 +17,20 @@ type IoError = std::io::Error;
 #[derive(Error, Debug)]
 pub enum SerializerError {
     /// A custom error, normally created by the `SerializerError::custom` function
-    ///
-    /// The data of this enum variant is a message describing the error.
-    #[error("{0}")]
-    Custom(String),
+    #[error("{message}")]
+    Custom {
+        /// Error message
+        message: String,
+    },
     /// An IO error occurred while writing
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
     /// A number value is not a valid JSON number
-    ///
-    /// The data of this enum variant is a message explaining why the number is not valid.
-    #[error("invalid number: {0}")]
-    InvalidNumber(String),
+    #[error("invalid number: {message}")]
+    InvalidNumber {
+        /// Error message
+        message: String,
+    },
     /// An incorrect number of elements was serialized
     ///
     /// This error is created when the claimed expected number of elements or fields passed
@@ -64,8 +66,18 @@ pub enum SerializerError {
 
 impl serde_core::ser::Error for SerializerError {
     fn custom<T: Display>(msg: T) -> Self {
-        SerializerError::Custom(msg.to_string())
+        SerializerError::Custom {
+            message: msg.to_string(),
+        }
     }
+}
+
+/// Panics always
+///
+/// To be called when the user used the API incorrectly.
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("Incorrect usage: {message}")
 }
 
 /// Serde `Serializer` which delegates to a [`JsonWriter`]
@@ -142,7 +154,7 @@ impl<'a, W: JsonWriter> JsonWriterSerializer<'a, W> {
 
 fn map_number_err(e: JsonNumberError) -> SerializerError {
     match e {
-        JsonNumberError::InvalidNumber(e) => SerializerError::InvalidNumber(e),
+        JsonNumberError::InvalidNumber { message } => SerializerError::InvalidNumber { message },
         JsonNumberError::IoError(e) => SerializerError::IoError(e),
     }
 }
@@ -721,7 +733,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Self::Error> {
         if self.expects_entry_value {
-            panic!("Incorrect usage: Cannot serialize key when value is expected")
+            panic_incorrect_usage("Cannot serialize key when value is expected");
         }
 
         if let Some(expected_len) = self.expected_len {
@@ -742,7 +754,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
         if !self.expects_entry_value {
-            panic!("Incorrect usage: Cannot serialize value when key is expected")
+            panic_incorrect_usage("Cannot serialize value when key is expected");
         }
         self.expects_entry_value = false;
         value.serialize(&mut *self.ser)
@@ -750,7 +762,7 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         if self.expects_entry_value {
-            panic!("Incorrect usage: Cannot end map when value is expected")
+            panic_incorrect_usage("Cannot end map when value is expected");
         }
 
         if let Some(expected_len) = self.expected_len {
@@ -1070,7 +1082,7 @@ mod tests {
         },
     };
 
-    use super::{JsonWriterSerializer, SerializerError};
+    use super::*;
     use crate::writer::{JsonStreamWriter, JsonWriter};
 
     fn assert_serialized<
@@ -1154,13 +1166,10 @@ mod tests {
         let mut json_writer = JsonStreamWriter::new(std::io::sink());
         let mut serializer = JsonWriterSerializer::new(&mut json_writer);
         match serializing_function(&mut serializer) {
-            Ok(_) => panic!("Should have failed with error message: {expected_error_message}"),
-            Err(e) => match e {
-                SerializerError::InvalidNumber(message) => {
-                    assert_eq!(expected_error_message, message)
-                }
-                _ => panic!("Unexpected error: {e:?}"),
-            },
+            Err(SerializerError::InvalidNumber { message }) => {
+                assert_eq!(expected_error_message, message)
+            }
+            r => panic!("unexpected result: {r:?}"),
         }
     }
 
@@ -1192,14 +1201,11 @@ mod tests {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             let mut serializer = JsonWriterSerializer::new(&mut json_writer);
             match serializing_function(&mut serializer) {
-                Ok(_) => panic!("Should have failed with error"),
-                Err(e) => match e {
-                    SerializerError::IncorrectElementsCount { expected, actual } => {
-                        assert_eq!(expected_expected, expected);
-                        assert_eq!(expected_actual, actual);
-                    }
-                    _ => panic!("Unexpected error: {e:?}"),
-                },
+                Err(SerializerError::IncorrectElementsCount { expected, actual }) => {
+                    assert_eq!(expected_expected, expected);
+                    assert_eq!(expected_actual, actual);
+                }
+                r => panic!("unexpected result: {r:?}"),
             }
         }
 
@@ -1503,11 +1509,8 @@ mod tests {
                         let mut serializer = JsonWriterSerializer::new(&mut json_writer);
                         let mut map = serializer.serialize_map(None).unwrap();
                         match map.serialize_key(&$key) {
-                            Ok(_) => panic!("Should have failed for Struson"),
-                            Err(e) => match e {
-                                $err_pattern => $err_assertion,
-                                _ => panic!("Unexpected error for Struson: {e:?}"),
-                            },
+                            Err($err_pattern) => $err_assertion,
+                            r => panic!("unexpected result for Struson: {r:?}"),
                         }
                     }
                     {
@@ -1527,11 +1530,11 @@ mod tests {
 
             assert_map_key_error!(
                 f32::NAN,
-                SerializerError::InvalidNumber(message) => assert_eq!(format!("non-finite number: {}", f32::NAN), message)
+                SerializerError::InvalidNumber { message } => assert_eq!(format!("non-finite number: {}", f32::NAN), message)
             );
             assert_map_key_error!(
                 f64::INFINITY,
-                SerializerError::InvalidNumber(message) => assert_eq!(format!("non-finite number: {}", f64::INFINITY), message)
+                SerializerError::InvalidNumber { message } => assert_eq!(format!("non-finite number: {}", f64::INFINITY), message)
             );
 
             assert_map_key_error!([1_u8], SerializerError::MapKeyNotString);

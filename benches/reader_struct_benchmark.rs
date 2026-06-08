@@ -4,7 +4,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Deserialize;
 use serde_json::{
     StreamDeserializer,
-    de::{IoRead, Read, StrRead},
+    de::{IoRead, StrRead},
 };
 use struson::reader::{JsonReader, JsonStreamReader, ReaderSettings};
 
@@ -83,7 +83,7 @@ fn benchmark_struct(c: &mut Criterion) {
         })
     });
 
-    fn serde_read<'a, R: Read<'a>>(read: R) {
+    fn serde_read<'a, R: serde_json::de::Read<'a>>(read: R) {
         let count = StreamDeserializer::<R, StructValue>::new(read)
             .map(Result::unwrap)
             .inspect(|r| {
@@ -93,10 +93,10 @@ fn benchmark_struct(c: &mut Criterion) {
         assert_eq!(COUNT, count);
     }
 
-    group.bench_with_input("serde (reader)", &json, |b, json| {
+    group.bench_with_input("serde (from reader)", &json, |b, json| {
         b.iter(|| serde_read(IoRead::new(json.as_bytes())))
     });
-    group.bench_with_input("serde (string)", &json, |b, json| {
+    group.bench_with_input("serde (from string)", &json, |b, json| {
         b.iter(|| serde_read(StrRead::new(json)))
     });
 
@@ -106,6 +106,6 @@ fn benchmark_struct(c: &mut Criterion) {
 criterion_group!(
     benches,
     // Benchmark functions
-    benchmark_struct
+    benchmark_struct,
 );
 criterion_main!(benches);

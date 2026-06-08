@@ -129,11 +129,20 @@ impl<W: Write> Writer<W> {
     }
 }
 
+/// Panics always
+///
+/// To be called when the user used the API incorrectly.
+#[cold]
+fn panic_incorrect_usage(message: &str) -> ! {
+    panic!("Incorrect writer usage: {message}")
+}
+
 /// A JSON writer implementation which writes data to a [`Write`]
 ///
 /// This JSON writer does not perform any internal buffering. Depending on the type of the
 /// underlying `Write` it is therefore recommended to use a [`std::io::BufWriter`], for example
-/// when writing to a file or a network connection.
+/// when writing to a file or a network connection.\
+/// Struson versions before 0.7 did perform internal buffering.
 ///
 /// The data written to the underlying writer will be valid UTF-8 data if the JSON document
 /// is finished properly by calling [`JsonWriter::finish_document`]. No leading byte order mark (BOM)
@@ -145,7 +154,7 @@ impl<W: Write> Writer<W> {
 pub struct JsonStreamWriter<W: Write> {
     writer: Writer<W>,
     /// Whether the current array or object is empty, or at top-level whether
-    /// at least one value has been written already
+    /// no value has been written yet
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
@@ -224,19 +233,17 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn before_value(&mut self) -> Result<(), IoError> {
         if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when string value writer is still active"
-            );
+            panic_incorrect_usage("Cannot write value when string value writer is still active");
         }
         if self.expects_member_name {
-            panic!("Incorrect writer usage: Cannot write value when name is expected");
+            panic_incorrect_usage("Cannot write value when name is expected");
         }
 
         let is_top_level = self.stack.is_empty();
         if is_top_level && !self.is_empty {
             match &self.writer_settings.multi_top_level_value_separator {
-                None => panic!(
-                    "Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"
+                None => panic_incorrect_usage(
+                    "Cannot write multiple top-level values when not enabled in writer settings",
                 ),
                 Some(separator) => {
                     self.writer.write(separator.as_bytes())?;
@@ -280,23 +287,19 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn on_finish(&self) {
         if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when string value writer is still active"
+            panic_incorrect_usage(
+                "Cannot finish document when string value writer is still active",
             );
         }
         if self.expects_member_name {
-            panic!("Incorrect writer usage: Cannot finish document when member name is expected");
+            panic_incorrect_usage("Cannot finish document when member name is expected");
         }
         if self.stack.is_empty() {
             if self.is_empty {
-                panic!(
-                    "Incorrect writer usage: Cannot finish document when no value has been written yet"
-                );
+                panic_incorrect_usage("Cannot finish document when no value has been written yet");
             }
         } else {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when top-level value is not finished"
-            );
+            panic_incorrect_usage("Cannot finish document when top-level value is not finished");
         }
     }
 }
@@ -408,12 +411,10 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
         if !self.expects_member_name {
-            panic!("Incorrect writer usage: Cannot write name when name is not expected");
+            panic_incorrect_usage("Cannot write name when name is not expected");
         }
         if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot finish document when string value writer is still active"
-            );
+            panic_incorrect_usage("Cannot write name when string value writer is still active");
         }
         self.before_container_element()?;
         self.write_string_value(name)?;
@@ -428,15 +429,13 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
 
     fn end_object(&mut self) -> Result<(), IoError> {
         if !self.is_in_object() {
-            panic!("Incorrect writer usage: Cannot end object when not inside object");
+            panic_incorrect_usage("Cannot end object when not inside object");
         }
         if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot end object when string value writer is still active"
-            );
+            panic_incorrect_usage("Cannot end object when string value writer is still active");
         }
         if !self.expects_member_name {
-            panic!("Incorrect writer usage: Cannot end object when member value is expected");
+            panic_incorrect_usage("Cannot end object when member value is expected");
         }
         self.on_container_end()?;
         self.writer.write(b"}")
@@ -453,12 +452,10 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
 
     fn end_array(&mut self) -> Result<(), IoError> {
         if !self.is_in_array() {
-            panic!("Incorrect writer usage: Cannot end array when not inside array");
+            panic_incorrect_usage("Cannot end array when not inside array");
         }
         if self.is_string_value_writer_active {
-            panic!(
-                "Incorrect writer usage: Cannot end array when string value writer is still active"
-            );
+            panic_incorrect_usage("Cannot end array when string value writer is still active");
         }
         self.on_container_end()?;
         self.writer.write(b"]")
@@ -499,9 +496,9 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
             self.writer.write(value.as_bytes())?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(format!(
-                "invalid JSON number: {value}"
-            )))
+            Err(JsonNumberError::InvalidNumber {
+                message: format!("invalid JSON number: {value}"),
+            })
         }
     }
 
@@ -772,13 +769,10 @@ mod tests {
     fn numbers_invalid() {
         fn assert_invalid_number(result: Result<(), JsonNumberError>, expected_message: &str) {
             match result {
-                Ok(_) => panic!("Should have failed"),
-                Err(e) => match e {
-                    JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!(expected_message, message)
-                    }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error: {e:?}"),
-                },
+                Err(JsonNumberError::InvalidNumber { message }) => {
+                    assert_eq!(expected_message, message)
+                }
+                r => panic!("unexpected result: {r:?}"),
             }
         }
 
@@ -1269,7 +1263,7 @@ mod tests {
     #[should_panic(
         expected = "Incorrect writer usage: Cannot end array when string value writer is still active"
     )]
-    fn string_writer_array_incomplete() {
+    fn string_writer_incomplete_end_array() {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_array().unwrap();
@@ -1284,7 +1278,7 @@ mod tests {
     #[should_panic(
         expected = "Incorrect writer usage: Cannot end object when string value writer is still active"
     )]
-    fn string_writer_object_incomplete() {
+    fn string_writer_incomplete_end_object() {
         let mut writer = Vec::<u8>::new();
         let mut json_writer = JsonStreamWriter::new(&mut writer);
         json_writer.begin_object().unwrap();
@@ -1294,6 +1288,37 @@ mod tests {
         drop(string_writer);
 
         let _ = json_writer.end_object();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect writer usage: Cannot write value when string value writer is still active"
+    )]
+    fn string_writer_incomplete_next_value() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.begin_array().unwrap();
+
+        let string_writer = json_writer.string_value_writer().unwrap();
+        drop(string_writer);
+
+        let _ = json_writer.bool_value(true);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Incorrect writer usage: Cannot write name when string value writer is still active"
+    )]
+    fn string_writer_incomplete_next_name() {
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+        json_writer.begin_object().unwrap();
+        json_writer.name("name").unwrap();
+
+        let string_writer = json_writer.string_value_writer().unwrap();
+        drop(string_writer);
+
+        let _ = json_writer.name("other-name");
     }
 
     #[test]
@@ -1650,7 +1675,7 @@ mod tests {
             Ok(n) => assert_eq!(string_bytes.len(), n),
             // For current implementation no error should have occurred
             // Especially regardless of implementation, `ErrorKind::Interrupted` must not have been returned
-            r => panic!("Unexpected result: {r:?}"),
+            r => panic!("unexpected result: {r:?}"),
         }
 
         string_writer.finish_value()?;
@@ -1729,10 +1754,10 @@ mod tests {
             let mut json_writer = JsonStreamWriter::new(std::io::sink());
             let number = f32::NAN;
             match json_writer.serialize_value(&number) {
-                Err(SerializerError::InvalidNumber(message)) => {
+                Err(SerializerError::InvalidNumber { message }) => {
                     assert_eq!(format!("non-finite number: {number}"), message);
                 }
-                r => panic!("Unexpected result: {r:?}"),
+                r => panic!("unexpected result: {r:?}"),
             }
         }
 

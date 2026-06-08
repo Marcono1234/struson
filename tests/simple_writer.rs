@@ -533,6 +533,30 @@ fn discarded_error_handling() {
     );
 
     let json_writer = SimpleJsonWriter::new(sink());
+    json_writer
+        .write_array(|array_writer| {
+            array_writer
+                .write_string_with_writer(|mut writer| {
+                    // Malformed UTF-8
+                    writer.write_all(b"\"\xFF\"").unwrap_err();
+                    Ok(())
+                })
+                .unwrap_err();
+
+            // Error should have been stored not only for string writer, but also for enclosing JSON writer
+            let result = array_writer.write_bool(true);
+            assert_eq!(
+                format!(
+                    "previous error '{}': invalid UTF-8 data",
+                    ErrorKind::InvalidData
+                ),
+                result.unwrap_err().to_string()
+            );
+            Ok(())
+        })
+        .unwrap_err();
+
+    let json_writer = SimpleJsonWriter::new(sink());
     let result = json_writer.write_array(|array_writer| {
         array_writer
             .write_string_with_writer(|mut writer| {

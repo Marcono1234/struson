@@ -645,10 +645,22 @@ pub trait StringValueWriter: Write {
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
-pub trait FiniteNumber: private::Sealed {
+///
+/// **Important:** This trait might also represent finite floating point numbers;
+/// users of this trait must not assume that it represents only integer numbers.
+/*
+ * Note: Might be more convenient to define `TryInto<u64>`, ... as supertraits here instead
+ * of defining custom methods `as_u64(&self)`, ...; however TryInto consumes `self`, which
+ * then makes for the user conversion with fallback more difficult (e.g. first try u64, then i64, ...)
+ */
+pub trait FiniteNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// as for example `f64` could lead to a non-finite result such as Infinity for
+    /// large numbers.
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
@@ -684,6 +696,10 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The JSON number string is passed to the given `consumer`.
     /// Returns an error if this number is not a valid JSON number, for example
     /// because it is NaN or Infinity.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// as for example `f64` could lead to a non-finite result such as Infinity for
+    /// large numbers.
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
@@ -699,6 +715,11 @@ pub trait FloatingPointNumber: private::Sealed {
     /// The `f64` number can be NaN or Infinity, which is not allowed by the
     /// JSON specification. Callers of this method may want to reject these
     /// values when writing them as JSON data.
+    /*
+     * This is defined as custom method instead of adding `TryInto<f64>` as supertrait so
+     * that the documentation here can highlight that this can have non-finite values as
+     * result. Otherwise, for TryInto it might be more likely that the user overlooks that.
+     */
     fn as_f64(&self) -> Option<f64>;
 }
 
@@ -717,10 +738,11 @@ mod private {
 #[derive(Error, Debug)]
 pub enum JsonNumberError {
     /// The number is not a valid JSON number
-    ///
-    /// The data of this enum variant is a message explaining why the number is not valid.
-    #[error("{0}")]
-    InvalidNumber(String),
+    #[error("{message}")]
+    InvalidNumber {
+        /// Error message
+        message: String,
+    },
     /// An IO error occurred while writing the number
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
@@ -784,9 +806,9 @@ impl FloatingPointNumber for type_template {
             consumer(&string)?;
             Ok(())
         } else {
-            Err(JsonNumberError::InvalidNumber(format!(
-                "non-finite number: {self}"
-            )))
+            Err(JsonNumberError::InvalidNumber {
+                message: format!("non-finite number: {self}"),
+            })
         }
     }
 
@@ -796,8 +818,8 @@ impl FloatingPointNumber for type_template {
     }
 }
 
-/// Number struct which is used by [`JsonReader::transfer_to`] to avoid redundant JSON number string
-/// validation by `JsonWriter`
+/// Internal number struct which is used by [`JsonReader::transfer_to`] to avoid
+/// redundant JSON number string validation by `JsonWriter`
 #[derive(Debug)]
 pub(crate) struct TransferredNumber<'a>(pub &'a str);
 impl private::Sealed for TransferredNumber<'_> {}
@@ -881,13 +903,10 @@ mod tests {
 
         fn assert_non_finite<T: FloatingPointNumber + Display>(number: T) {
             match number.use_json_number(|_| panic!("Should have failed for: {number}")) {
-                Ok(_) => panic!("Should have failed for: {number}"),
-                Err(e) => match e {
-                    JsonNumberError::InvalidNumber(message) => {
-                        assert_eq!(format!("non-finite number: {number}"), message)
-                    }
-                    JsonNumberError::IoError(e) => panic!("Unexpected error for '{number}': {e:?}"),
-                },
+                Err(JsonNumberError::InvalidNumber { message }) => {
+                    assert_eq!(format!("non-finite number: {number}"), message)
+                }
+                r => panic!("unexpected result for {number}: {r:?}"),
             }
         }
 
