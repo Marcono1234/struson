@@ -173,6 +173,7 @@ mod custom_writer {
         fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
             self.check_before_value();
             // TODO: `parse::<f64>` might not match JSON number string format (might allow more / less than allowed by JSON)?
+            // TODO: This fails for large valid JSON numbers which are parsed as f64 Infinity (e.g. "1e999")
             let f = value
                 .parse::<f64>()
                 .map_err(|e| JsonNumberError::InvalidNumber {
@@ -197,6 +198,8 @@ mod custom_writer {
                     self.number_value_from_string(number_str)
                         .map_err(|e| match e {
                             JsonNumberError::InvalidNumber {message } => {
+                                // TODO: This could actually happen when `number_value_from_string` rejects large valid JSON number because
+                                // it is parsed as f64 Infinity (see TODO there); can happen when FiniteNumber is TransferredNumber
                                 panic!(
                                     "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
@@ -228,6 +231,8 @@ mod custom_writer {
                         match e {
                             // `use_json_number` should have verified that value is valid finite JSON number
                             JsonNumberError::InvalidNumber { message } => {
+                                // TODO: This could actually happen when `number_value_from_string` rejects large valid JSON number because
+                                // it is parsed as f64 Infinity (see TODO there); currently not possible because FloatingPointNumber is only f32 or f64?
                                 panic!(
                                     "Unexpected: Writer rejected finite number '{number_str}': {message}"
                                 )
