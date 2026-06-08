@@ -591,13 +591,13 @@ impl<W: JsonWriter> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if let Some(expected_len) = self.expected_len {
-            if self.len < expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    actual: self.len,
-                });
-            }
+        if let Some(expected_len) = self.expected_len
+            && self.len < expected_len
+        {
+            return Err(SerializerError::IncorrectElementsCount {
+                expected: expected_len,
+                actual: self.len,
+            });
         }
         self.ser.json_writer.end_array()?;
         Ok(())
@@ -765,13 +765,13 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
             panic_incorrect_usage("Cannot end map when value is expected");
         }
 
-        if let Some(expected_len) = self.expected_len {
-            if self.len < expected_len {
-                return Err(SerializerError::IncorrectElementsCount {
-                    expected: expected_len,
-                    actual: self.len,
-                });
-            }
+        if let Some(expected_len) = self.expected_len
+            && self.len < expected_len
+        {
+            return Err(SerializerError::IncorrectElementsCount {
+                expected: expected_len,
+                actual: self.len,
+            });
         }
         self.ser.json_writer.end_object()?;
         Ok(())

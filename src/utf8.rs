@@ -85,6 +85,10 @@ pub(crate) fn is_valid_4bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
 }
 
 fn debug_assert_valid_utf8(bytes: &[u8]) {
+    #[expect(
+        clippy::collapsible_if,
+        reason = "keep debug assertions check separate, for better readability"
+    )]
     if cfg!(debug_assertions) {
         if let Err(e) = std::str::from_utf8(bytes) {
             panic!(

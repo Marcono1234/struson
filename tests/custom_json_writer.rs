@@ -64,10 +64,10 @@ mod custom_writer {
             if self.final_value.is_some() {
                 panic_incorrect_usage("Top-level value has already been written");
             }
-            if let Some(StackValue::Object(_)) = self.stack.last() {
-                if self.pending_name.is_none() {
-                    panic_incorrect_usage("Member name is expected");
-                }
+            if let Some(StackValue::Object(_)) = self.stack.last()
+                && self.pending_name.is_none()
+            {
+                panic_incorrect_usage("Member name is expected");
             }
         }
 

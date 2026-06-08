@@ -373,10 +373,10 @@ mod custom_reader {
 
             // Handle expected member value separately because has_next() calls below are not allowed when
             // member value is expected
-            if let Some(StackValue::Object(_)) = self.stack.last() {
-                if self.next_value.is_some() {
-                    self.skip_value()?;
-                }
+            if let Some(StackValue::Object(_)) = self.stack.last()
+                && self.next_value.is_some()
+            {
+                self.skip_value()?;
             }
 
             while let Some(value_type) = self.stack.last() {

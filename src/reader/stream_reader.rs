@@ -816,11 +816,11 @@ impl<R: Read> JsonStreamReader<R> {
             if check_depth {
                 // Check nesting depth before consuming token, so that error location points
                 // at token instead of behind it
-                if let Some(max_nesting_depth) = self.reader_settings.max_nesting_depth {
-                    if self.stack.len() as u32 >= max_nesting_depth {
-                        return self
-                            .error(ReaderErrorKind::MaxNestingDepthExceeded { max_nesting_depth });
-                    }
+                if let Some(max_nesting_depth) = self.reader_settings.max_nesting_depth
+                    && self.stack.len() as u32 >= max_nesting_depth
+                {
+                    return self
+                        .error(ReaderErrorKind::MaxNestingDepthExceeded { max_nesting_depth });
                 }
             }
 
@@ -858,12 +858,12 @@ impl<R: Read> JsonStreamReader<R> {
 
     fn on_value_end(&mut self) {
         // Update array path
-        if self.is_in_array() {
-            if let Some(ref mut json_path) = self.json_path {
-                match json_path.last_mut().unwrap() {
-                    JsonPathPiece::ArrayItem(index) => *index += 1,
-                    _ => unreachable!("Path should be array item"),
-                }
+        if self.is_in_array()
+            && let Some(ref mut json_path) = self.json_path
+        {
+            match json_path.last_mut().unwrap() {
+                JsonPathPiece::ArrayItem(index) => *index += 1,
+                _ => unreachable!("Path should be array item"),
             }
         }
 
