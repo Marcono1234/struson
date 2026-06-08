@@ -2,7 +2,7 @@ use std::{error::Error, hint::black_box};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::{Deserializer, de::Visitor};
-use serde_json::de::{IoRead, Read, StrRead};
+use serde_json::de::{IoRead, StrRead};
 use struson::reader::*;
 
 fn call_unwrap<F: FnOnce() -> Result<(), Box<dyn Error>>>(f: F) {
@@ -151,7 +151,7 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str, include_no_path_trac
         });
     }
 
-    fn serde_skip<'a, R: Read<'a>>(read: R) {
+    fn serde_skip<'a, R: serde_json::de::Read<'a>>(read: R) {
         struct UnitVisitor;
 
         impl Visitor<'_> for UnitVisitor {
@@ -172,13 +172,13 @@ fn bench_compare(c: &mut Criterion, name: &str, json: &str, include_no_path_trac
         deserializer.end().unwrap();
     }
 
-    group.bench_with_input("serde-skip (reader)", json, |b, json| {
+    group.bench_with_input("serde-skip (from reader)", json, |b, json| {
         b.iter(|| {
             serde_skip(IoRead::new(json.as_bytes()));
         })
     });
 
-    group.bench_with_input("serde-skip (string)", json, |b, json| {
+    group.bench_with_input("serde-skip (from string)", json, |b, json| {
         b.iter(|| {
             serde_skip(StrRead::new(json));
         })
@@ -262,7 +262,11 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         }
     }
 
-    fn serde_read<'a, R: Read<'a>, F: FnOnce(&mut serde_json::de::Deserializer<R>)>(
+    fn serde_read<
+        'a,
+        R: serde_json::de::Read<'a>,
+        F: FnOnce(&mut serde_json::de::Deserializer<R>),
+    >(
         read: R,
         read_function: F,
     ) {
@@ -272,7 +276,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
     }
 
     // TODO: Are really all of these Serde benchmarks necessary?
-    group.bench_with_input("serde-str (reader)", json, |b, json| {
+    group.bench_with_input("serde-str (from reader)", json, |b, json| {
         b.iter(|| {
             serde_read(IoRead::new(json.as_bytes()), |deserializer| {
                 deserializer.deserialize_str(StringVisitor).unwrap()
@@ -280,7 +284,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
-    group.bench_with_input("serde-string (reader)", json, |b, json| {
+    group.bench_with_input("serde-string (from reader)", json, |b, json| {
         b.iter(|| {
             serde_read(IoRead::new(json.as_bytes()), |deserializer| {
                 deserializer.deserialize_string(StringVisitor).unwrap()
@@ -288,7 +292,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
-    group.bench_with_input("serde-str (string)", json, |b, json| {
+    group.bench_with_input("serde-str (from string)", json, |b, json| {
         b.iter(|| {
             serde_read(StrRead::new(json), |deserializer| {
                 deserializer.deserialize_str(StringVisitor).unwrap()
@@ -296,7 +300,7 @@ fn bench_compare_string_reading(c: &mut Criterion, name: &str, json: &str) {
         })
     });
 
-    group.bench_with_input("serde-string (string)", json, |b, json| {
+    group.bench_with_input("serde-string (from string)", json, |b, json| {
         b.iter(|| {
             serde_read(StrRead::new(json), |deserializer| {
                 deserializer.deserialize_string(StringVisitor).unwrap()
@@ -349,6 +353,117 @@ fn benchmark_escapes_string(c: &mut Criterion) {
     bench_compare_string_reading(c, "read-large-escapes-string (string reading)", &json);
 }
 
+fn benchmark_integer_number_reading(c: &mut Criterion) {
+    let mut group = c.benchmark_group("read-integer-number");
+    let numbers: [i64; _] = [
+        0,
+        -1,
+        123,
+        -256,
+        256,
+        -32768,
+        32768,
+        -1048576,
+        1048576,
+        -2147483648,
+        2147483648,
+        i64::MIN,
+        i64::MAX,
+    ];
+    let numbers = numbers.repeat(100);
+    let json = format!(
+        "[{}]",
+        numbers
+            .into_iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+
+    group.bench_with_input("struson (next_number)", &json, |b, json| {
+        b.iter(|| {
+            call_unwrap(|| {
+                let mut json_reader = JsonStreamReader::new(json.as_bytes());
+                json_reader.begin_array()?;
+                while json_reader.has_next()? {
+                    black_box(json_reader.next_number::<i64>()??);
+                }
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                Ok(())
+            });
+        })
+    });
+
+    group.bench_with_input("struson (next_number_int)", &json, |b, json| {
+        b.iter(|| {
+            call_unwrap(|| {
+                let mut json_reader = JsonStreamReader::new(json.as_bytes());
+                json_reader.begin_array()?;
+                while json_reader.has_next()? {
+                    black_box(json_reader.next_number_int::<i64>()?);
+                }
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                Ok(())
+            });
+        })
+    });
+
+    struct NumberSeqVisitor;
+
+    impl<'de> Visitor<'de> for NumberSeqVisitor {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "a seq")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            while let Some(number) = seq.next_element::<i64>()? {
+                black_box(number);
+            }
+            Ok(())
+        }
+    }
+
+    fn serde_read<
+        'a,
+        R: serde_json::de::Read<'a>,
+        F: FnOnce(&mut serde_json::de::Deserializer<R>),
+    >(
+        read: R,
+        read_function: F,
+    ) {
+        let mut deserializer = serde_json::de::Deserializer::new(read);
+        read_function(&mut deserializer);
+        deserializer.end().unwrap();
+    }
+
+    group.bench_with_input("serde (from reader)", &json, |b, json| {
+        b.iter(|| {
+            serde_read(IoRead::new(json.as_bytes()), |deserializer| {
+                deserializer.deserialize_seq(NumberSeqVisitor).unwrap()
+            });
+        })
+    });
+
+    group.bench_with_input("serde (from string)", &json, |b, json| {
+        b.iter(|| {
+            serde_read(StrRead::new(json), |deserializer| {
+                deserializer.deserialize_seq(NumberSeqVisitor).unwrap()
+            });
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     // Benchmark functions
@@ -357,6 +472,7 @@ criterion_group!(
     benchmark_nested_object_pretty,
     benchmark_large_ascii_string,
     benchmark_large_unicode_string,
-    benchmark_escapes_string
+    benchmark_escapes_string,
+    benchmark_integer_number_reading,
 );
 criterion_main!(benches);

@@ -1252,7 +1252,7 @@ fn read_seeked_multi<J: JsonReader>(
 
 mod error_safe_reader {
     use super::*;
-    use crate::reader::{ReaderErrorKind, ReaderIoError, StringReadingError};
+    use crate::reader::{IntegerNumber, ReaderErrorKind, ReaderIoError, StringReadingError};
 
     type IoError = std::io::Error;
 
@@ -1315,6 +1315,7 @@ mod error_safe_reader {
                         ReaderErrorKind::SyntaxError(_) => original_error.rough_clone(),
                         ReaderErrorKind::MaxNestingDepthExceeded { .. } => original_error.rough_clone(),
                         ReaderErrorKind::UnsupportedNumberValue { .. } => original_error.rough_clone(),
+                        ReaderErrorKind::InvalidIntError(_) => original_error.rough_clone(),
                         ReaderErrorKind::IoError(error) => ReaderError {
                             kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
                             location: original_error.location.clone(),
@@ -1414,6 +1415,10 @@ mod error_safe_reader {
 
         fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
             use_delegate!(self, |r| r.next_number())
+        }
+
+        fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+            use_delegate!(self, |r| r.next_number_int())
         }
 
         fn next_bool(&mut self) -> Result<bool, ReaderError> {

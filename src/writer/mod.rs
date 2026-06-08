@@ -645,6 +645,9 @@ pub trait StringValueWriter: Write {
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
+///
+/// **Important:** This trait might also represent finite floating point numbers;
+/// users of this trait must not assume that it represents only integer numbers.
 /*
  * Note: Might be more convenient to define `TryInto<u64>`, ... as supertraits here instead
  * of defining custom methods `as_u64(&self)`, ...; however TryInto consumes `self`, which
@@ -807,8 +810,8 @@ impl FloatingPointNumber for type_template {
     }
 }
 
-/// Number struct which is used by [`JsonReader::transfer_to`] to avoid redundant JSON number string
-/// validation by `JsonWriter`
+/// Internal number struct which is used by [`JsonReader::transfer_to`] to avoid
+/// redundant JSON number string validation by `JsonWriter`
 #[derive(Debug)]
 pub(crate) struct TransferredNumber<'a>(pub &'a str);
 impl private::Sealed for TransferredNumber<'_> {}

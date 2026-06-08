@@ -67,6 +67,8 @@ impl serde_core::de::Error for DeserializerError {
     }
 }
 
+// Note: Instead of converting error to `DeserializerError::InvalidNumber` could
+// convert it to `ReaderErrorKind::InvalidIntError`?
 impl From<ParseIntError> for DeserializerError {
     fn from(value: ParseIntError) -> Self {
         DeserializerError::InvalidNumber {
@@ -74,6 +76,8 @@ impl From<ParseIntError> for DeserializerError {
         }
     }
 }
+// Note: Maybe should not handle ParseFloatError? f32 and f64 should be able to parse any valid
+//   JSON number string (?), so might be safe to call `unwrap()` / `expect(...)` on parse result?
 impl From<ParseFloatError> for DeserializerError {
     fn from(value: ParseFloatError) -> Self {
         DeserializerError::InvalidNumber {
@@ -436,43 +440,43 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
     // but JSON number is floating point? Should they fall back to `visit_f64` then?
 
     fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i8(self.json_reader.next_number()??)
+        visitor.visit_i8(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i16(self.json_reader.next_number()??)
+        visitor.visit_i16(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i32(self.json_reader.next_number()??)
+        visitor.visit_i32(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i64(self.json_reader.next_number()??)
+        visitor.visit_i64(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_i128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_i128(self.json_reader.next_number()??)
+        visitor.visit_i128(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u8(self.json_reader.next_number()??)
+        visitor.visit_u8(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u16(self.json_reader.next_number()??)
+        visitor.visit_u16(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u32(self.json_reader.next_number()??)
+        visitor.visit_u32(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u64(self.json_reader.next_number()??)
+        visitor.visit_u64(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_u128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u128(self.json_reader.next_number()??)
+        visitor.visit_u128(self.json_reader.next_number_int()?)
     }
 
     fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -862,6 +866,7 @@ macro_rules! deserialize_number_key {
     ($deserialize:ident => $visit:ident) => {
         fn $deserialize<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
             let key = self.key;
+            // Ensure valid JSON number, because for example f32 accepts format not allowed for JSON, such as leading '+'
             if is_valid_json_number(key) {
                 // serde_json calls method on underlying Deserializer; not possible here because only the
                 // key as str is available here
@@ -1483,11 +1488,37 @@ mod tests {
     }
 
     macro_rules! assert_parse_number_error {
-        ($method:ident, [$($json:expr),+]) => {
-            for json in [$($json),+] {
-                assert_deserialize_error!(json, $method, DeserializerError::InvalidNumber{..} => {});
-            }
+        ($method:ident, $json:expr) => {
+            assert_deserialize_error!($json, $method, DeserializerError::InvalidNumber{..} => {});
         };
+    }
+
+    macro_rules! assert_parse_int_error_reader {
+        ($method:ident, $json:expr) => {
+            assert_deserialize_error!(
+                $json,
+                $method,
+                DeserializerError::ReaderError(ReaderError {
+                    kind: ReaderErrorKind::InvalidIntError(..),
+                    ..
+                }) => {}
+            );
+        };
+    }
+
+    /// Increments the last digit char, e.g. `"123"` becomes `"124"`
+    ///
+    /// This is done on strings instead of directly on the number type to avoid numeric overflow.
+    /* (duplicated from `stream_reader.rs` tests) */
+    fn increment_last_digit(number: &str) -> String {
+        let mut result = number.to_owned();
+        let last_char = result.pop().unwrap();
+        let incremented = char::from_u32((last_char as u32) + 1).unwrap();
+        // verify that it is still a digit char; should always be the case for this test method because
+        // number strings are min/max values of number types, whose last digit is always < 9
+        assert!(matches!(incremented, '1'..='9'));
+        result.push(incremented);
+        result
     }
 
     #[test]
@@ -1518,11 +1549,39 @@ mod tests {
 
         assert_deserialized_cmp!("-1", deserialize_any, [Visited::I64(-1)]);
         assert_deserialized_cmp!("1", deserialize_any, [Visited::U64(1)]);
+        assert_deserialized_cmp!(
+            &i64::MIN.to_string(),
+            deserialize_any,
+            [Visited::I64(i64::MIN)]
+        );
+        assert_deserialized_cmp!(
+            &i64::MAX.to_string(),
+            deserialize_any,
+            // i64::MAX is parsed and visited as u64
+            [Visited::U64(i64::MAX as u64)]
+        );
+        assert_deserialized_cmp!(
+            &u64::MAX.to_string(),
+            deserialize_any,
+            [Visited::U64(u64::MAX)]
+        );
+        assert_deserialized_cmp!("1", deserialize_any, [Visited::U64(1)]);
         // Note: Does not use assert_deserialized_cmp! because serde_json reads this as f64
         assert_deserialized!(
             &(i64::MIN as i128 - 1).to_string(),
             deserialize_any,
             [Visited::I128(i64::MIN as i128 - 1)]
+        );
+        assert_deserialized!(
+            &i128::MIN.to_string(),
+            deserialize_any,
+            [Visited::I128(i128::MIN)]
+        );
+        assert_deserialized!(
+            &i128::MAX.to_string(),
+            deserialize_any,
+            // i128::MAX is parsed and visited as u128
+            [Visited::U128(i128::MAX as u128)]
         );
         // Note: Does not use assert_deserialized_cmp! because serde_json reads this as f64
         assert_deserialized!(
@@ -1530,19 +1589,21 @@ mod tests {
             deserialize_any,
             [Visited::U128(u64::MAX as u128 + 1)]
         );
+        assert_deserialized!(
+            &u128::MAX.to_string(),
+            deserialize_any,
+            [Visited::U128(u128::MAX)]
+        );
         assert_deserialized_cmp!("1.0", deserialize_any, [Visited::F64(1.0)]);
         assert_deserialized_cmp!("1e1", deserialize_any, [Visited::F64(1e1)]);
         assert_deserialized_cmp!("1E1", deserialize_any, [Visited::F64(1e1)]);
 
-        assert_parse_number_error!(
-            deserialize_any,
-            [
-                // u128::MIN - 1
-                "-170141183460469231731687303715884105729",
-                // u128::MAX + 1
-                "340282366920938463463374607431768211456"
-            ]
-        );
+        // i128::MIN - 1
+        let min_off = increment_last_digit(&i128::MIN.to_string());
+        assert_parse_number_error!(deserialize_any, min_off);
+        // u128::MAX + 1
+        let max_off = increment_last_digit(&u128::MAX.to_string());
+        assert_parse_number_error!(deserialize_any, max_off);
     }
 
     #[test]
@@ -1560,8 +1621,6 @@ mod tests {
         );
     }
 
-    /// Important: Does not work for i128 and u128 (because cannot calculate + 1 and - 1
-    /// for their MAX respectively MIN value)
     macro_rules! assert_min_max_deserialization {
         ($method:ident, $type:ident, $visited:ident) => {
             // Note: Does not use assert_deserialized_cmp! because serde_json only deserializes
@@ -1573,10 +1632,11 @@ mod tests {
             assert_deserialized!(&max.to_string(), $method, [Visited::$visited(max)]);
 
             // MIN - 1
-            let min_off = ((min as i128) - 1).to_string();
+            let min_off = if min == 0 { "-1".to_owned() } else { increment_last_digit(&min.to_string()) };
+            assert_parse_int_error_reader!($method, min_off);
             // MAX + 1
-            let max_off = ((max as i128) + 1).to_string();
-            assert_parse_number_error!($method, [&min_off, &max_off]);
+            let max_off = increment_last_digit(&max.to_string());
+            assert_parse_int_error_reader!($method, max_off);
 
             assert_deserialize_error!(
                 "true",
@@ -1608,12 +1668,17 @@ mod tests {
     fn deserialize_i64() {
         assert_min_max_deserialization!(deserialize_i64, i64, I64);
 
-        // serde_json deserializes all negative numbers as i64 by default
+        // serde_json deserializes all negative numbers as i64 by default, so unlike for other numeric types
+        // can compare the behavior here
         assert_deserialized_cmp!("-3", deserialize_i64, [Visited::I64(-3)]);
     }
 
     #[test]
     fn deserialize_i128() {
+        assert_min_max_deserialization!(deserialize_i128, i128, I128);
+
+        // Additionally compare behavior with serde_json, because for i128 it preserves the type (unlike for other numeric types)
+        assert_deserialized_cmp!("-3", deserialize_i128, [Visited::I128(-3)]);
         assert_deserialized_cmp!(
             &i128::MIN.to_string(),
             deserialize_i128,
@@ -1623,25 +1688,6 @@ mod tests {
             &i128::MAX.to_string(),
             deserialize_i128,
             [Visited::I128(i128::MAX)]
-        );
-
-        assert_parse_number_error!(
-            deserialize_i128,
-            [
-                // MIN - 1
-                "-170141183460469231731687303715884105729",
-                // MAX + 1
-                "170141183460469231731687303715884105728"
-            ]
-        );
-
-        assert_deserialize_error!(
-            "true",
-            deserialize_i128,
-            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
-                expected: ValueType::Number,
-                actual: ValueType::Boolean
-            }, ..}) => {}
         );
     }
 
@@ -1664,12 +1710,17 @@ mod tests {
     fn deserialize_u64() {
         assert_min_max_deserialization!(deserialize_u64, u64, U64);
 
-        // serde_json deserializes all unsigned numbers as u64 by default
+        // serde_json deserializes all unsigned numbers as u64 by default, so unlike for other numeric types
+        // can compare the behavior here
         assert_deserialized_cmp!("3", deserialize_u64, [Visited::U64(3)]);
     }
 
     #[test]
     fn deserialize_u128() {
+        assert_min_max_deserialization!(deserialize_u128, u128, U128);
+
+        // Additionally compare behavior with serde_json, because for u128 it preserves the type (unlike for other numeric types)
+        assert_deserialized_cmp!("3", deserialize_u128, [Visited::U128(3)]);
         assert_deserialized_cmp!(
             &u128::MIN.to_string(),
             deserialize_u128,
@@ -1679,25 +1730,6 @@ mod tests {
             &u128::MAX.to_string(),
             deserialize_u128,
             [Visited::U128(u128::MAX)]
-        );
-
-        assert_parse_number_error!(
-            deserialize_u128,
-            [
-                // MIN - 1
-                "-1",
-                // MAX + 1
-                "340282366920938463463374607431768211456"
-            ]
-        );
-
-        assert_deserialize_error!(
-            "true",
-            deserialize_u128,
-            DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
-                expected: ValueType::Number,
-                actual: ValueType::Boolean
-            }, ..}) => {}
         );
     }
 

@@ -1636,8 +1636,7 @@ fn discarded_error_handling() {
         Ok(())
     });
     assert_eq!(
-        // Created a dummy `IncompleteDocument` error
-        "JSON syntax error IncompleteDocument at <location unavailable>",
+        "invalid integer number due to 'PosOverflow' at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 

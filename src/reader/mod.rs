@@ -206,6 +206,7 @@ pub mod json_path {
 use std::{
     fmt::{Debug, Display, Formatter},
     io::Read,
+    num::ParseIntError,
     str::FromStr,
 };
 
@@ -241,6 +242,26 @@ pub enum ValueType {
 
     // No ArrayEnd and ObjectEnd, should use has_next()
 }
+
+/// Sealed trait for integer number types such as `u32`
+///
+/// Implementing this trait for custom number types is not possible. Use the
+/// methods [`JsonReader::next_number`] or [`JsonReader::next_number_as_str`] to read
+/// numbers of other types.
+///
+/// Custom JSON reader implementations can use the `FromStr` supertrait to parse
+/// numbers of this type.
+/*
+ * This is intentionally a separate type and does not re-use the FiniteNumber trait
+ * of this crate because 'integer' and 'finite number' are two distinct concepts;
+ * for example FiniteNumber is implemented by the internal TransferredNumber struct,
+ * which also supports non-integer numbers.
+ */
+#[expect(
+    private_bounds,
+    reason = "IntNumberImpl is intentionally internal; acts as sealed trait"
+)]
+pub trait IntegerNumber: FromStr<Err = ParseIntError> + IntNumberImpl + Debug {}
 
 /// Line and column position
 ///
@@ -566,6 +587,21 @@ pub enum ReaderErrorKind {
         number: String,
     },
 
+    /// A JSON number is not a valid integer
+    ///
+    /// This error is reported by [`JsonReader::next_number_int`] when a value is presumably
+    /// a valid JSON number but cannot be parsed as integer, for example because it is a
+    /// decimal number.
+    ///
+    /// If the value is not a valid JSON number in the first place, a syntax error of
+    /// kind [`SyntaxErrorKind::MalformedNumber`] is reported instead. However, JSON reader
+    /// implementations might report an `InvalidIntError` even if the value is not a valid
+    /// JSON number (and `MalformedNumber` would be more appropriate) when they fail fast,
+    /// for example when parsing an unsigned `u64` but the number starts with a `-`.
+    /* use Debug string `:?` because `IntErrorKind` does not implement Display */
+    #[strum(to_string = "invalid integer number due to '{0:?}'")]
+    InvalidIntError(std::num::IntErrorKind), // reuse stdlib error kind; is this a good idea?
+
     /// An IO error occurred while trying to read from the underlying reader, or
     /// malformed UTF-8 data was encountered
     ///
@@ -599,6 +635,7 @@ impl ReaderErrorKind {
             Self::UnsupportedNumberValue { number } => Self::UnsupportedNumberValue {
                 number: number.clone(),
             },
+            Self::InvalidIntError(kind) => Self::InvalidIntError(*kind),
             Self::IoError(error) => Self::IoError(IoError::new(error.kind(), error.to_string())),
         }
     }
@@ -664,7 +701,7 @@ pub enum TransferError {
 ///     - [`begin_object`](Self::begin_object), [`end_object`](Self::end_object): Starting and ending a JSON object
 ///     - [`next_name`](Self::next_name), [`next_name_owned`](Self::next_name_owned): Reading the name of a JSON object member
 ///     - [`next_str`](Self::next_str), [`next_string`](Self::next_string), [`next_string_reader`](Self::next_string_reader): Reading a JSON string value
-///     - [`next_number`](Self::next_number), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
+///     - [`next_number`](Self::next_number), [`next_number_int`](Self::next_number_int), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
 ///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value (optional feature)
@@ -1131,6 +1168,9 @@ pub trait JsonReader {
     /// implementation might return a non-finite result. For example `f64::from_str` can
     /// return Infinity for large numbers.
     ///
+    /// If the number should be parsed as integer number type, the method [`next_number_int`](Self::next_number_int)
+    /// might be more efficient.
+    ///
     /// If parsing the number should be deferred to a later point or the exact format of the
     /// JSON number should be preserved, the method [`next_number_as_str`](Self::next_number_as_str)
     /// can be used.
@@ -1171,6 +1211,73 @@ pub trait JsonReader {
     fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
         // Default implementation which should be suitable for most JsonReader implementations
         Ok(T::from_str(self.next_number_as_str()?))
+    }
+
+    /// Consumes and returns a JSON number parsed as integer
+    ///
+    /// The default implementation is equivalent to calling [`next_number`](Self::next_number),
+    /// but JSON reader implementations might provide a more efficient implementation.
+    ///
+    /// It might be necessary to help the Rust compiler a bit by explicitly specifying the
+    /// number type in case it cannot be inferred automatically, for example `next_number_int::<u32>()`.
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/167).
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::*;
+    /// let mut json_reader = JsonStreamReader::new("12".as_bytes());
+    /// assert_eq!(json_reader.next_number_int::<u32>()?, 12);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// (besides [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`])
+    ///
+    /// If there is no next value a [`ReaderErrorKind::UnexpectedStructure`] is returned. The [`has_next`](Self::has_next)
+    /// method can be used to check if there is a next value.
+    ///
+    /// If the next value is not a JSON number value but is a value of a different type
+    /// a [`ReaderErrorKind::UnexpectedValueType`] is returned. The [`peek`](Self::peek) method can be used to
+    /// check the type if it is not known in advance.
+    ///
+    /// If the next value is a valid JSON number but cannot be parsed as integer number, for
+    /// example because it is a decimal number, a [`ReaderErrorKind::InvalidIntError`] is returned.
+    /// Note that if the value is not a valid JSON number in the first place, a syntax error of
+    /// kind [`SyntaxErrorKind::MalformedNumber`] is reported instead.
+    ///
+    /// # Panics
+    /// Panics when called on a JSON reader which currently expects a member name, or
+    /// when called after the top-level value has already been consumed and multiple top-level
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
+    /*
+     * Design note:
+     * Alternative to this generic `next_number_int<N>` would be to have dedicated methods for each
+     * of the primitive integer number types (or at least the most common ones), e.g. `next_number_u64`.
+     *
+     * Advantages of `next_number_int<N>`:
+     * - Less API 'clutter'
+     * - (Maybe?) Easier or more convenient to use for users
+     *
+     * Disadvantages:
+     * - Custom JsonReader implementations cannot optimize this; they can only use the supertrait `FromStr`;
+     *   the more optimized methods are only available within this crate
+     * - (Maybe?) Implementing `IntegerNumber` for more types in the future could cause issues for user
+     *   code where `N` is inferred, and the compiler might choose a different type then
+     */
+    fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+        // call peek to position reader in front of value, needed for `current_position` call
+        self.peek()?;
+        // obtain error location for easier troubleshooting; but don't include JSON path to reduce performance
+        // overhead in case no error actually occurs
+        let error_position = self.current_position(false);
+        let number_result = self.next_number::<N>()?;
+        number_result.map_err(|e| ReaderError {
+            kind: ReaderErrorKind::InvalidIntError(*e.kind()),
+            location: error_position,
+        })
     }
 
     /// Consumes and returns the string representation of a JSON number value as `str`
@@ -1839,6 +1946,9 @@ pub trait JsonReader {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+    use std::{cell::Cell, num::IntErrorKind};
+
     use super::{json_path::*, *};
 
     #[test]
@@ -2005,5 +2115,203 @@ mod tests {
             "MoreElementsThanExpected",
             UnexpectedStructureKind::MoreElementsThanExpected.to_string()
         );
+    }
+
+    struct NumberStringReader {
+        number: String,
+        peeked: bool,
+        expect_peeked: bool,
+        // Cell because it is set by `current_position` which only takes `&self` and not `&mut self`
+        obtained_location: Cell<bool>,
+    }
+    impl NumberStringReader {
+        pub fn new(number: String, expect_peeked: bool) -> Self {
+            NumberStringReader {
+                number,
+                peeked: false,
+                expect_peeked,
+                obtained_location: Cell::new(false),
+            }
+        }
+    }
+    impl JsonReader for NumberStringReader {
+        fn peek(&mut self) -> Result<ValueType, ReaderError> {
+            assert!(!self.peeked);
+            assert!(!self.obtained_location.get());
+            self.peeked = true;
+            Ok(ValueType::Number)
+        }
+
+        fn begin_object(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn end_object(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn begin_array(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn end_array(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn has_next(&mut self) -> Result<bool, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_name(&mut self) -> Result<&str, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_name_owned(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_str(&mut self) -> Result<&str, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_string(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError> {
+            unreachable!();
+            // Unreachable; allow the compiler to infer the type of `impl std::io::Read`
+            #[expect(unreachable_code)]
+            Ok(std::io::empty())
+        }
+
+        fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
+            if self.expect_peeked {
+                assert!(self.peeked);
+                // Should have obtained location before reading number and then manually parsing it
+                assert!(self.obtained_location.get());
+            }
+            Ok(&self.number)
+        }
+
+        fn next_number_as_string(&mut self) -> Result<String, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_bool(&mut self) -> Result<bool, ReaderError> {
+            unreachable!()
+        }
+
+        fn next_null(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        #[cfg(feature = "serde")]
+        fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
+            &mut self,
+        ) -> Result<D, crate::serde::DeserializerError> {
+            unreachable!()
+        }
+
+        fn skip_name(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn skip_value(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn transfer_to<W: JsonWriter>(
+            &mut self,
+            _json_writer: &mut W,
+        ) -> Result<(), TransferError> {
+            unreachable!()
+        }
+
+        fn consume_trailing_whitespace(self) -> Result<(), ReaderError> {
+            unreachable!()
+        }
+
+        fn current_position(&self, _include_path: bool) -> JsonReaderPosition {
+            // Should have peeked before obtaining position, to make sure it points right before
+            // value (and not at beginning of whitespace)
+            assert!(self.peeked);
+            assert!(!self.obtained_location.get());
+            self.obtained_location.set(true);
+
+            // dummy position for error creation
+            JsonReaderPosition {
+                path: None,
+                line_pos: None,
+                data_pos: None,
+            }
+        }
+    }
+
+    /// Tests the default implementation of the `next_number` method
+    #[test]
+    fn default_next_number() -> Result<(), Box<dyn Error>> {
+        fn read_i64(json_number: &str) -> Result<i64, ParseIntError> {
+            let mut reader = NumberStringReader::new(json_number.to_owned(), false);
+            reader.next_number().unwrap()
+        }
+
+        assert_eq!(read_i64("-123")?, -123);
+        assert_eq!(read_i64("-1")?, -1);
+        assert_eq!(read_i64("-0")?, 0);
+        assert_eq!(read_i64("0")?, 0);
+        assert_eq!(read_i64("1")?, 1);
+        assert_eq!(read_i64("123")?, 123);
+
+        assert_eq!(read_i64(&i64::MIN.to_string())?, i64::MIN);
+        assert_eq!(read_i64(&i64::MAX.to_string())?, i64::MAX);
+
+        match read_i64("1.2") {
+            Err(error) => {
+                assert_eq!(*error.kind(), IntErrorKind::InvalidDigit);
+            }
+            result => panic!("unexpected result: {result:?}"),
+        }
+
+        Ok(())
+    }
+
+    /// Tests the default implementation of the `next_number_int` method
+    #[test]
+    fn default_next_number_int() -> Result<(), Box<dyn Error>> {
+        fn read_i64(json_number: &str) -> Result<i64, ReaderError> {
+            let mut reader = NumberStringReader::new(json_number.to_owned(), true);
+            reader.next_number_int()
+        }
+
+        assert_eq!(read_i64("-123")?, -123);
+        assert_eq!(read_i64("-1")?, -1);
+        assert_eq!(read_i64("-0")?, 0);
+        assert_eq!(read_i64("0")?, 0);
+        assert_eq!(read_i64("1")?, 1);
+        assert_eq!(read_i64("123")?, 123);
+
+        assert_eq!(read_i64(&i64::MIN.to_string())?, i64::MIN);
+        assert_eq!(read_i64(&i64::MAX.to_string())?, i64::MAX);
+
+        match read_i64("1.2") {
+            Err(ReaderError {
+                kind: ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit),
+                location:
+                    // dummy location used by custom reader
+                    JsonReaderPosition {
+                        path: None,
+                        line_pos: None,
+                        data_pos: None,
+                    },
+            }) => {}
+            result => panic!("unexpected result: {result:?}"),
+        }
+
+        Ok(())
     }
 }

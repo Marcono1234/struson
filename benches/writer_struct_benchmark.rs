@@ -98,6 +98,6 @@ fn benchmark_struct(c: &mut Criterion) {
 criterion_group!(
     benches,
     // Benchmark functions
-    benchmark_struct
+    benchmark_struct,
 );
 criterion_main!(benches);

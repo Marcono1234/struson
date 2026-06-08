@@ -95,6 +95,6 @@ criterion_group!(
     benches,
     // Benchmark functions
     benchmark_number_vec,
-    benchmark_structs
+    benchmark_structs,
 );
 criterion_main!(benches);

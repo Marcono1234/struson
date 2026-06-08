@@ -176,6 +176,6 @@ criterion_group!(
     benchmark_nested_object,
     benchmark_large_ascii_string,
     benchmark_large_unicode_string,
-    benchmark_escapes_string
+    benchmark_escapes_string,
 );
 criterion_main!(benches);

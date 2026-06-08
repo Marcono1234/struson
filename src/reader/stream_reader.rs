@@ -1,6 +1,10 @@
 //! Streaming implementation of [`JsonReader`]
 
-use std::io::{Bytes, ErrorKind};
+use std::{
+    io::{Bytes, ErrorKind},
+    num::IntErrorKind,
+    ops::{Add, AddAssign, Div, MulAssign, Neg, Rem},
+};
 
 use thiserror::Error;
 
@@ -1260,6 +1264,305 @@ impl<R: Read> JsonStreamReader<R> {
     }
 }
 
+/// Internal trait for an optimized parsing implementation of [`IntegerNumber`]
+pub(crate) trait IntNumberImpl {
+    fn parse_number<R: Read>(json_reader: &mut JsonStreamReader<R>) -> Result<Self, ReaderError>
+    where
+        Self: Sized;
+}
+
+/*
+ * Implementation note:
+ * This trait provides a default parsing method which is suitable for all supported
+ * integer number types. To make this work it:
+ * - has all kinds of arithmetic supertraits (`Div`, `Rem`, ...) to perform the
+ *   arithmetic operations during the parsing; these traits are implemented by all
+ *   supported integer number types
+ * - has a non-default method for converting numbers in range 0..=10 to Self
+ * - has a non-default method for obtaining Self::max
+ *
+ * A macro based implementation might be easier to read, but editing it might not be
+ * as convenient. And it might be more difficult to ensure that all assumptions (about
+ * number ranges, ...) are correct.
+ */
+trait UnsignedIntNumberImpl:
+    Copy
+    // These supertraits are needed for the parsing implementation
+    + Div<Self, Output = Self>
+    + Rem<Self, Output = Self>
+    + MulAssign<Self>
+    + AddAssign<Self>
+    + PartialOrd
+{
+    /// Parses an unsigned number in range 0..=[`Self::max()`]
+    fn parse_number_unsigned<R: Read>(
+        json_reader: &mut JsonStreamReader<R>,
+        is_negative: bool,
+    ) -> Result<Self, ReaderError> {
+        let max_value = Self::max();
+        /*
+         * Max value which can be constructed by loop which does `r = r * 10 + digit`, without risking overflow
+         * - while `result < max_safe_value`: any digit may follow
+         * - if `result == max_safe_value`: only digit <= max_last_digit may follow
+         * - if `result > max_safe_value`: no digit may follow
+         * 
+         * For example for u8 (max 255)
+         * - max_safe_value would be `25`
+         * - max_last_digit would be `5`
+         * This allows values such as 249 and 255, but disallows 256 and 260
+         */
+        let max_safe_value = max_value / Self::from_u8(10);
+        let max_last_digit = max_value % Self::from_u8(10);
+
+        let mut result: Self = Self::from_u8(0);
+        let mut consumed_bytes = 0;
+
+        if json_reader.peek_byte()? == Some(b'0') {
+            json_reader.skip_peeked_byte();
+            consumed_bytes += 1;
+
+            // check for leading 0 followed by digit, which is invalid
+            if let Some(byte) = json_reader.peek_byte()? && byte.is_ascii_digit() {
+                return json_reader.syntax_error(SyntaxErrorKind::MalformedNumber);
+            }
+            // else fall-through to non-digit char handling below
+        }
+
+        // Loop which does `r = r * 10 + digit`, without risking overflow
+        while result < max_safe_value
+            && let Some(byte) = json_reader.peek_byte()?
+        {
+            match byte {
+                b'0'..=b'9' => {
+                    result *= Self::from_u8(10);
+                    result += Self::from_u8(byte - b'0');
+
+                    json_reader.skip_peeked_byte();
+                    consumed_bytes += 1;
+                }
+                // fall-through to non-digit char handling below
+                _ => break,
+            }
+        }
+
+        let mut last_byte = json_reader.peek_byte()?;
+        #[expect(clippy::manual_is_ascii_check, reason = "explicit b'0'..=b'9' is easier to read, especially with other `match` using it too")]
+        if result == max_safe_value
+            && let Some(byte) = last_byte
+            && matches!(byte, b'0'..=b'9')
+        {
+            let last_digit = Self::from_u8(byte - b'0');
+            if last_digit > max_last_digit {
+                return json_reader.error(ReaderErrorKind::InvalidIntError(if is_negative {
+                    IntErrorKind::NegOverflow
+                } else {
+                    IntErrorKind::PosOverflow
+                }));
+            }
+
+            result *= Self::from_u8(10);
+            result += last_digit;
+
+            json_reader.skip_peeked_byte();
+            consumed_bytes += 1;
+            last_byte = json_reader.peek_byte()?;
+        }
+
+        if let Some(byte) = last_byte {
+            match byte {
+                // already reached max number of digits (due to `max_safe_value` check)
+                b'0'..=b'9' => {
+                    return json_reader.error(ReaderErrorKind::InvalidIntError(if is_negative {
+                        IntErrorKind::NegOverflow
+                    } else {
+                        IntErrorKind::PosOverflow
+                    }));
+                }
+                b'-' => {
+                    if is_negative || consumed_bytes > 0 {
+                        // Double '-' or '-' in middle of integer part (note that 'e' is not allowed either)
+                        return json_reader.syntax_error(SyntaxErrorKind::MalformedNumber);
+                    }
+                    // Unsigned with leading '-'
+                    return json_reader
+                        .error(ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit));
+                }
+                // non-integer
+                b'.' | b'e' | b'E' => {
+                    if consumed_bytes == 0 {
+                        // Missing integer part
+                        return json_reader.syntax_error(SyntaxErrorKind::MalformedNumber);
+                    }
+                    return json_reader
+                        .error(ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit));
+                }
+                _ => {
+                    // Case `consumed_bytes == 0` is handled separately below
+                    if consumed_bytes > 0 {
+                        json_reader
+                            .verify_value_separator(byte, SyntaxErrorKind::TrailingDataAfterNumber)?;
+                    }
+                }
+            }
+        }
+        if consumed_bytes == 0 {
+            // Alternatively could report `InvalidIntError(IntErrorKind::Empty)`, but syntax error seems
+            // more appropriate; is also more correct when signed parsing had already consumed leading '-'
+            return json_reader.syntax_error(SyntaxErrorKind::MalformedNumber);
+        }
+        json_reader.byte_pos += consumed_bytes;
+        json_reader.column += consumed_bytes;
+        Ok(result)
+    }
+
+    /// Maximum value, inclusive
+    fn max() -> Self;
+    // Note: This mainly acts as `{integer} as Self`, and u8 is the smallest possible number type
+    // which suffices for the calculations (even when parsing `i8`), therefore use it as type here
+    fn from_u8(value: u8) -> Self;
+}
+
+/// Implementation for parsing signed integer numbers, delegating to [`UnsignedIntNumberImpl`]
+/// for unsigned parsing
+trait SignedIntNumberImpl: IntegerNumber + Neg<Output = Self> {
+    type Unsigned: UnsignedIntNumberImpl + Add<Self::Unsigned, Output = Self::Unsigned>;
+
+    /// Minimum value, inclusive
+    fn min() -> Self;
+    /// `abs(min())`
+    fn min_abs() -> Self::Unsigned;
+    /// [`Self::max()`] as unsigned
+    fn max_as_unsigned() -> Self::Unsigned;
+    fn from_unsigned(value: Self::Unsigned) -> Self;
+
+    fn parse_number_signed<R: Read>(
+        json_reader: &mut JsonStreamReader<R>,
+    ) -> Result<Self, ReaderError> {
+        // If None, continue and let the number parsing handle it as error
+        let is_negative = json_reader.peek_byte()? == Some(b'-');
+        if is_negative {
+            json_reader.skip_peeked_byte();
+        }
+
+        // Don't increment yet, to let `Unsigned::parse_number_impl` report in front of
+        // leading '-' (if present)
+        let start_byte_pos = json_reader.byte_pos;
+        let start_column = json_reader.column;
+        // Parse as unsigned, which can represent the range `0..=abs(MIN)`
+        let unsigned = Self::Unsigned::parse_number_unsigned(json_reader, is_negative)?;
+
+        let result;
+        if is_negative {
+            let min_abs = Self::min_abs();
+            if unsigned > min_abs {
+                // Restore old position to report error at correct position
+                json_reader.byte_pos = start_byte_pos;
+                json_reader.column = start_column;
+                return json_reader
+                    .error(ReaderErrorKind::InvalidIntError(IntErrorKind::NegOverflow));
+            }
+
+            // for leading '-'
+            json_reader.byte_pos += 1;
+            json_reader.column += 1;
+
+            debug_assert!(
+                Self::min_abs() == Self::max_as_unsigned().add(Self::Unsigned::from_u8(1)),
+                "expected abs(MIN) == MAX + 1"
+            );
+            if unsigned < min_abs {
+                result = -Self::from_unsigned(unsigned);
+            } else {
+                // special case; directly set MIN as result because doing `-(<unsigned> as <signed>)` would overflow
+                result = Self::min();
+            }
+        } else {
+            let max = Self::max_as_unsigned();
+            if unsigned > max {
+                // Restore old position to report error at correct position
+                json_reader.byte_pos = start_byte_pos;
+                json_reader.column = start_column;
+                return json_reader
+                    .error(ReaderErrorKind::InvalidIntError(IntErrorKind::PosOverflow));
+            }
+
+            result = Self::from_unsigned(unsigned);
+        }
+        Ok(result)
+    }
+}
+
+duplicate::duplicate! {
+    [
+        unsigned_type signed_type;
+        [u8] [i8];
+        [u16] [i16];
+        [u32] [i32];
+        [u64] [i64];
+        [u128] [i128];
+        [usize] [isize];
+        // when extending this for more types, adjust the tests below as well
+    ]
+
+    impl UnsignedIntNumberImpl for unsigned_type {
+        #[inline(always)]
+        fn max() -> Self {
+            // Sanity check to ensure this trait is implemented for unsigned types only
+            const { debug_assert!(Self::MIN == 0); }
+
+            Self::MAX
+        }
+
+        #[inline(always)]
+        fn from_u8(value: u8) -> Self {
+            #[allow(clippy::useless_conversion, reason = "for u8 -> u8")]
+            value.into()
+        }
+    }
+    impl IntNumberImpl for unsigned_type {
+        fn parse_number<R: Read>(json_reader: &mut JsonStreamReader<R>) -> Result<Self, ReaderError> where Self: Sized {
+            Self::parse_number_unsigned(json_reader, false)
+        }
+    }
+    impl IntegerNumber for unsigned_type {}
+
+
+    impl SignedIntNumberImpl for signed_type {
+        type Unsigned = unsigned_type;
+
+        #[inline(always)]
+        fn min() -> Self {
+            // Sanity check to ensure this trait is implemented for the correct types
+            const { debug_assert!(Self::MIN < 0 && Self::Unsigned::MIN == 0); }
+            Self::MIN
+        }
+
+        #[inline(always)]
+        fn min_abs() -> Self::Unsigned {
+            Self::MIN.abs_diff(0)
+        }
+
+        #[inline(always)]
+        fn max_as_unsigned() -> Self::Unsigned {
+            debug_assert!(Self::Unsigned::MAX > Self::MAX.try_into().unwrap());
+            Self::MAX as Self::Unsigned
+        }
+
+        #[inline(always)]
+        fn from_unsigned(value: Self::Unsigned) -> Self {
+            debug_assert!(value <= Self::MAX.try_into().unwrap());
+            value as Self
+        }
+    }
+    impl IntNumberImpl for signed_type {
+        fn parse_number<R: Read>(json_reader: &mut JsonStreamReader<R>) -> Result<Self, ReaderError> where Self: Sized {
+            Self::parse_number_signed(json_reader)
+        }
+    }
+    impl IntegerNumber for signed_type {}
+
+}
+
 struct CollectingNumberBytesCollector {
     buf: Vec<u8>,
     restrict_number_values: bool,
@@ -1278,6 +1581,7 @@ impl NumberBytesCollector<String> for CollectingNumberBytesCollector {
         let number_str = utf8::to_string_unchecked(self.buf);
 
         // >= e100, <= e-100 or complete number longer than 100 chars
+        // Note: When making this stricter, might have to adjust `next_number_int`
         if self.restrict_number_values && (exponent_digits_count > 2 || number_str.len() > 100) {
             Err(ReaderError {
                 kind: ReaderErrorKind::UnsupportedNumberValue { number: number_str },
@@ -1548,6 +1852,13 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
         let number_string = self.next_number_as_string()?;
         Ok(self.put_into_string_value_buf(number_string))
+    }
+
+    fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+        self.start_expected_value_type(ValueType::Number, false)?;
+        let number = N::parse_number(self)?;
+        self.on_value_end();
+        Ok(number)
     }
 
     #[cfg(feature = "serde")]
@@ -2101,6 +2412,306 @@ mod tests {
         Ok(())
     }
 
+    /// Increments the last digit char, e.g. `"123"` becomes `"124"`
+    ///
+    /// This is done on strings instead of directly on the number type to avoid numeric overflow.
+    fn increment_last_digit(number: &str) -> String {
+        let mut result = number.to_owned();
+        let last_char = result.pop().unwrap();
+        let incremented = char::from_u32((last_char as u32) + 1).unwrap();
+        // verify that it is still a digit char; should always be the case for this test method because
+        // number strings are min/max values of number types, whose last digit is always < 9
+        assert!(matches!(incremented, '1'..='9'));
+        result.push(incremented);
+        result
+    }
+
+    /// Performs assertions on the `next_number_int` method
+    macro_rules! assert_next_number_int {
+        ($num_type:ty) => {{
+            fn assert_int_error<T: Debug>(
+                result: Result<T, ReaderError>,
+                expected_kind: IntErrorKind,
+            ) {
+                match result {
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::InvalidIntError(kind),
+                        location,
+                    }) => {
+                        assert_eq!(kind, expected_kind);
+                        assert_eq!(
+                            location,
+                            JsonReaderPosition {
+                                path: Some(vec![]),
+                                // Should not have advanced position
+                                line_pos: Some(LinePosition {
+                                    line: 0,
+                                    column: 0,
+                                }),
+                                data_pos: Some(0),
+                            },
+                        )
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+            }
+
+            // Sanity check: Ensure that numbers which are supported by `next_number_int` would not be restricted when
+            // parsed with other `next_number` method instead
+            // Otherwise would have to consider if `next_number_int` should enforce restrictions too
+            fn assert_not_restricted_number(json_number: &str) {
+                let mut json_reader = JsonStreamReader::new_custom(
+                    json_number.as_bytes(),
+                    ReaderSettings {
+                        restrict_number_values: true,
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(json_reader.next_number_as_string().unwrap(), json_number);
+            }
+
+            let max = <$num_type>::MAX;
+            let is_unsigned = <$num_type>::MIN == 0;
+            let is_signed = !is_unsigned;
+
+            fn read(json_number: &str) -> Result<$num_type, ReaderError> {
+                let mut reader = new_reader(json_number);
+                reader.next_number_int()
+            }
+
+            fn assert_read(json_number: &str, expected: $num_type) {
+                let mut reader = new_reader(json_number);
+                let number = reader.next_number_int::<$num_type>().unwrap();
+                assert_eq!(number, expected);
+
+                // Verify that reader position was properly updated
+                let expected_column = json_number.len() as u64;
+                assert_eq!(
+                    reader.current_position(true),
+                    JsonReaderPosition {
+                        path: Some(vec![]),
+                        line_pos: Some(LinePosition {
+                            line: 0,
+                            column: expected_column,
+                        }),
+                        data_pos: Some(expected_column),
+                    },
+                );
+
+                reader.consume_trailing_whitespace().unwrap();
+            }
+
+            // Handle unsigned and signed types differently
+            if is_unsigned {
+                assert_int_error(read("-0"), IntErrorKind::InvalidDigit);
+                assert_int_error(read("-1"), IntErrorKind::InvalidDigit);
+            } else {
+                assert_read("-0", 0);
+                // Use `TryInto` to avoid compiler error (for unreachable code) for unsigned types,
+                // because -123 is not valid unsigned value
+                assert_read("-123", TryInto::<$num_type>::try_into(-123).unwrap());
+
+                let min = <$num_type>::MIN;
+                let min_string = min.to_string();
+                assert_read(&min_string, min);
+
+                assert_not_restricted_number(&min_string);
+
+                // reduce tens digit and append 9, e.g. min=-128 -> '-11 9'
+                let number_10_less = (min / 10 + 1) * 10 - 9;
+                assert_read(&number_10_less.to_string(), number_10_less);
+
+                let overflow_string = increment_last_digit(&min_string);
+                assert_int_error(read(&overflow_string), IntErrorKind::NegOverflow);
+
+                // Overflow string which does not pass `< max_safe_value` check in parsing code
+                // `- 1` to account for leading '-'
+                let overflow_string = format!("-{}", "9".repeat(min_string.len() - 1));
+                assert_int_error(read(&overflow_string), IntErrorKind::NegOverflow);
+
+                // increase tens digit and append 0, e.g. min=-128 -> '-13 0'
+                let overflow_string = format!("{}0", min / 10 - 1);
+                assert_int_error(read(&overflow_string), IntErrorKind::NegOverflow);
+            }
+
+            assert_read("0", 0);
+            assert_read("123", 123);
+
+            let max_string = max.to_string();
+            assert_read(&max_string, max);
+
+            assert_not_restricted_number(&max_string);
+
+            // reduce tens digit and append 9, e.g. max=127 -> '11 9'
+            let number_10_less = (max / 10 - 1) * 10 + 9;
+            assert_read(&number_10_less.to_string(), number_10_less);
+
+            let overflow_string = increment_last_digit(&max_string);
+            assert_int_error(read(&overflow_string), IntErrorKind::PosOverflow);
+
+            // Overflow string which does not pass `< max_safe_value` check in parsing code
+            let overflow_string = "9".repeat(max_string.len());
+            assert_int_error(read(&overflow_string), IntErrorKind::PosOverflow);
+
+            // increase tens digit and append 0, e.g. max=127 -> '13 0'
+            let overflow_string = format!("{}0", max / 10 + 1);
+            assert_int_error(read(&overflow_string), IntErrorKind::PosOverflow);
+
+            // Reading nested number
+            let mut reader = new_reader("[ 123 ]");
+            reader.begin_array()?;
+            assert_eq!(reader.next_number_int::<$num_type>()?, 123);
+            assert_eq!(
+                reader.current_position(true),
+                JsonReaderPosition {
+                    path: Some(json_path![1].to_vec()),
+                    line_pos: Some(LinePosition {
+                        line: 0,
+                        column: 5,
+                    }),
+                    data_pos: Some(5),
+                },
+            );
+            reader.end_array()?;
+            reader.consume_trailing_whitespace()?;
+
+            // Valid JSON numbers, but not valid integer
+            assert_int_error(read("1.2"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("1.0"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("0.0"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("1e2"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("1E2"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("1e-2"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("1e0"), IntErrorKind::InvalidDigit);
+            assert_int_error(read("0e0"), IntErrorKind::InvalidDigit);
+            if (is_unsigned) {
+                assert_int_error(read("-1"), IntErrorKind::InvalidDigit);
+            }
+
+            fn assert_syntax_error(invalid_json: &str) {
+                let result = read(invalid_json);
+                match result {
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber),
+                        location,
+                    }) => {
+                        assert_eq!(
+                            location,
+                            JsonReaderPosition {
+                                path: Some(vec![]),
+                                // Should not have advanced position
+                                line_pos: Some(LinePosition {
+                                    line: 0,
+                                    column: 0,
+                                }),
+                                data_pos: Some(0),
+                            },
+                        )
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+
+                // For completeness directly call impl as well, to make sure the above expected error was
+                // not reported by JsonStreamReader itself
+                assert_syntax_error_impl(invalid_json);
+            }
+
+            // Directly tests IntNumberImpl, for cases where normally JsonStreamReader itself would already
+            // reject the value as invalid JSON number
+            fn assert_syntax_error_impl(invalid_json: &str) {
+                let mut reader = new_reader(invalid_json);
+                let result = <$num_type as IntNumberImpl>::parse_number(&mut reader);
+                match result {
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber),
+                        location,
+                    }) => {
+                        assert_eq!(
+                            location,
+                            JsonReaderPosition {
+                                path: Some(vec![]),
+                                // Should not have advanced position
+                                line_pos: Some(LinePosition {
+                                    line: 0,
+                                    column: 0,
+                                }),
+                                data_pos: Some(0),
+                            },
+                        )
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+            }
+
+            fn assert_trailing_data_error(invalid_json: &str) {
+                let result = read(invalid_json);
+                match result {
+                    Err(ReaderError {
+                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingDataAfterNumber),
+                        location,
+                    }) => {
+                        assert_eq!(
+                            location,
+                            JsonReaderPosition {
+                                path: Some(vec![]),
+                                // Should not have advanced position
+                                line_pos: Some(LinePosition {
+                                    line: 0,
+                                    column: 0,
+                                }),
+                                data_pos: Some(0),
+                            },
+                        )
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+            }
+
+            // Invalid JSON numbers
+            assert_syntax_error_impl("");
+            assert_syntax_error_impl("a");
+            assert_trailing_data_error("1a");
+            assert_syntax_error("00");
+            assert_syntax_error("01");
+            assert_syntax_error("0-1");
+            assert_trailing_data_error("0a");
+            assert_syntax_error_impl("e1");
+            assert_syntax_error_impl(".1");
+            assert_syntax_error_impl("+1");
+            assert_syntax_error("1-2");
+            assert_syntax_error_impl(" 1");
+            if (is_signed) {
+                // Only test this for signed numbers; for unsigned it will report InvalidDigit for leading '-'
+                assert_syntax_error("-");
+                assert_syntax_error("--1");
+                assert_syntax_error("-00");
+                assert_syntax_error("-01");
+                assert_syntax_error("-e1");
+                assert_syntax_error("-.1");
+                assert_syntax_error("-+1");
+                assert_syntax_error("- 1");
+            }
+        }};
+    }
+
+    #[test]
+    fn numbers_integer() -> TestResult {
+        assert_next_number_int!(u8);
+        assert_next_number_int!(i8);
+        assert_next_number_int!(u16);
+        assert_next_number_int!(i16);
+        assert_next_number_int!(u32);
+        assert_next_number_int!(i32);
+        assert_next_number_int!(u64);
+        assert_next_number_int!(i64);
+        assert_next_number_int!(u128);
+        assert_next_number_int!(i128);
+        assert_next_number_int!(usize);
+        assert_next_number_int!(isize);
+
+        Ok(())
+    }
+
     #[test]
     fn numbers_restriction() -> TestResult {
         let numbers = vec![
@@ -2171,6 +2782,7 @@ mod tests {
         json_reader.skip_value()?;
         json_reader.consume_trailing_whitespace()?;
 
+        // Large numbers should be allowed when restriction is disabled
         let numbers = vec![
             "1e100".to_owned(),
             "1e+100".to_owned(),
@@ -2187,6 +2799,15 @@ mod tests {
             );
             assert_eq!(number, json_reader.next_number_as_string()?);
         }
+
+        // `next_number_int` should not be restricted (its digits count is below restriction limit)
+        let number_string = i128::MIN.to_string();
+        let mut json_reader = new_reader(&number_string);
+        assert_eq!(json_reader.next_number_int::<i128>()?, i128::MIN);
+
+        let number_string = u128::MAX.to_string();
+        let mut json_reader = new_reader(&number_string);
+        assert_eq!(json_reader.next_number_int::<u128>()?, u128::MAX);
 
         Ok(())
     }
