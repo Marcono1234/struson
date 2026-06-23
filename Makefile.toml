@@ -26,6 +26,7 @@ dependencies = ["build-default"]
 
 
 # Serde interoperability feature
+# (build this feature on its own to ensure it does not accidentally rely on other features)
 [tasks.build-serde-interop]
 command = "cargo"
 args = ["build", "--all-targets", "--features", "serde"]
@@ -36,6 +37,13 @@ command = "cargo"
 # Benchmark tests are performed further below; could include them here for this execution in the future though
 args = ["test", "--features", "serde"]
 dependencies = ["build-serde-interop"]
+
+
+# Simple API feature
+# (build this feature on its own to ensure it does not accidentally rely on other features)
+[tasks.build-simple-api]
+command = "cargo"
+args = ["build", "--all-targets", "--features", "simple-api"]
 
 
 # All features
@@ -62,6 +70,7 @@ dependencies = ["test-default", "test-serde-interop", "test-all-features"]
 dependencies = [
     "build-default",
     "build-serde-interop",
+    "build-simple-api",
     "build-all-features",
 ]
 
