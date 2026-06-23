@@ -150,8 +150,8 @@ pub struct JsonStreamReader<R: Read> {
     string_value_buf: Option<String>,
 
     peeked: Option<PeekedValue>,
-    /// Whether the current array or object is empty, or at top-level whether
-    /// no value has been consumed yet
+    /// Whether the current array or object is empty, or [at top-level](Self::is_at_top_level)
+    /// whether no value has been consumed yet
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
@@ -180,6 +180,16 @@ pub struct JsonStreamReader<R: Read> {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ReaderSettings {
+    /// Whether to allow reading an empty JSON document
+    ///
+    /// When enabled the read document may be empty or consist only of whitespace without containing
+    /// any JSON value. [`JsonReader::has_next`] can be used to check if there is a JSON value.
+    ///
+    /// This can especially be useful in combination with [`allow_multiple_top_level`](Self::allow_multiple_top_level)
+    /// when processing a stream of JSON values, but that stream might be empty.
+    /* dedicated setting because this might also be useful without multi top-level values */
+    pub allow_empty_document: bool,
+
     /// Whether to allow comments in the JSON document
     ///
     /// The JSON specification does not allow comments. However, some programs such as
@@ -244,6 +254,34 @@ pub struct ReaderSettings {
     /// If there is no whitespace between the values it is unspecified whether parsing will succeed.
     /// For example the string `truefalse` will likely be rejected and not parsed as JSON values
     /// `true` and `false`.
+    ///
+    /// Note that by default the JSON document must contain at least one JSON value. If the stream
+    /// of JSON values is allowed to be empty, set [`allow_empty_document`](Self::allow_empty_document) to `true`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::*;
+    /// # let json = "1 1".as_bytes();
+    /// let mut json_reader = JsonStreamReader::new_custom(
+    ///     json,
+    ///     ReaderSettings {
+    ///         allow_multiple_top_level: true,
+    ///         allow_empty_document: true,
+    ///         // For all other settings use the default
+    ///         ..Default::default()
+    ///     },
+    /// );
+    ///
+    /// while json_reader.has_next()? {
+    ///     // consume JSON value ...
+    /// #   assert_eq!(json_reader.next_number_as_str()?, "1");
+    /// }
+    ///
+    /// # // Technically redundant since `has_next()` already consumed the whitespace while checking
+    /// # // for next value; but does not hurt, and also helps because it consumes the reader
+    /// json_reader.consume_trailing_whitespace()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub allow_multiple_top_level: bool,
 
     /// Whether to track the JSON path while parsing
@@ -296,6 +334,7 @@ const DEFAULT_MAX_NESTING_DEPTH: u32 = 128; // update documentation when changin
 impl Default for ReaderSettings {
     /// Creates the default JSON reader settings
     ///
+    /// - [empty document](Self::allow_empty_document): disallowed
     /// - [comments](Self::allow_comments): disallowed
     /// - [trailing comma](Self::allow_trailing_comma): disallowed
     /// - [multiple top-level values](Self::allow_multiple_top_level): disallowed
@@ -306,6 +345,7 @@ impl Default for ReaderSettings {
     /// These defaults are compliant with the JSON specification.
     fn default() -> Self {
         ReaderSettings {
+            allow_empty_document: false,
             allow_comments: false,
             allow_trailing_comma: false,
             allow_multiple_top_level: false,
@@ -372,8 +412,12 @@ impl<R: Read> JsonStreamReader<R> {
         self.error(ReaderErrorKind::SyntaxError(kind))
     }
 
-    fn is_behind_top_level(&self) -> bool {
-        !self.is_empty && self.stack.is_empty()
+    fn is_at_top_level(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    fn is_behind_first_top_level(&self) -> bool {
+        self.is_at_top_level() && !self.is_empty
     }
 
     fn is_in_array(&self) -> bool {
@@ -627,9 +671,9 @@ impl<R: Read> JsonStreamReader<R> {
             return Ok(self.peeked);
         }
 
-        if self.is_behind_top_level() && !self.reader_settings.allow_multiple_top_level {
+        if self.is_behind_first_top_level() && !self.reader_settings.allow_multiple_top_level {
             panic_incorrect_usage(
-                "Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings",
+                "Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in the settings",
             );
         }
         if self.expects_member_value() {
@@ -745,8 +789,9 @@ impl<R: Read> JsonStreamReader<R> {
         self.peek_internal_optional()?.map_or_else(
             // Handle EOF
             || {
-                let eof_as_unexpected_structure =
-                    self.is_behind_top_level() && self.reader_settings.allow_multiple_top_level;
+                let eof_as_unexpected_structure = self.is_at_top_level()
+                    && (self.is_empty && self.reader_settings.allow_empty_document
+                        || !self.is_empty && self.reader_settings.allow_multiple_top_level);
                 if eof_as_unexpected_structure {
                     self.error(ReaderErrorKind::UnexpectedStructure(
                         UnexpectedStructureKind::FewerElementsThanExpected,
@@ -1722,21 +1767,28 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             panic_incorrect_usage("Cannot check for next element when member value is expected");
         }
 
+        #[expect(
+            clippy::needless_late_init,
+            reason = "has better readability than `let peeked = if <large-block>`"
+        )]
         let peeked: PeekedValue;
-        if self.stack.is_empty() {
+        if self.is_at_top_level() {
             if self.is_empty {
-                panic_incorrect_usage(
-                    "Cannot check for next element when top-level value has not been started",
-                );
+                if !self.reader_settings.allow_empty_document {
+                    panic_incorrect_usage(
+                        "Cannot check for next element when top-level value has not been started and empty documents are not enabled in the settings",
+                    );
+                }
+                // else fall-through to peeking
             } else if !self.reader_settings.allow_multiple_top_level {
                 panic_incorrect_usage(
                     "Cannot check for multiple top-level values when not enabled in the reader settings",
                 );
-            } else {
-                peeked = match self.peek_internal_optional()? {
-                    None => return Ok(false),
-                    Some(p) => p,
-                }
+            }
+
+            peeked = match self.peek_internal_optional()? {
+                None => return Ok(false),
+                Some(p) => p,
             }
         } else {
             peeked = self.peek_internal()?;
@@ -2006,15 +2058,15 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                 "Cannot consume trailing whitespace when string value reader is active",
             );
         }
-        if self.stack.is_empty() {
-            if self.is_empty {
+        if self.is_at_top_level() {
+            if self.is_empty && !self.reader_settings.allow_empty_document {
                 panic_incorrect_usage(
-                    "Cannot skip trailing whitespace when top-level value has not been consumed yet",
+                    "Cannot consume trailing whitespace when top-level value has not been consumed yet and empty documents are not enabled in the settings",
                 );
             }
         } else {
             panic_incorrect_usage(
-                "Cannot skip trailing whitespace when top-level value has not been fully consumed yet",
+                "Cannot consume trailing whitespace when top-level value has not been fully consumed yet",
             );
         }
 
@@ -4652,7 +4704,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been consumed yet"
+        expected = "Incorrect reader usage: Cannot consume trailing whitespace when top-level value has not been consumed yet and empty documents are not enabled in the settings"
     )]
     fn consume_trailing_whitespace_top_level_not_started() {
         let json_reader = new_reader("");
@@ -4662,7 +4714,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Incorrect reader usage: Cannot skip trailing whitespace when top-level value has not been fully consumed yet"
+        expected = "Incorrect reader usage: Cannot consume trailing whitespace when top-level value has not been fully consumed yet"
     )]
     fn consume_trailing_whitespace_top_level_not_finished() {
         let mut json_reader = new_reader("[]");
@@ -4957,13 +5009,16 @@ mod tests {
 
     #[test]
     fn multiple_top_level() -> TestResult {
-        let mut json_reader = JsonStreamReader::new_custom(
-            "[1] [2]".as_bytes(),
-            ReaderSettings {
-                allow_multiple_top_level: true,
-                ..Default::default()
-            },
-        );
+        fn new_reader(json: &str) -> JsonStreamReader<&[u8]> {
+            JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    allow_multiple_top_level: true,
+                    ..Default::default()
+                },
+            )
+        }
+        let mut json_reader = new_reader("[1] [2]");
 
         assert_eq!(ValueType::Array, json_reader.peek()?);
         json_reader.begin_array()?;
@@ -4991,6 +5046,61 @@ mod tests {
         );
 
         json_reader.consume_trailing_whitespace()?;
+
+        fn new_reader_allow_empty(json: &str) -> JsonStreamReader<&[u8]> {
+            JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    allow_multiple_top_level: true,
+                    allow_empty_document: true,
+                    ..Default::default()
+                },
+            )
+        }
+        let mut json_reader = new_reader_allow_empty("1 2");
+        let mut values = Vec::<u8>::new();
+        // Due to `allow_empty_document: true` can use `has_next()` even for first top-level value
+        while json_reader.has_next()? {
+            values.push(json_reader.next_number()??);
+        }
+        json_reader.consume_trailing_whitespace()?;
+        assert_eq!(values, [1, 2]);
+
+        // Test handling of unexpected structure
+        let mut json_reader = new_reader("");
+        assert_parse_error(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::IncompleteDocument,
+            0,
+        );
+
+        let mut json_reader = new_reader("1");
+        assert_eq!(json_reader.next_number_as_str()?, "1");
+        assert_unexpected_structure(
+            json_reader.peek(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            &json_path![],
+            1,
+        );
+
+        let mut json_reader = new_reader_allow_empty("");
+        // Calling `peek()` for `allow_empty_document: true` when document is empty should report UnexpectedStructure instead of IncompleteDocument
+        assert_unexpected_structure(
+            json_reader.peek(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            &json_path![],
+            0,
+        );
+
+        let mut json_reader = new_reader_allow_empty("1");
+        assert_eq!(json_reader.next_number_as_str()?, "1");
+        assert_unexpected_structure(
+            json_reader.peek(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            &json_path![],
+            1,
+        );
 
         Ok(())
     }
@@ -5033,7 +5143,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in settings"
+        expected = "Incorrect reader usage: Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in the settings"
     )]
     fn multiple_top_level_disallowed_peek() {
         let mut json_reader = new_reader("1 2");
@@ -5055,7 +5165,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Incorrect reader usage: Cannot check for next element when top-level value has not been started"
+        expected = "Incorrect reader usage: Cannot check for next element when top-level value has not been started and empty documents are not enabled in the settings"
     )]
     fn has_next_start_of_document() {
         let mut json_reader = JsonStreamReader::new_custom(
@@ -5079,6 +5189,67 @@ mod tests {
         assert_eq!("a", json_reader.next_name_owned().unwrap());
 
         let _ = json_reader.has_next();
+    }
+
+    #[test]
+    fn empty_document() {
+        let mut json_reader = new_reader("");
+        assert_parse_error(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::IncompleteDocument,
+            0,
+        );
+
+        let mut json_reader = new_reader(" \t");
+        assert_parse_error(
+            None,
+            json_reader.peek(),
+            SyntaxErrorKind::IncompleteDocument,
+            2,
+        );
+    }
+
+    #[test]
+    fn empty_document_allowed() -> TestResult {
+        fn new_reader(json: &str) -> JsonStreamReader<&[u8]> {
+            JsonStreamReader::new_custom(
+                json.as_bytes(),
+                ReaderSettings {
+                    allow_empty_document: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        let mut json_reader = new_reader("1");
+        assert_eq!(json_reader.has_next()?, true);
+        assert_eq!(json_reader.peek()?, ValueType::Number);
+        assert_eq!(json_reader.next_number_as_str()?, "1");
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader("");
+        assert_eq!(json_reader.has_next()?, false);
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader("\n ");
+        assert_eq!(json_reader.has_next()?, false);
+        json_reader.consume_trailing_whitespace()?;
+
+        let json_reader = new_reader("\n ");
+        // Should also work without calling `has_next()` before
+        json_reader.consume_trailing_whitespace()?;
+
+        let mut json_reader = new_reader("");
+        // Calling `peek()` for `allow_empty_document: true` when document is empty should report UnexpectedStructure instead of IncompleteDocument
+        assert_unexpected_structure(
+            json_reader.peek(),
+            UnexpectedStructureKind::FewerElementsThanExpected,
+            &json_path![],
+            0,
+        );
+
+        Ok(())
     }
 
     #[test]

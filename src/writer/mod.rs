@@ -546,8 +546,9 @@ pub trait JsonWriter {
     /// will panic, see "Panics" section below.
     ///
     /// # Panics
-    /// Panics when called on a JSON writer which has not written any top-level yet, or when
-    /// called while the top-level value has not been fully written yet. Both cases
+    /// Panics when called on a JSON writer which has not written any top-level yet (unless
+    /// empty documents are [enabled in the `WriterSettings`](WriterSettings::allow_empty_document)),
+    /// or when called while the top-level value has not been fully written yet. Both cases
     /// indicate incorrect usage by the user.
     /*
      * Consumes 'self'

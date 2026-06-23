@@ -27,6 +27,16 @@ use crate::utf8;
 /// ```
 #[derive(Clone, Debug)]
 pub struct WriterSettings {
+    /// Whether to allow creating an empty JSON document
+    ///
+    /// When enabled the created document is allowed to be empty without containing any JSON value,
+    /// that is, [`JsonWriter::finish_document`] can be called without having written any value.
+    ///
+    /// This can especially be useful in combination with [`multi_top_level_value_separator`](Self::multi_top_level_value_separator)
+    /// when writing a stream of JSON values, but there is no value to write.
+    /* dedicated setting because this might also be useful without multi top-level values */
+    pub allow_empty_document: bool,
+
     /// Whether to pretty print the JSON output
     ///
     /// When enabled the JSON output will have spaces and line breaks to make it easier
@@ -90,17 +100,23 @@ pub struct WriterSettings {
     /// might be use cases where supporting multiple top-level values can be useful, for example
     /// when writing JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
     /// that is, a stream of multiple JSON values separated by line breaks.
+    ///
+    /// Note that by default the JSON document must contain at least one JSON value. If the stream
+    /// of JSON values to be written may be empty, set [`allow_empty_document`](Self::allow_empty_document)
+    /// to `true`.
     pub multi_top_level_value_separator: Option<String>,
 }
 
 impl Default for WriterSettings {
     /// Creates the default JSON writer settings
     ///
-    /// - pretty print: disabled (= compact JSON will be written)
-    /// - escape all control chars: false (= only control characters `0x00` to `0x1F` are escaped)
-    /// - multiple top-level values: disallowed
+    /// - [empty document](Self::allow_empty_document): disallowed
+    /// - [pretty print](Self::pretty_print): disabled (= compact JSON will be written)
+    /// - [escape all control chars](Self::escape_all_control_chars): false (= only control characters `0x00` to `0x1F` are escaped)
+    /// - [multiple top-level values](Self::multi_top_level_value_separator): disallowed
     fn default() -> Self {
         WriterSettings {
+            allow_empty_document: false,
             pretty_print: false,
             escape_all_control_chars: false,
             escape_all_non_ascii: false,
@@ -153,8 +169,8 @@ fn panic_incorrect_usage(message: &str) -> ! {
 #[derive(Debug)]
 pub struct JsonStreamWriter<W: Write> {
     writer: Writer<W>,
-    /// Whether the current array or object is empty, or at top-level whether
-    /// no value has been written yet
+    /// Whether the current array or object is empty, or [at top-level](Self::is_at_top_level)
+    /// whether no value has been written yet
     is_empty: bool,
     expects_member_name: bool,
     stack: Vec<StackValue>,
@@ -203,6 +219,10 @@ impl<W: Write> JsonStreamWriter<W> {
 
 // Implementation with JSON structure state inspection methods, and general value methods
 impl<W: Write> JsonStreamWriter<W> {
+    fn is_at_top_level(&self) -> bool {
+        self.stack.is_empty()
+    }
+
     fn is_in_array(&self) -> bool {
         self.stack.last() == Some(&StackValue::Array)
     }
@@ -239,11 +259,10 @@ impl<W: Write> JsonStreamWriter<W> {
             panic_incorrect_usage("Cannot write value when name is expected");
         }
 
-        let is_top_level = self.stack.is_empty();
-        if is_top_level && !self.is_empty {
+        if self.is_at_top_level() && !self.is_empty {
             match &self.writer_settings.multi_top_level_value_separator {
                 None => panic_incorrect_usage(
-                    "Cannot write multiple top-level values when not enabled in writer settings",
+                    "Cannot write multiple top-level values when not enabled in the settings",
                 ),
                 Some(separator) => {
                     self.writer.write(separator.as_bytes())?;
@@ -294,9 +313,11 @@ impl<W: Write> JsonStreamWriter<W> {
         if self.expects_member_name {
             panic_incorrect_usage("Cannot finish document when member name is expected");
         }
-        if self.stack.is_empty() {
-            if self.is_empty {
-                panic_incorrect_usage("Cannot finish document when no value has been written yet");
+        if self.is_at_top_level() {
+            if self.is_empty && !self.writer_settings.allow_empty_document {
+                panic_incorrect_usage(
+                    "Cannot finish document when no value has been written yet and empty documents are not enabled in the settings",
+                );
             }
         } else {
             panic_incorrect_usage("Cannot finish document when top-level value is not finished");
@@ -1371,7 +1392,7 @@ mod tests {
 
     #[test]
     fn multiple_top_level() -> TestResult {
-        fn create_writer<W: Write>(writer: W, top_level_separator: &str) -> JsonStreamWriter<W> {
+        fn new_writer<W: Write>(writer: W, top_level_separator: &str) -> JsonStreamWriter<W> {
             JsonStreamWriter::new_custom(
                 writer,
                 WriterSettings {
@@ -1382,14 +1403,14 @@ mod tests {
         }
 
         let mut writer = Vec::<u8>::new();
-        let mut json_writer = create_writer(&mut writer, "");
+        let mut json_writer = new_writer(&mut writer, "");
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.finish_document()?;
         assert_eq!("[]", String::from_utf8(writer)?);
 
         let mut writer = Vec::<u8>::new();
-        let mut json_writer = create_writer(&mut writer, "");
+        let mut json_writer = new_writer(&mut writer, "");
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.begin_array()?;
@@ -1398,7 +1419,7 @@ mod tests {
         assert_eq!("[][]", String::from_utf8(writer)?);
 
         let mut writer = Vec::<u8>::new();
-        let mut json_writer = create_writer(&mut writer, "#\n#");
+        let mut json_writer = new_writer(&mut writer, "#\n#");
         json_writer.begin_array()?;
         json_writer.end_array()?;
         json_writer.begin_array()?;
@@ -1410,8 +1431,43 @@ mod tests {
     }
 
     #[test]
+    fn multiple_top_level_allow_empty() -> TestResult {
+        fn new_writer<W: Write>(writer: W, top_level_separator: &str) -> JsonStreamWriter<W> {
+            JsonStreamWriter::new_custom(
+                writer,
+                WriterSettings {
+                    multi_top_level_value_separator: Some(top_level_separator.to_owned()),
+                    allow_empty_document: true,
+                    ..Default::default()
+                },
+            )
+        }
+        let mut writer = Vec::<u8>::new();
+        let json_writer = new_writer(&mut writer, "#\n#");
+        json_writer.finish_document()?;
+        // Should not have written separator
+        assert_eq!(writer, "".as_bytes());
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = new_writer(&mut writer, "#\n#");
+        json_writer.number_value(1)?;
+        json_writer.finish_document()?;
+        // Should not have written separator
+        assert_eq!(writer, "1".as_bytes());
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = new_writer(&mut writer, "#\n#");
+        json_writer.number_value(1)?;
+        json_writer.number_value(2)?;
+        json_writer.finish_document()?;
+        assert_eq!(writer, "1#\n#2".as_bytes());
+
+        Ok(())
+    }
+
+    #[test]
     #[should_panic(
-        expected = "Incorrect writer usage: Cannot write multiple top-level values when not enabled in writer settings"
+        expected = "Incorrect writer usage: Cannot write multiple top-level values when not enabled in the settings"
     )]
     fn multiple_top_level_disallowed() {
         let mut writer = Vec::<u8>::new();
@@ -1554,13 +1610,35 @@ mod tests {
 
         #[test]
         #[should_panic(
-            expected = "Incorrect writer usage: Cannot finish document when no value has been written yet"
+            expected = "Incorrect writer usage: Cannot finish document when no value has been written yet and empty documents are not enabled in the settings"
         )]
         fn empty_document() {
             let mut writer = Vec::<u8>::new();
             let json_writer = JsonStreamWriter::new(&mut writer);
 
             let _ = json_writer.method();
+        }
+
+        #[test]
+        fn empty_document_allowed() -> TestResult {
+            fn new_writer() -> JsonStreamWriter<Vec<u8>> {
+                JsonStreamWriter::new_custom(
+                    Vec::new(),
+                    WriterSettings {
+                        allow_empty_document: true,
+                        ..Default::default()
+                    },
+                )
+            }
+
+            let json_writer = new_writer();
+            assert_eq!(json_writer.method()?, "".as_bytes());
+
+            let mut json_writer = new_writer();
+            json_writer.bool_value(true)?;
+            assert_eq!(json_writer.method()?, "true".as_bytes());
+
+            Ok(())
         }
 
         #[test]

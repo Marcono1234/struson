@@ -961,9 +961,10 @@ pub trait JsonReader {
 
     /// Checks if there is a next element in the current JSON array or object, without consuming it
     ///
-    /// Returns `true` if there is a next element, `false` otherwise. When multiple top-level
-    /// values are [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level)
-    /// this method can also be used to check if there are more top-level values.
+    /// Returns `true` if there is a next element, `false` otherwise. When [multiple top-level
+    /// values](ReaderSettings::allow_multiple_top_level) or [empty documents](ReaderSettings::allow_empty_document)
+    /// are enabled in the `ReaderSettings` this method can also be used to check if there
+    /// are more top-level values.
     ///
     /// This method can be useful as condition of a `while` loop when processing a JSON array or object
     /// of unknown size.
@@ -990,8 +991,8 @@ pub trait JsonReader {
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     ///
     /// Additionally this method also panics when called on a JSON reader which has not
-    /// consumed any top-level value yet. An empty JSON document is not valid so there
-    /// should be no need to check for a next element since there must always be one.
+    /// consumed any top-level value yet, and empty documents are not
+    /// [enabled in the `ReaderSettings`](ReaderSettings::allow_empty_document).
     fn has_next(&mut self) -> Result<bool, ReaderError>;
 
     /// Consumes and returns the name of the next JSON object member as `str`
@@ -1889,8 +1890,9 @@ pub trait JsonReader {
     /// of kind [`SyntaxErrorKind::TrailingData`] is returned.
     ///
     /// # Panics
-    /// Panics when called on a JSON reader which has not read any top-level yet, or when
-    /// called while the top-level value has not been fully consumed yet. Both cases
+    /// Panics when called on a JSON reader which has not read any top-level yet (unless
+    /// empty documents are [enabled in the `ReaderSettings`](ReaderSettings::allow_empty_document)),
+    /// or when called while the top-level value has not been fully consumed yet. Both cases
     /// indicate incorrect usage by the user and are unrelated to the JSON data.
     /* Consumes 'self' */
     fn consume_trailing_whitespace(self) -> Result<(), ReaderError>;
