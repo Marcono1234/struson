@@ -1,6 +1,6 @@
 // Implementation based on:
 // - https://serde.rs/impl-deserializer.html
-// - https://github.com/serde-rs/json/blob/v1.0.107/src/de.rs
+// - https://github.com/serde-rs/json/blob/v1.0.150/src/de.rs
 //   (trying to match it as close as possible)
 
 use std::{
@@ -981,11 +981,8 @@ impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut VariantAccess<
     ) -> Result<(V::Value, Self::Variant), Self::Error> {
         // Uses borrowed `str` instead of `String` assuming that is the more common use case
         let name = self.de.json_reader.next_name()?;
-        // TODO: This does not completely match serde_json behavior, but cannot pass `self.de` because JsonReader does not
-        // allow reading name as regular string value; serde_json's behavior seems to be slightly incorrect though, see
-        // https://github.com/serde-rs/json/issues/979
-        let de = StrDeserializer::<Self::Error>::new(name);
-        Ok((seed.deserialize(de)?, self))
+        // Is equivalent to serde_json's behavior (since v1.0.150; https://github.com/serde-rs/json/blob/v1.0.150/src/de.rs#L2062)
+        Ok((seed.deserialize(MapKeyDeserializer { key: name })?, self))
     }
 }
 
@@ -1144,8 +1141,8 @@ mod tests {
     enum EnumVariantHandling {
         Unit,
         Newtype,
-        Tuple(usize),
-        Struct(&'static [&'static str]),
+        Tuple { len: usize },
+        Struct { fields: &'static [&'static str] },
     }
 
     // TODO: Suggest to serde_test maintainer to add something similar to this to allow testing custom Deserializer?
@@ -1321,8 +1318,8 @@ mod tests {
                 EnumVariantHandling::Newtype => {
                     variant.newtype_variant_seed(VisitingDeserialize { visitor: self })?
                 }
-                EnumVariantHandling::Tuple(len) => variant.tuple_variant(len, &mut *self)?,
-                EnumVariantHandling::Struct(fields) => {
+                EnumVariantHandling::Tuple { len } => variant.tuple_variant(len, &mut *self)?,
+                EnumVariantHandling::Struct { fields } => {
                     variant.struct_variant(fields, &mut *self)?
                 }
             }
@@ -1468,6 +1465,37 @@ mod tests {
                 &$expected_visited,
             );
         };
+    }
+
+    /// Asserts that both the deserializer from this module as well as serde_json's deserializer
+    /// produce the same deserialized value when given the same visitor
+    macro_rules! assert_deserialized_value_cmp {
+        // Simple variant where the deserialization `method` can be called without additional args
+        ($json:expr, $visitor:expr, $method:ident, $expected_value:expr) => {
+            assert_deserialized_value_cmp!(
+                $json,
+                $visitor,
+                |d, v| { d.$method(v) },
+                $expected_value
+            );
+        };
+        // This syntax emulates a closure: |d, v| { ... }
+        ($json:expr, $visitor:expr, |$deserializer:ident, $visitor_var:ident| $deserializing_block:block, $expected_value:expr) => {{
+            let mut json_reader = JsonStreamReader::new($json.as_bytes());
+            let mut $deserializer = JsonReaderDeserializer::new(&mut json_reader);
+            let $visitor_var = $visitor;
+            let result = $deserializing_block.unwrap();
+            json_reader.consume_trailing_whitespace().unwrap();
+            assert_eq!($expected_value, result, "unexpected value for Struson");
+        }
+
+        {
+            let mut $deserializer = serde_json::Deserializer::from_str($json);
+            let $visitor_var = $visitor;
+            let result = $deserializing_block.unwrap();
+            $deserializer.end().unwrap();
+            assert_eq!($expected_value, result, "unexpected value for serde_json");
+        }};
     }
 
     macro_rules! assert_deserialize_error {
@@ -2702,7 +2730,7 @@ mod tests {
 
         assert_deserialized_cmp!(
             r#"{"a": [1]}"#,
-            EnumVariantHandling::Tuple(1),
+            EnumVariantHandling::Tuple { len: 1 },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
@@ -2716,7 +2744,7 @@ mod tests {
 
         assert_deserialize_error!(
             r#"{"a": []}"#,
-            EnumVariantHandling::Tuple(1),
+            EnumVariantHandling::Tuple { len: 1 },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             DeserializerError::Custom { message } => {
                 assert_eq!("invalid length 0, expected array of length 1", message);
@@ -2725,7 +2753,7 @@ mod tests {
 
         assert_deserialize_error!(
             r#"{"a": 1}"#,
-            EnumVariantHandling::Tuple(1),
+            EnumVariantHandling::Tuple { len: 1 },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             DeserializerError::ReaderError(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
                 expected: ValueType::Array,
@@ -2735,7 +2763,7 @@ mod tests {
 
         assert_deserialized_cmp!(
             r#"{"a": [1]}"#,
-            EnumVariantHandling::Struct(&["f"]),
+            EnumVariantHandling::Struct { fields: &["f"] },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
@@ -2749,7 +2777,7 @@ mod tests {
 
         assert_deserialized_cmp!(
             r#"{"a": {"f": 1}}"#,
-            EnumVariantHandling::Struct(&["f"]),
+            EnumVariantHandling::Struct { fields: &["f"] },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
@@ -2765,7 +2793,7 @@ mod tests {
         // The struct field names are currently not validated
         assert_deserialized_cmp!(
             r#"{"a": {"unknown": 1}}"#,
-            EnumVariantHandling::Struct(&["f"]),
+            EnumVariantHandling::Struct { fields: &["f"] },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             [
                 Visited::EnumStart,
@@ -2780,7 +2808,7 @@ mod tests {
 
         assert_deserialize_error!(
             r#"{"a": 1}"#,
-            EnumVariantHandling::Struct(&["f"]),
+            EnumVariantHandling::Struct { fields: &["f"] },
             |d, v| { d.deserialize_enum("name", &["a"], v) },
             DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: number, expected custom-test-value", message);
@@ -2794,6 +2822,36 @@ mod tests {
             DeserializerError::Custom { message } => {
                 assert_eq!("invalid type: bool, expected custom-test-value", message);
             }
+        );
+    }
+
+    #[test]
+    fn deserialize_enum_object_custom_name_deserialization() {
+        struct BooleanEnumVisitor;
+        impl<'de> Visitor<'de> for BooleanEnumVisitor {
+            type Value = (bool, u64);
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "enum")
+            }
+
+            fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
+                self,
+                data: A,
+            ) -> Result<Self::Value, A::Error> {
+                // Deserialize the object member name (string) as bool
+                let (name, variant_access) = data.variant::<bool>()?;
+                let enum_value = variant_access.newtype_variant()?;
+                Ok((name, enum_value))
+            }
+        }
+
+        assert_deserialized_value_cmp!(
+            r#"{"true": 1}"#,
+            BooleanEnumVisitor,
+            // Note: Given variants here are currently ignored
+            |d, v| { d.deserialize_enum("name", &["a"], v) },
+            (true, 1)
         );
     }
 
@@ -2886,11 +2944,11 @@ mod tests {
             "invalid type: unit variant, expected newtype variant",
         );
         assert_enum_variant_error(
-            EnumVariantHandling::Tuple(1),
+            EnumVariantHandling::Tuple { len: 1 },
             "invalid type: unit variant, expected tuple variant",
         );
         assert_enum_variant_error(
-            EnumVariantHandling::Struct(&["a"]),
+            EnumVariantHandling::Struct { fields: &["a"] },
             "invalid type: unit variant, expected struct variant",
         );
     }
