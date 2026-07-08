@@ -185,7 +185,7 @@ pub struct ReaderSettings {
     /// When enabled the read document may be empty or consist only of whitespace without containing
     /// any JSON value. [`JsonReader::has_next`] can be used to check if there is a JSON value.
     ///
-    /// This can especially be useful in combination with [`allow_multiple_top_level`](Self::allow_multiple_top_level)
+    /// This can especially be useful in combination with [`allow_multi_top_level_values`](Self::allow_multi_top_level_values)
     /// when processing a stream of JSON values, but that stream might be empty.
     /* dedicated setting because this might also be useful without multi top-level values */
     pub allow_empty_document: bool,
@@ -250,6 +250,12 @@ pub struct ReaderSettings {
     /// when reading JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
     /// that is, a stream of multiple JSON values separated by line breaks.
     ///
+    /// This setting merely allows reading multiple values, optionally separated by whitespace.
+    /// It neither permits characters not allowed by the JSON specification, such as the separators
+    /// used by the ["JSON text sequences" (RFC 7464) standard](https://www.rfc-editor.org/info/rfc7464/),
+    /// nor does it enforce additional restrictions such as those required by the JSON Lines
+    /// format (values must be separated by line breaks, no empty lines, ...).
+    ///
     /// It is recommended to separate the values using whitespace (space, tab or line breaks).
     /// If there is no whitespace between the values it is unspecified whether parsing will succeed.
     /// For example the string `truefalse` will likely be rejected and not parsed as JSON values
@@ -265,7 +271,7 @@ pub struct ReaderSettings {
     /// let mut json_reader = JsonStreamReader::new_custom(
     ///     json,
     ///     ReaderSettings {
-    ///         allow_multiple_top_level: true,
+    ///         allow_multi_top_level_values: true,
     ///         allow_empty_document: true,
     ///         // For all other settings use the default
     ///         ..Default::default()
@@ -282,7 +288,7 @@ pub struct ReaderSettings {
     /// json_reader.consume_trailing_whitespace()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub allow_multiple_top_level: bool,
+    pub allow_multi_top_level_values: bool,
 
     /// Whether to track the JSON path while parsing
     ///
@@ -337,7 +343,7 @@ impl Default for ReaderSettings {
     /// - [empty document](Self::allow_empty_document): disallowed
     /// - [comments](Self::allow_comments): disallowed
     /// - [trailing comma](Self::allow_trailing_comma): disallowed
-    /// - [multiple top-level values](Self::allow_multiple_top_level): disallowed
+    /// - [multiple top-level values](Self::allow_multi_top_level_values): disallowed
     /// - [track JSON path](Self::track_path): enabled
     /// - [max nesting depth](Self::max_nesting_depth): 128
     /// - [restrict number values](Self::restrict_number_values): enabled
@@ -348,7 +354,7 @@ impl Default for ReaderSettings {
             allow_empty_document: false,
             allow_comments: false,
             allow_trailing_comma: false,
-            allow_multiple_top_level: false,
+            allow_multi_top_level_values: false,
             track_path: true,
             max_nesting_depth: Some(DEFAULT_MAX_NESTING_DEPTH),
             restrict_number_values: true,
@@ -671,7 +677,7 @@ impl<R: Read> JsonStreamReader<R> {
             return Ok(self.peeked);
         }
 
-        if self.is_behind_first_top_level() && !self.reader_settings.allow_multiple_top_level {
+        if self.is_behind_first_top_level() && !self.reader_settings.allow_multi_top_level_values {
             panic_incorrect_usage(
                 "Cannot peek when top-level value has already been consumed and multiple top-level values are not enabled in the settings",
             );
@@ -791,7 +797,7 @@ impl<R: Read> JsonStreamReader<R> {
             || {
                 let eof_as_unexpected_structure = self.is_at_top_level()
                     && (self.is_empty && self.reader_settings.allow_empty_document
-                        || !self.is_empty && self.reader_settings.allow_multiple_top_level);
+                        || !self.is_empty && self.reader_settings.allow_multi_top_level_values);
                 if eof_as_unexpected_structure {
                     self.error(ReaderErrorKind::UnexpectedStructure(
                         UnexpectedStructureKind::FewerElementsThanExpected,
@@ -1780,7 +1786,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
                     );
                 }
                 // else fall-through to peeking
-            } else if !self.reader_settings.allow_multiple_top_level {
+            } else if !self.reader_settings.allow_multi_top_level_values {
                 panic_incorrect_usage(
                     "Cannot check for multiple top-level values when not enabled in the reader settings",
                 );
@@ -3388,7 +3394,7 @@ mod tests {
             "1, 2".as_bytes(),
             ReaderSettings {
                 allow_trailing_comma: true,
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );
@@ -4386,7 +4392,7 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "[1] [2] [3]".as_bytes(),
             ReaderSettings {
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );
@@ -5013,7 +5019,7 @@ mod tests {
             JsonStreamReader::new_custom(
                 json.as_bytes(),
                 ReaderSettings {
-                    allow_multiple_top_level: true,
+                    allow_multi_top_level_values: true,
                     ..Default::default()
                 },
             )
@@ -5051,7 +5057,7 @@ mod tests {
             JsonStreamReader::new_custom(
                 json.as_bytes(),
                 ReaderSettings {
-                    allow_multiple_top_level: true,
+                    allow_multi_top_level_values: true,
                     allow_empty_document: true,
                     ..Default::default()
                 },
@@ -5111,7 +5117,7 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "1 ]".as_bytes(),
             ReaderSettings {
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );
@@ -5126,7 +5132,7 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "1 }".as_bytes(),
             ReaderSettings {
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );
@@ -5171,7 +5177,7 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             "[1]".as_bytes(),
             ReaderSettings {
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );
@@ -5516,7 +5522,7 @@ mod tests {
         let mut json_reader = JsonStreamReader::new_custom(
             r#"  [  1  , {  "a"  : true  }  ]  "#.as_bytes(),
             ReaderSettings {
-                allow_multiple_top_level: true,
+                allow_multi_top_level_values: true,
                 ..Default::default()
             },
         );

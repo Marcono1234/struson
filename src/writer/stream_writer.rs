@@ -10,7 +10,8 @@ use crate::utf8;
 
 /// Settings to customize the JSON writer behavior
 ///
-/// Except for [allowing multiple top-level values](WriterSettings::multi_top_level_value_separator) these
+/// Except for [allowing empty documents](WriterSettings::allow_empty_document) and
+/// [allowing multiple top-level values](WriterSettings::multi_top_level_values) these
 /// settings only have an effect on how the JSON output will look like without affecting
 /// its data in any way. All compliant JSON readers should consider the data identical.
 ///
@@ -32,8 +33,11 @@ pub struct WriterSettings {
     /// When enabled the created document is allowed to be empty without containing any JSON value,
     /// that is, [`JsonWriter::finish_document`] can be called without having written any value.
     ///
-    /// This can especially be useful in combination with [`multi_top_level_value_separator`](Self::multi_top_level_value_separator)
+    /// This can especially be useful in combination with [`multi_top_level_values`](Self::multi_top_level_values)
     /// when writing a stream of JSON values, but there is no value to write.
+    ///
+    /// Note that an empty document does not represent valid JSON data and it depends on the
+    /// consumer of the data whether it will accept the empty document.
     /* dedicated setting because this might also be useful without multi top-level values */
     pub allow_empty_document: bool,
 
@@ -82,11 +86,69 @@ pub struct WriterSettings {
     /// character in member names and string values may be written as escape sequence.
     pub escape_all_non_ascii: bool,
 
-    /// Whether to allow multiple top-level values, and if allowed which separator to use
+    /// Whether to allow multiple top-level values, and if allowed which settings to use
     ///
     /// When `None` multiple top-level values are not allowed. Otherwise when `Some(...)` it
-    /// specifies the separator to use between multiple top-level values. The separator can
-    /// be an arbitrary string, however there are a few things to keep in mind:
+    /// specifies the settings for writing multiple top-level values.
+    ///
+    /// Normally a JSON document is expected to contain only a single top-level value, but there
+    /// might be use cases where supporting multiple top-level values can be useful, for example
+    /// when writing JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
+    /// that is, a stream of multiple JSON values each delimited by a line break.
+    /// When delimiting values by a line break, [pretty printing](Self::pretty_print) should be
+    /// disabled because line breaks within the values are not permitted by some of these formats.
+    ///
+    /// Note that by default the JSON document must contain at least one JSON value. If the stream
+    /// of JSON values to be written may be empty, set [`allow_empty_document`](Self::allow_empty_document)
+    /// to `true`.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::writer::*;
+    /// let mut writer = Vec::new();
+    /// let mut json_writer = JsonStreamWriter::new_custom(
+    ///     &mut writer,
+    ///     WriterSettings {
+    ///         multi_top_level_values: Some(MultiTopLevelValuesSettings {
+    ///             separator: "\n".to_owned(),
+    ///             trailing_separator: true,
+    ///             flush_after_value: false,
+    ///         }),
+    ///         ..Default::default()
+    ///     },
+    /// );
+    ///
+    /// json_writer.number_value(1)?;
+    /// json_writer.bool_value(true)?;
+    /// json_writer.begin_array()?;
+    /// json_writer.string_value("text")?;
+    /// json_writer.end_array()?;
+    /// json_writer.finish_document()?;
+    ///
+    /// assert_eq!(
+    ///     String::from_utf8(writer).unwrap(),
+    ///     "1\n\
+    ///      true\n\
+    ///      [\"text\"]\n"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub multi_top_level_values: Option<MultiTopLevelValuesSettings>,
+}
+
+/// Settings for writing multiple top-level values
+///
+/// These settings are used by [`WriterSettings::multi_top_level_values`].
+/*
+ * Don't provide a Default implementation for these settings because it depends on
+ * the use case what reasonable defaults are
+ */
+#[derive(Clone, Debug)]
+// TODO: Too long / verbose struct name?
+pub struct MultiTopLevelValuesSettings {
+    /// Separator to use between multiple top-level values
+    ///
+    /// The separator can be an arbitrary string, however there are a few things to keep in mind:
     /// - An empty string (`""`) might prevent some JSON values from being properly parsed.
     ///   For example the values `true` and `false` would be written as `truefalse` which
     ///   might not be accepted as valid JSON by some JSON reader implementations.
@@ -95,16 +157,35 @@ pub struct WriterSettings {
     ///
     /// For example, with the separator `" ### "` writing the values `123`, `true` and `[]`
     /// would yield: `123 ### true ### []`
+    pub separator: String,
+
+    /// Whether to write the [separator](Self::separator) after the last top-level value
     ///
-    /// Normally a JSON document is expected to contain only a single top-level value, but there
-    /// might be use cases where supporting multiple top-level values can be useful, for example
-    /// when writing JSON data in the [JSON Lines](https://github.com/wardi/jsonlines) format,
-    /// that is, a stream of multiple JSON values separated by line breaks.
+    /// For example the [JSON Lines](https://github.com/wardi/jsonlines) format
+    /// "strongly recommends" adding a trailing line terminator to make concatenating JSON Lines
+    /// files easier.\
+    /// Another advantage is that when sending the JSON data over a network connection,
+    /// the receiver directly recognizes the end of the current value (relevant for non-self-delimiting
+    /// values such as JSON numbers) instead of having to wait for the next value (if any)
+    /// and its preceding separator.
     ///
-    /// Note that by default the JSON document must contain at least one JSON value. If the stream
-    /// of JSON values to be written may be empty, set [`allow_empty_document`](Self::allow_empty_document)
-    /// to `true`.
-    pub multi_top_level_value_separator: Option<String>,
+    /// For empty documents (if [enabled in the settings](WriterSettings::allow_empty_document))
+    /// no separator is written, regardless of this setting.
+    pub trailing_separator: bool,
+
+    /// Whether to flush the underlying writer after each written top-level value
+    ///
+    /// When enabled flushing happens immediately after a value was written. When combined with
+    /// [`trailing_separator`](Self::trailing_separator) this happens after the separator behind
+    /// the value has been written (which happens immediately after the value was written).\
+    /// When disabled the only automatic flushing is performed by [`JsonWriter::finish_document`].
+    ///
+    /// This setting can be useful when sending the JSON data over a network connection, so
+    /// that the receiver can directly process each value once it is ready instead of having
+    /// to wait until the buffer of the underlying writer is full and the data is flushed.\
+    /// However, when writing lots of small top-level values flushing the writer after every
+    /// value can decrease performance.
+    pub flush_after_value: bool,
 }
 
 impl Default for WriterSettings {
@@ -113,14 +194,14 @@ impl Default for WriterSettings {
     /// - [empty document](Self::allow_empty_document): disallowed
     /// - [pretty print](Self::pretty_print): disabled (= compact JSON will be written)
     /// - [escape all control chars](Self::escape_all_control_chars): false (= only control characters `0x00` to `0x1F` are escaped)
-    /// - [multiple top-level values](Self::multi_top_level_value_separator): disallowed
+    /// - [multiple top-level values](Self::multi_top_level_values): disallowed
     fn default() -> Self {
         WriterSettings {
             allow_empty_document: false,
             pretty_print: false,
             escape_all_control_chars: false,
             escape_all_non_ascii: false,
-            multi_top_level_value_separator: None,
+            multi_top_level_values: None,
         }
     }
 }
@@ -260,12 +341,21 @@ impl<W: Write> JsonStreamWriter<W> {
         }
 
         if self.is_at_top_level() && !self.is_empty {
-            match &self.writer_settings.multi_top_level_value_separator {
+            match &self.writer_settings.multi_top_level_values {
                 None => panic_incorrect_usage(
                     "Cannot write multiple top-level values when not enabled in the settings",
                 ),
-                Some(separator) => {
-                    self.writer.write(separator.as_bytes())?;
+                Some(MultiTopLevelValuesSettings {
+                    separator,
+                    trailing_separator,
+                    ..
+                }) => {
+                    // For `trailing_separator = false` and non-empty document write the separator before the
+                    // value (instead of after it), because cannot know if there will be a subsequent value
+                    // For `trailing_separator = true` the separator is written after the value
+                    if !*trailing_separator {
+                        self.writer.write(separator.as_bytes())?;
+                    }
                 }
             }
         } else if self.is_in_array() {
@@ -281,26 +371,69 @@ impl<W: Write> JsonStreamWriter<W> {
         Ok(())
     }
 
-    fn on_container_start(&mut self, container_type: StackValue) -> Result<(), IoError> {
-        self.before_value()?;
-        self.stack.push(container_type);
-        self.is_empty = true;
+    fn after_value(&mut self) -> Result<(), IoError> {
+        if self.is_at_top_level()
+            && let Some(MultiTopLevelValuesSettings {
+                separator,
+                trailing_separator,
+                flush_after_value,
+            }) = &self.writer_settings.multi_top_level_values
+        {
+            if *trailing_separator {
+                self.writer.write(separator.as_bytes())?;
+            }
+            // Flush after having written separator, because receiver of JSON data might be waiting
+            // for next separator
+            if *flush_after_value {
+                self.writer.flush()?;
+            }
+        }
         Ok(())
     }
 
-    fn on_container_end(&mut self) -> Result<(), IoError> {
+    #[inline(always)]
+    fn write_simple_value(
+        &mut self,
+        mut f: impl FnMut(&mut Self) -> Result<(), IoError>,
+    ) -> Result<(), IoError> {
+        self.before_value()?;
+        f(self)?;
+        self.after_value()
+    }
+
+    #[inline(always)]
+    fn write_simple_value_bytes(&mut self, value_bytes: &[u8]) -> Result<(), IoError> {
+        self.write_simple_value(|self_| self_.writer.write(value_bytes))
+    }
+
+    fn on_container_start(
+        &mut self,
+        container_type: StackValue,
+        opening_bracket: &[u8],
+        expects_member_name: bool,
+    ) -> Result<(), IoError> {
+        self.before_value()?;
+        self.stack.push(container_type);
+        self.is_empty = true;
+        self.expects_member_name = expects_member_name;
+        self.writer.write(opening_bracket)
+    }
+
+    fn on_container_end(&mut self, closing_bracket: &[u8]) -> Result<(), IoError> {
         self.stack.pop();
 
         if !self.is_empty && self.writer_settings.pretty_print {
             self.writer.write(b"\n")?;
             self.write_indentation()?;
         }
+        self.writer.write(closing_bracket)?;
 
         // Enclosing container is not empty since this method call here is processing its child
         self.is_empty = false;
 
         // If after pop() call above currently in object, then expecting a member name
         self.expects_member_name = self.is_in_object();
+        self.after_value()?;
         Ok(())
     }
 
@@ -425,9 +558,7 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     type WriterResult = W;
 
     fn begin_object(&mut self) -> Result<(), IoError> {
-        self.on_container_start(StackValue::Object)?;
-        self.expects_member_name = true;
-        self.writer.write(b"{")
+        self.on_container_start(StackValue::Object, b"{", true)
     }
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
@@ -458,17 +589,16 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         if !self.expects_member_name {
             panic_incorrect_usage("Cannot end object when member value is expected");
         }
-        self.on_container_end()?;
-        self.writer.write(b"}")
+        self.on_container_end(b"}")
     }
 
     fn begin_array(&mut self) -> Result<(), IoError> {
-        self.on_container_start(StackValue::Array)?;
-
-        // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
-        self.expects_member_name = false;
-
-        self.writer.write(b"[")
+        self.on_container_start(
+            StackValue::Array,
+            b"[",
+            // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
+            false,
+        )
     }
 
     fn end_array(&mut self) -> Result<(), IoError> {
@@ -478,43 +608,32 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         if self.is_string_value_writer_active {
             panic_incorrect_usage("Cannot end array when string value writer is still active");
         }
-        self.on_container_end()?;
-        self.writer.write(b"]")
+        self.on_container_end(b"]")
     }
 
     fn string_value(&mut self, value: &str) -> Result<(), IoError> {
-        self.before_value()?;
-        self.write_string_value(value)
+        self.write_simple_value(|self_| self_.write_string_value(value))
     }
 
     fn bool_value(&mut self, value: bool) -> Result<(), IoError> {
-        self.before_value()?;
-        self.writer.write(if value { b"true" } else { b"false" })
+        self.write_simple_value_bytes(if value { b"true" } else { b"false" })
     }
 
     fn null_value(&mut self) -> Result<(), IoError> {
-        self.before_value()?;
-        self.writer.write(b"null")
+        self.write_simple_value_bytes(b"null")
     }
 
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
-        value.use_json_number(|number_str| {
-            self.before_value()?;
-            self.writer.write(number_str.as_bytes())
-        })
+        value.use_json_number(|number_str| self.write_simple_value_bytes(number_str.as_bytes()))
     }
 
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError> {
-        value.use_json_number(|number_str| {
-            self.before_value()?;
-            self.writer.write(number_str.as_bytes())
-        })
+        value.use_json_number(|number_str| self.write_simple_value_bytes(number_str.as_bytes()))
     }
 
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
         if is_valid_json_number(value) {
-            self.before_value()?;
-            self.writer.write(value.as_bytes())?;
+            self.write_simple_value_bytes(value.as_bytes())?;
             Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber {
@@ -741,7 +860,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
         }
         self.json_writer.writer.write(b"\"")?;
         self.json_writer.is_string_value_writer_active = false;
-        Ok(())
+        self.json_writer.after_value()
     }
 }
 
@@ -1034,19 +1153,54 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug, PartialEq)]
+    enum WriterAction {
+        Flush,
+        Write(String),
+    }
+    struct FlushTrackingWriter {
+        actions: Vec<WriterAction>,
+    }
+    impl Write for FlushTrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.actions.push(WriterAction::Write(
+                String::from_utf8(buf.to_vec()).unwrap(),
+            ));
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.actions.push(WriterAction::Flush);
+            Ok(())
+        }
+    }
+
     #[test]
     fn string_writer_flush() -> TestResult {
-        let mut writer = Vec::<u8>::new();
+        let mut writer = FlushTrackingWriter {
+            actions: Vec::new(),
+        };
         let mut json_writer = JsonStreamWriter::new(&mut writer);
 
         let mut string_writer = json_writer.string_value_writer()?;
         string_writer.write_all(b"abcd")?;
         string_writer.flush()?;
-        string_writer.write_all(b"efgh")?;
+        string_writer.write_all(b"ef")?;
+        string_writer.write_str("gh")?;
         string_writer.flush()?;
         drop(string_writer);
 
-        assert_eq!("\"abcdefgh", String::from_utf8(writer)?);
+        assert_eq!(
+            writer.actions,
+            vec![
+                WriterAction::Write("\"".to_owned()),
+                WriterAction::Write("abcd".to_owned()),
+                WriterAction::Flush,
+                WriterAction::Write("ef".to_owned()),
+                WriterAction::Write("gh".to_owned()),
+                WriterAction::Flush
+            ]
+        );
         Ok(())
     }
 
@@ -1390,91 +1544,325 @@ mod tests {
         let _ = json_writer.name("test");
     }
 
-    #[test]
-    fn multiple_top_level() -> TestResult {
-        fn new_writer<W: Write>(writer: W, top_level_separator: &str) -> JsonStreamWriter<W> {
-            JsonStreamWriter::new_custom(
-                writer,
-                WriterSettings {
-                    multi_top_level_value_separator: Some(top_level_separator.to_owned()),
-                    ..Default::default()
-                },
-            )
+    mod multi_top_level {
+        use super::*;
+
+        #[test]
+        fn separator() -> TestResult {
+            fn new_writer(top_level_separator: &str) -> JsonStreamWriter<Vec<u8>> {
+                JsonStreamWriter::new_custom(
+                    Vec::new(),
+                    WriterSettings {
+                        multi_top_level_values: Some({
+                            MultiTopLevelValuesSettings {
+                                separator: top_level_separator.to_owned(),
+                                trailing_separator: false,
+                                flush_after_value: false,
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                )
+            }
+
+            let mut json_writer = new_writer("");
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "[]");
+
+            let mut json_writer = new_writer("");
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "[][]");
+
+            let mut json_writer = new_writer("#\n#");
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            // Should not have written separator
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "[]");
+
+            let mut json_writer = new_writer("#\n#");
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "[]#\n#[]");
+
+            Ok(())
         }
 
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = new_writer(&mut writer, "");
-        json_writer.begin_array()?;
-        json_writer.end_array()?;
-        json_writer.finish_document()?;
-        assert_eq!("[]", String::from_utf8(writer)?);
+        #[test]
+        fn trailing_separator() -> TestResult {
+            fn new_writer(top_level_separator: &str) -> JsonStreamWriter<Vec<u8>> {
+                JsonStreamWriter::new_custom(
+                    Vec::new(),
+                    WriterSettings {
+                        multi_top_level_values: Some({
+                            MultiTopLevelValuesSettings {
+                                separator: top_level_separator.to_owned(),
+                                trailing_separator: true,
+                                flush_after_value: false,
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                )
+            }
 
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = new_writer(&mut writer, "");
-        json_writer.begin_array()?;
-        json_writer.end_array()?;
-        json_writer.begin_array()?;
-        json_writer.end_array()?;
-        json_writer.finish_document()?;
-        assert_eq!("[][]", String::from_utf8(writer)?);
+            let mut json_writer = new_writer("#");
+            json_writer.number_value(1)?;
+            json_writer.bool_value(true)?;
+            json_writer.null_value()?;
+            assert_eq!(
+                str::from_utf8(&json_writer.finish_document()?)?,
+                "1#true#null#"
+            );
 
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = new_writer(&mut writer, "#\n#");
-        json_writer.begin_array()?;
-        json_writer.end_array()?;
-        json_writer.begin_array()?;
-        json_writer.end_array()?;
-        json_writer.finish_document()?;
-        assert_eq!("[]#\n#[]", String::from_utf8(writer)?);
+            // Test nested values
+            let mut json_writer = new_writer("#");
+            json_writer.begin_array()?;
+            json_writer.begin_object()?;
+            json_writer.name("a")?;
+            json_writer.begin_array()?;
+            json_writer.number_value(2)?;
+            json_writer.end_array()?;
+            json_writer.end_object()?;
+            json_writer.end_array()?;
+            assert_eq!(
+                str::from_utf8(&json_writer.finish_document()?)?,
+                "[{\"a\":[2]}]#"
+            );
 
-        Ok(())
-    }
+            // Test non-simple top-level values
+            let mut json_writer = new_writer("#");
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            json_writer.begin_array()?;
+            json_writer.number_value(1)?;
+            json_writer.end_array()?;
+            json_writer.begin_object()?;
+            json_writer.end_object()?;
+            json_writer.begin_object()?;
+            json_writer.name("a")?;
+            json_writer.number_value(2)?;
+            json_writer.end_object()?;
+            let mut string_writer = json_writer.string_value_writer()?;
+            string_writer.write_str("str1")?;
+            string_writer.finish_value()?;
+            json_writer.begin_array()?;
+            let mut string_writer = json_writer.string_value_writer()?;
+            string_writer.write_str("str2")?;
+            string_writer.finish_value()?;
+            json_writer.end_array()?;
+            assert_eq!(
+                json_writer.finish_document()?,
+                "[]#[1]#{}#{\"a\":2}#\"str1\"#[\"str2\"]#".as_bytes()
+            );
 
-    #[test]
-    fn multiple_top_level_allow_empty() -> TestResult {
-        fn new_writer<W: Write>(writer: W, top_level_separator: &str) -> JsonStreamWriter<W> {
-            JsonStreamWriter::new_custom(
-                writer,
+            let mut json_writer = new_writer("");
+            json_writer.number_value(1)?;
+            json_writer.number_value(2)?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "12");
+
+            Ok(())
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect writer usage: Cannot finish document when no value has been written yet and empty documents are not enabled in the settings"
+        )]
+        fn empty_document() {
+            let json_writer = JsonStreamWriter::new_custom(
+                Vec::new(),
                 WriterSettings {
-                    multi_top_level_value_separator: Some(top_level_separator.to_owned()),
-                    allow_empty_document: true,
+                    multi_top_level_values: Some({
+                        MultiTopLevelValuesSettings {
+                            separator: "#".to_owned(),
+                            trailing_separator: false,
+                            flush_after_value: false,
+                        }
+                    }),
                     ..Default::default()
                 },
-            )
+            );
+
+            let _ = json_writer.finish_document();
         }
-        let mut writer = Vec::<u8>::new();
-        let json_writer = new_writer(&mut writer, "#\n#");
-        json_writer.finish_document()?;
-        // Should not have written separator
-        assert_eq!(writer, "".as_bytes());
 
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = new_writer(&mut writer, "#\n#");
-        json_writer.number_value(1)?;
-        json_writer.finish_document()?;
-        // Should not have written separator
-        assert_eq!(writer, "1".as_bytes());
+        #[test]
+        fn empty_document_allowed() -> TestResult {
+            fn new_writer(top_level_separator: &str) -> JsonStreamWriter<Vec<u8>> {
+                JsonStreamWriter::new_custom(
+                    Vec::new(),
+                    WriterSettings {
+                        multi_top_level_values: Some(MultiTopLevelValuesSettings {
+                            separator: top_level_separator.to_owned(),
+                            trailing_separator: false,
+                            flush_after_value: false,
+                        }),
+                        allow_empty_document: true,
+                        ..Default::default()
+                    },
+                )
+            }
 
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = new_writer(&mut writer, "#\n#");
-        json_writer.number_value(1)?;
-        json_writer.number_value(2)?;
-        json_writer.finish_document()?;
-        assert_eq!(writer, "1#\n#2".as_bytes());
+            let json_writer = new_writer("#");
+            // Should not have written separator
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "");
 
-        Ok(())
-    }
+            let mut json_writer = new_writer("#");
+            json_writer.number_value(1)?;
+            // Should not have written separator
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "1");
 
-    #[test]
-    #[should_panic(
-        expected = "Incorrect writer usage: Cannot write multiple top-level values when not enabled in the settings"
-    )]
-    fn multiple_top_level_disallowed() {
-        let mut writer = Vec::<u8>::new();
-        let mut json_writer = JsonStreamWriter::new(&mut writer);
-        json_writer.bool_value(true).unwrap();
+            let mut json_writer = new_writer("#");
+            json_writer.number_value(1)?;
+            json_writer.number_value(2)?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "1#2");
 
-        let _ = json_writer.bool_value(false);
+            fn new_writer_trailing(top_level_separator: &str) -> JsonStreamWriter<Vec<u8>> {
+                JsonStreamWriter::new_custom(
+                    Vec::new(),
+                    WriterSettings {
+                        multi_top_level_values: Some(MultiTopLevelValuesSettings {
+                            separator: top_level_separator.to_owned(),
+                            trailing_separator: true,
+                            flush_after_value: false,
+                        }),
+                        allow_empty_document: true,
+                        ..Default::default()
+                    },
+                )
+            }
+
+            let json_writer = new_writer_trailing("#");
+            // Should not have written separator
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "");
+
+            let mut json_writer = new_writer_trailing("#");
+            json_writer.number_value(1)?;
+            assert_eq!(str::from_utf8(&json_writer.finish_document()?)?, "1#");
+
+            Ok(())
+        }
+
+        #[test]
+        fn flush() -> TestResult {
+            fn new_writer(
+                flush_after_value: bool,
+                trailing_separator: bool,
+            ) -> JsonStreamWriter<FlushTrackingWriter> {
+                JsonStreamWriter::new_custom(
+                    FlushTrackingWriter {
+                        actions: Vec::new(),
+                    },
+                    WriterSettings {
+                        multi_top_level_values: Some(MultiTopLevelValuesSettings {
+                            separator: "#".to_owned(),
+                            trailing_separator,
+                            flush_after_value,
+                        }),
+                        allow_empty_document: true,
+                        ..Default::default()
+                    },
+                )
+            }
+
+            let mut json_writer = new_writer(false, false);
+            json_writer.number_value(1)?;
+            json_writer.number_value(2)?;
+            assert_eq!(
+                json_writer.finish_document_no_flush()?.actions,
+                vec![
+                    WriterAction::Write("1".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                    WriterAction::Write("2".to_owned()),
+                ]
+            );
+
+            let mut json_writer = new_writer(false, true);
+            json_writer.number_value(1)?;
+            json_writer.number_value(2)?;
+            assert_eq!(
+                json_writer.finish_document_no_flush()?.actions,
+                vec![
+                    WriterAction::Write("1".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                    WriterAction::Write("2".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                ]
+            );
+
+            let mut json_writer = new_writer(true, false);
+            json_writer.number_value(1)?;
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            let mut string_writer = json_writer.string_value_writer()?;
+            string_writer.write_str("first")?;
+            string_writer.write_str("second")?;
+            string_writer.finish_value()?;
+            assert_eq!(
+                json_writer.finish_document_no_flush()?.actions,
+                vec![
+                    WriterAction::Write("1".to_owned()),
+                    WriterAction::Flush,
+                    WriterAction::Write("#".to_owned()),
+                    WriterAction::Write("[".to_owned()),
+                    WriterAction::Write("]".to_owned()),
+                    WriterAction::Flush,
+                    WriterAction::Write("#".to_owned()),
+                    WriterAction::Write("\"".to_owned()),
+                    WriterAction::Write("first".to_owned()),
+                    WriterAction::Write("second".to_owned()),
+                    WriterAction::Write("\"".to_owned()),
+                    WriterAction::Flush,
+                ]
+            );
+
+            let mut json_writer = new_writer(true, true);
+            json_writer.number_value(1)?;
+            json_writer.begin_array()?;
+            json_writer.end_array()?;
+            let mut string_writer = json_writer.string_value_writer()?;
+            string_writer.write_str("str")?;
+            string_writer.finish_value()?;
+            assert_eq!(
+                json_writer.finish_document_no_flush()?.actions,
+                vec![
+                    WriterAction::Write("1".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                    // Flush should happen after separator
+                    WriterAction::Flush,
+                    WriterAction::Write("[".to_owned()),
+                    WriterAction::Write("]".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                    // Flush should happen after separator
+                    WriterAction::Flush,
+                    WriterAction::Write("\"".to_owned()),
+                    WriterAction::Write("str".to_owned()),
+                    WriterAction::Write("\"".to_owned()),
+                    WriterAction::Write("#".to_owned()),
+                    // Flush should happen after separator
+                    WriterAction::Flush,
+                ]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "Incorrect writer usage: Cannot write multiple top-level values when not enabled in the settings"
+        )]
+        fn multi_top_level_disallowed() {
+            let mut writer = Vec::<u8>::new();
+            let mut json_writer = JsonStreamWriter::new(&mut writer);
+            json_writer.bool_value(true).unwrap();
+
+            let _ = json_writer.bool_value(false);
+        }
     }
 
     #[test]
@@ -1484,7 +1872,11 @@ mod tests {
             &mut writer,
             WriterSettings {
                 pretty_print: true,
-                multi_top_level_value_separator: Some("#".to_owned()),
+                multi_top_level_values: Some(MultiTopLevelValuesSettings {
+                    separator: "#".to_owned(),
+                    trailing_separator: false,
+                    flush_after_value: false,
+                }),
                 ..Default::default()
             },
         );

@@ -814,7 +814,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     /* TODO: Rename to peek_value (or peek_value_type)? */
     fn peek(&mut self) -> Result<ValueType, ReaderError>;
@@ -856,7 +856,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn begin_object(&mut self) -> Result<(), ReaderError>;
 
@@ -929,7 +929,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn begin_array(&mut self) -> Result<(), ReaderError>;
 
@@ -962,7 +962,7 @@ pub trait JsonReader {
     /// Checks if there is a next element in the current JSON array or object, without consuming it
     ///
     /// Returns `true` if there is a next element, `false` otherwise. When [multiple top-level
-    /// values](ReaderSettings::allow_multiple_top_level) or [empty documents](ReaderSettings::allow_empty_document)
+    /// values](ReaderSettings::allow_multi_top_level_values) or [empty documents](ReaderSettings::allow_empty_document)
     /// are enabled in the `ReaderSettings` this method can also be used to check if there
     /// are more top-level values.
     ///
@@ -987,7 +987,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     ///
     /// Additionally this method also panics when called on a JSON reader which has not
@@ -1077,7 +1077,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_str(&mut self) -> Result<&str, ReaderError>;
 
@@ -1154,7 +1154,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_string_reader(&mut self) -> Result<impl Read + '_, ReaderError>;
 
@@ -1200,7 +1200,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     /*
      * TODO: Maybe restrict FromStr somehow to numbers?
@@ -1251,7 +1251,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     /*
      * Design note:
@@ -1320,7 +1320,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_number_as_str(&mut self) -> Result<&str, ReaderError>;
 
@@ -1357,7 +1357,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_bool(&mut self) -> Result<bool, ReaderError>;
 
@@ -1388,7 +1388,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn next_null(&mut self) -> Result<(), ReaderError>;
 
@@ -1449,7 +1449,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     #[cfg(feature = "serde")]
     fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
@@ -1534,7 +1534,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name ([`skip_name`](Self::skip_name)
     /// has to be used for that), or when called after the top-level value has already been consumed
-    /// and multiple top-level values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// and multiple top-level values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     fn skip_value(&mut self) -> Result<(), ReaderError>;
 
@@ -1585,7 +1585,7 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     /// Both cases indicate incorrect usage by the user and are unrelated to the JSON data.
     /*
      * TODO: Should this rather take a `IntoIterator<Item = JsonPathPiece>` as path?
@@ -1755,7 +1755,7 @@ pub trait JsonReader {
     /// with the help of [`seek_to`](Self::seek_to), and afterwards either
     /// - the syntax of the remainder of the document should be validated and trailing data should
     ///   be rejected, by calling [`consume_trailing_whitespace`](Self::consume_trailing_whitespace)
-    /// - or, multiple top-level values are [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// - or, multiple top-level values are [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     ///   and the next top-level value should be consumed
     ///
     /// # Examples
@@ -1839,11 +1839,11 @@ pub trait JsonReader {
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
-    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level).
+    /// values are not [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values).
     ///
     /// Panics when the given JSON writer currently expects a member name, or when it has already
     /// written a top-level value and multiple top-level values are not
-    /// [enabled in the `WriterSettings`](crate::writer::WriterSettings::multi_top_level_value_separator).
+    /// [enabled in the `WriterSettings`](crate::writer::WriterSettings::multi_top_level_values).
     ///
     /// These cases indicate incorrect usage by the user and are unrelated to the JSON data.
     /*
@@ -1861,13 +1861,13 @@ pub trait JsonReader {
     /// This method can be useful to verify that a JSON document is wellformed and does not
     /// have any unexpected data at the end. This is not checked automatically by this JSON reader.
     ///
-    /// When multiple top-level values are [enabled in the `ReaderSettings`](ReaderSettings::allow_multiple_top_level)
+    /// When multiple top-level values are [enabled in the `ReaderSettings`](ReaderSettings::allow_multi_top_level_values)
     /// but not all top-level values are relevant they can be skipped with a loop calling
     /// [`has_next`](Self::has_next) and [`skip_value`](Self::skip_value) to allow calling
     /// `consume_trailing_whitespace` eventually:
     /// ```
     /// # use struson::reader::*;
-    /// # let mut json_reader = JsonStreamReader::new_custom("1".as_bytes(), ReaderSettings { allow_multiple_top_level: true, ..ReaderSettings::default() });
+    /// # let mut json_reader = JsonStreamReader::new_custom("1".as_bytes(), ReaderSettings { allow_multi_top_level_values: true, ..ReaderSettings::default() });
     /// # json_reader.skip_value()?;
     /// // Skip all remaining top-level values
     /// while json_reader.has_next()? {

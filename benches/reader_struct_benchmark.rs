@@ -28,7 +28,7 @@ fn benchmark_struct(c: &mut Criterion) {
             let mut json_reader = JsonStreamReader::new_custom(
                 json.as_bytes(),
                 ReaderSettings {
-                    allow_multiple_top_level: true,
+                    allow_multi_top_level_values: true,
                     ..Default::default()
                 },
             );
