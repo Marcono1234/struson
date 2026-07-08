@@ -20,7 +20,7 @@ duplicate = "2.0.1"
 serde_core = { version = "1.0.228", optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
 serde = "1.0.228"
 # When updating serde_json, adjust Struson Serde integration behavior to match serde_json
