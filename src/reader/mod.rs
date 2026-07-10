@@ -375,7 +375,7 @@ pub struct JsonReaderPosition {
 }
 impl JsonReaderPosition {
     /// Creates an 'unknown' position, with all position information being [`None`]
-    #[cfg(feature = "simple-api")] // only needed by simple-api at the moment
+    #[cfg(any(feature = "simple-api", test))] // only needed by simple-api and test code at the moment
     pub(crate) fn unknown_position() -> Self {
         JsonReaderPosition {
             path: None,
@@ -686,6 +686,24 @@ impl ReaderError {
             location: self.location.clone(),
         }
     }
+
+    /// Returns whether the error is IO related
+    ///
+    /// This is a convenience method which simply checks if the [`kind`](Self::kind) is
+    /// [`ReaderErrorKind::IoError`].
+    ///
+    /// **Important:** This should not be used as indication whether it is safe to retry
+    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// processing should be aborted in case of any error, regardless of type.
+    pub fn is_io(&self) -> bool {
+        matches!(
+            self,
+            Self {
+                kind: ReaderErrorKind::IoError(..),
+                ..
+            }
+        )
+    }
 }
 
 /// Error which occurred while calling [`JsonReader::transfer_to`]
@@ -697,6 +715,23 @@ pub enum TransferError {
     /// Error which occurred while writing to the JSON writer
     #[error("writer error: {0}")]
     WriterError(#[from] IoError),
+}
+
+impl TransferError {
+    /// Returns whether the error is IO related
+    ///
+    /// This considers errors reported by the reader and the writer.
+    ///
+    /// **Important:** This should not be used as indication whether it is safe to retry
+    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// processing should be aborted in case of any error, regardless of type.
+    pub fn is_io(&self) -> bool {
+        match self {
+            Self::ReaderError(e) if e.is_io() => true,
+            Self::WriterError(..) => true,
+            _ => false,
+        }
+    }
 }
 
 // TODO: Doc: Deduplicate documentation for errors and panics for value reading methods and only describe it
@@ -2055,6 +2090,39 @@ mod tests {
             }
             e => panic!("unexpected error: {e:?}"),
         }
+    }
+
+    #[test]
+    fn reader_error_is_io() {
+        let io_error = ReaderError {
+            kind: ReaderErrorKind::IoError(IoError::other("my error")),
+            location: JsonReaderPosition::unknown_position(),
+        };
+        assert!(io_error.is_io());
+
+        let syntax_error = ReaderError {
+            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
+            location: JsonReaderPosition::unknown_position(),
+        };
+        assert!(!syntax_error.is_io());
+    }
+
+    #[test]
+    fn transfer_error_is_io() {
+        let reader_io_error = TransferError::ReaderError(ReaderError {
+            kind: ReaderErrorKind::IoError(IoError::other("my error")),
+            location: JsonReaderPosition::unknown_position(),
+        });
+        assert!(reader_io_error.is_io());
+
+        let reader_syntax_error = TransferError::ReaderError(ReaderError {
+            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
+            location: JsonReaderPosition::unknown_position(),
+        });
+        assert!(!reader_syntax_error.is_io());
+
+        let writer_error = TransferError::WriterError(IoError::other("my error"));
+        assert!(writer_error.is_io());
     }
 
     #[test]

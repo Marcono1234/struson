@@ -59,6 +59,17 @@ pub enum DeserializerError {
     },
 }
 
+impl DeserializerError {
+    /// Returns whether the error is IO related
+    ///
+    /// **Important:** This should not be used as indication whether it is safe to retry
+    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// processing should be aborted in case of any error, regardless of type.
+    pub fn is_io(&self) -> bool {
+        matches!(self, Self::ReaderError(e) if e.is_io())
+    }
+}
+
 impl serde_core::de::Error for DeserializerError {
     fn custom<T: Display>(msg: T) -> Self {
         DeserializerError::Custom {
@@ -1101,6 +1112,26 @@ mod tests {
         JsonReaderPosition, JsonStreamReader, LinePosition, ReaderErrorKind, ReaderSettings,
         SyntaxErrorKind, UnexpectedStructureKind,
     };
+
+    #[test]
+    fn deserializer_error_is_io() {
+        type IoError = std::io::Error;
+
+        let reader_io_error = DeserializerError::ReaderError(ReaderError {
+            kind: ReaderErrorKind::IoError(IoError::other("my error")),
+            location: JsonReaderPosition::unknown_position(),
+        });
+        assert!(reader_io_error.is_io());
+
+        let reader_syntax_error = DeserializerError::ReaderError(ReaderError {
+            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
+            location: JsonReaderPosition::unknown_position(),
+        });
+        assert!(!reader_syntax_error.is_io());
+
+        let custom_error = DeserializerError::custom("my error");
+        assert!(!custom_error.is_io());
+    }
 
     #[derive(PartialEq, Clone, Debug)]
     enum Visited {
