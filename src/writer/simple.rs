@@ -448,9 +448,16 @@ mod error_safe_writer {
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonWriter` being less flexible
 /// to use, and it not offering all features of [`JsonWriter`].
 ///
+/// # Error handling
 /// When an error is returned by one of the methods of the writer, the error should be propagated
-/// (for example by using Rust's `?` operator), processing should be aborted and the writer should
+/// (for example by using Rust's `?` operator), processing should be aborted and the writer must
 /// not be used any further.
+///
+/// Methods which take a user-provided function for writing nested values, such as [`write_array`](Self::write_array),
+/// return `Box<dyn Error>` as error type. This can either be an error reported by the JSON writer
+/// itself (in most cases a [`std::io::Error`]) or an error returned by the user-provided function.
+/// When the user-provided function returns an error, writing is immediately aborted and the error
+/// is propagated to the caller.
 ///
 /// # Examples
 /// ```

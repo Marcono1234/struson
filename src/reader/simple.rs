@@ -651,7 +651,8 @@ pub trait ValueReader<J: JsonReader> {
     ///
     /// If the function returns `Ok` but did not consume the array item, either by
     /// reading it (e.g. using [`read_bool`](Self::read_bool)) or by using [`skip_value`](Self::skip_value),
-    /// the item will be skipped automatically.
+    /// the item will be skipped automatically.\
+    /// If the function returns `Err`, reading is aborted and the error is propagated.
     ///
     /// # Examples
     /// ```
@@ -688,7 +689,8 @@ pub trait ValueReader<J: JsonReader> {
     /// member.
     ///
     /// If the function returns `Ok` but did not read the name or the value of the member, then
-    /// name or value will be skipped automatically.
+    /// name or value will be skipped automatically.\
+    /// If the function returns `Err`, reading is aborted and the error is propagated.
     ///
     /// If the name is needed as owned `String`, then [`read_object_owned_names`](Self::read_object_owned_names)
     /// should be used instead.
@@ -725,7 +727,8 @@ pub trait ValueReader<J: JsonReader> {
     ///
     /// If the function returns `Ok` but did not consume the value of the member, either by
     /// reading it (e.g. using [`read_bool`](Self::read_bool)) or by using [`skip_value`](Self::skip_value),
-    /// the value will be skipped automatically.
+    /// the value will be skipped automatically.\
+    /// If the function returns `Err`, reading is aborted and the error is propagated.
     ///
     /// If it suffices to have the name as borrowed `str`, then [`read_object_borrowed_names`](Self::read_object_borrowed_names)
     /// should be used instead.
@@ -813,7 +816,8 @@ pub trait ValueReader<J: JsonReader> {
     ///
     /// Based on the given `path` this method seeks to all matching values, if any, and calls the
     /// function `f` repeatedly for reading each value. If the function returns `Ok` but did not
-    /// consume the value, it will be skipped automatically.
+    /// consume the value, it will be skipped automatically. If the function returns `Err`, reading
+    /// is aborted and the error is propagated.
     ///
     /// Depending on what pieces the path consists of, it can match any number of values, including
     /// none. The `at_least_one_match` argument determines the behavior of this method in case the
@@ -1565,9 +1569,16 @@ mod error_safe_reader {
 /// on incorrect usage. However, this comes at the cost of `SimpleJsonReader` being less flexible
 /// to use, and it not offering all features of [`JsonReader`].
 ///
+/// # Error handling
 /// When an error is returned by one of the methods of the reader, the error should be propagated
-/// (for example by using Rust's `?` operator), processing should be aborted and the reader should
+/// (for example by using Rust's `?` operator), processing should be aborted and the reader must
 /// not be used any further.
+///
+/// Methods which take a user-provided function for processing nested values, such as [`read_array`](Self::read_array),
+/// return `Box<dyn Error>` as error type. This can either be an error reported by the JSON reader
+/// itself (in most cases a [`ReaderError`]) or an error returned by the user-provided function.
+/// When the user-provided function returns an error, reading is immediately aborted and the error
+/// is propagated to the caller.
 ///
 /// # Examples
 /// ```

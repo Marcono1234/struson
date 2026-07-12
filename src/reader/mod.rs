@@ -538,8 +538,9 @@ pub enum ReaderErrorKind {
     ///
     /// This error can occur for example when trying to read a JSON number when the next value is actually
     /// a JSON boolean.\
-    /// If the type of a JSON value is unknown in advance, [`JsonReader::peek`] can be used
-    /// to determine the type and then the corresponding value reading method can be used.
+    /// If the type of a JSON value is unknown in advance, errors of this kind can be avoided by using
+    /// [`JsonReader::peek`] to determine the type of the next JSON value and then using the corresponding
+    /// value reading method.
     #[strum(to_string = "expected JSON value type {expected} but got {actual}")]
     UnexpectedValueType {
         /// The expected JSON value type
@@ -552,20 +553,32 @@ pub enum ReaderErrorKind {
     ///
     /// This error occurs when trying to consume more elements than a JSON array or object has, or
     /// when trying to end a JSON array or object when there are still unprocessed elements in it.\
-    /// If the exact number of elements is unknown in advance, [`JsonReader::has_next`] can be used
-    /// to check if there are more elements. If all remaining elements should be ignored they can
-    /// be skipped like this:
-    /// ```
-    /// # use struson::reader::*;
-    /// # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
-    /// # json_reader.begin_array()?;
-    /// while json_reader.has_next()? {
-    ///     json_reader.skip_value()?;
-    /// }
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    /// Note: For a JSON object [`skip_name`](JsonReader::skip_name) and [`skip_value`](JsonReader::skip_value)
-    /// have to be called for every member to skip its name and value.
+    /// If the exact number of elements is unknown in advance, errors of this kind can be avoided
+    /// by using [`JsonReader::has_next`] to check if there are more elements. If all remaining
+    /// elements should be ignored they can be skipped like this:
+    /// - JSON array:
+    ///     ```
+    ///     # use struson::reader::*;
+    ///     # let mut json_reader = JsonStreamReader::new("[]".as_bytes());
+    ///     # json_reader.begin_array()?;
+    ///     while json_reader.has_next()? {
+    ///         json_reader.skip_value()?;
+    ///     }
+    ///     # Ok::<(), Box<dyn std::error::Error>>(())
+    ///     ```
+    ///
+    /// - JSON object:
+    ///     ```
+    ///     # use struson::reader::*;
+    ///     # let mut json_reader = JsonStreamReader::new("{}".as_bytes());
+    ///     # json_reader.begin_object()?;
+    ///     while json_reader.has_next()? {
+    ///         // For each member skip its name and value
+    ///         json_reader.skip_name()?;
+    ///         json_reader.skip_value()?;
+    ///     }
+    ///     # Ok::<(), Box<dyn std::error::Error>>(())
+    ///     ```
     #[strum(to_string = "unexpected JSON structure {0}")]
     UnexpectedStructure(UnexpectedStructureKind),
 
@@ -762,20 +775,19 @@ pub enum TransferError {
 /// reader, a JSON syntax error or an unexpected structure of the JSON document.
 /// See [`ReaderError`] for more details.
 ///
-/// When encountering [`ReaderErrorKind::SyntaxError`] and [`ReaderErrorKind::IoError`] processing the
-/// JSON document **must** be aborted. Trying to call any reader methods afterwards can lead
-/// to unspecified behavior, such as errors, panics or incorrect data. However, no _undefined_
-/// behavior occurs.
+/// When encountering an error, processing the JSON document **must** be aborted. Trying to
+/// call any reader methods afterwards can lead to unspecified behavior, such as errors,
+/// panics or incorrect data. However, no _undefined_ behavior occurs.
 ///
-/// When encountering [`ReaderErrorKind::UnexpectedValueType`] or [`ReaderErrorKind::UnexpectedStructure`]
-/// depending on the use case it might be possible to continue processing the JSON document
-/// (except for [`seek_to`](Self::seek_to) where it might not be obvious how many elements have already been
-/// skipped). However, these errors can usually be avoided by using either [`peek`](Self::peek) or [`has_next`](Self::has_next)
-/// before trying to consume a value whose type is not known in advance, or for which it
-/// is not known whether it is present in the JSON document.
+/// Some error kinds can be avoided when the structure of the JSON document is not known in
+/// advance by adjusting how the JSON reader is used:
+/// - [`ReaderErrorKind::UnexpectedValueType`]: Call [`peek`](Self::peek) and inspect the
+///   type of the value before trying to consume it.
+/// - [`ReaderErrorKind::UnexpectedStructure`]: Call [`has_next`](Self::has_next) to check
+///   if there is a next element in the current array or object before trying to consume it.
 ///
 /// In general it is recommended to handle errors with the `?` operator of Rust, for example
-/// `json_reader.next_bool()?` and to abort processing the JSON document when an error occurs.
+/// `json_reader.next_bool()?`.
 ///
 /// # Panics
 /// Methods of this reader panic when used in an incorrect way. The documentation of the methods

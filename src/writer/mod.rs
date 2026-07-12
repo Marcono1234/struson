@@ -81,7 +81,7 @@ type IoError = std::io::Error;
 /// behavior, such as errors, panics or incorrect data. However, no _undefined_ behavior occurs.
 ///
 /// In general it is recommended to handle errors with the `?` operator of Rust, for example
-/// `json_writer.bool_value(true)?` and to abort writing the JSON document when an error occurs.
+/// `json_writer.bool_value(true)?`.
 ///
 /// # Panics
 /// Methods of this writer panic when used in an incorrect way. The documentation of the methods
