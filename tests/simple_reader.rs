@@ -1694,7 +1694,7 @@ fn discarded_error_handling() {
         // Trying to read again should still fail
         let result = reader.read_to_end(&mut buf);
         assert_eq!(
-            "previous error: JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
+            format!("previous error '{}': JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
         Ok(())
@@ -1717,7 +1717,7 @@ fn discarded_error_handling() {
         // Trying to read again should still fail
         let result = reader.read_to_end(&mut buf);
         assert_eq!(
-            "previous error: invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
+            format!("previous error '{}': invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
         Ok(())
@@ -1742,13 +1742,16 @@ fn discarded_error_handling() {
         // Trying to read again should still fail
         let result = reader.read_to_end(&mut buf);
         assert_eq!(
-            "previous error: IO error 'custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
+            format!("previous error '{}': IO error 'custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
         Ok(())
     });
     assert_eq!(
-        "IO error 'previous error 'unexpected end of file': custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
+        format!(
+            "IO error 'previous error '{}': custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
+            ErrorKind::UnexpectedEof
+        ),
         result.unwrap_err().to_string()
     );
 

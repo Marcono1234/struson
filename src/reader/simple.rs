@@ -1255,6 +1255,8 @@ fn read_seeked_multi<J: JsonReader>(
 }
 
 mod error_safe_reader {
+    use std::io::ErrorKind;
+
     use super::*;
     use crate::reader::{IntegerNumber, ReaderErrorKind, ReaderIoError, StringReadingError};
 
@@ -1513,7 +1515,7 @@ mod error_safe_reader {
         /// by the enclosing JsonReader afterwards.
         /// Initially None, see call site of struct creation.
         pub(super) reader_error: &'a mut Option<ReaderError>,
-        error: Option<String>,
+        error: Option<(ErrorKind, String)>,
     }
     impl<D: Read> ErrorSafeStringValueReader<'_, D> {
         fn use_delegate<T>(
@@ -1523,7 +1525,10 @@ mod error_safe_reader {
             if let Some(error) = &self.error {
                 // When reporting previous error again, just use string representation for simplicity, and kind `Other`
                 // to avoid caller indefinitely retrying because it considers the original error kind as safe to retry
-                return Err(IoError::other(format!("previous error: {error}")));
+                return Err(IoError::other(format!(
+                    "previous error '{}': {}",
+                    error.0, error.1
+                )));
             }
 
             let result = f(&mut self.delegate);
@@ -1555,7 +1560,7 @@ mod error_safe_reader {
                         location: JsonReaderPosition::unknown_position(),
                     });
                 *self.reader_error = Some(reader_error);
-                self.error = Some(error.to_string());
+                self.error = Some((error.kind(), error.to_string()));
             }
             result
         }
