@@ -39,6 +39,7 @@ enum PeekedValue {
 }
 
 #[derive(Error, Debug)]
+// Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
 #[error("IO error '{0}' at (roughly) {1}")]
 // `pub(crate)` because this is used by simple-api
 pub(crate) struct ReaderIoError(pub(crate) IoError, pub(crate) JsonReaderPosition);
@@ -2136,21 +2137,21 @@ impl<R: Read> StringValueReader<'_, R> {
             );
             pos += copy_count;
 
-            // Check if complete buffer content was copied
-            if copy_count == self.utf8_count {
-                self.utf8_start_pos = 0;
-                self.utf8_count = 0;
-            } else {
+            if copy_count < self.utf8_count {
                 self.utf8_start_pos += copy_count;
                 self.utf8_count -= copy_count;
+                // `buf` did not completely drain UTF-8 buffer; return without further reading
+                return Ok(pos);
+            } else {
+                self.utf8_start_pos = 0;
+                self.utf8_count = 0;
             }
         }
 
         while pos < buf.len() {
             // Can assume that utf8_start_pos is 0 because it should have been drained at the beginning of
-            // this `read` method; otherwise if there were still remaining bytes in the UTF-8 buffer, that
-            // would indicate that `buf` was too small and is already full, so no iteration of this loop
-            // would have run
+            // this `read_impl` method; and any writes to the UTF-8 buffer below only happen in the last
+            // iteration of this loop (when `buf` is full afterwards)
             debug_assert!(self.utf8_start_pos == 0 && self.utf8_count == 0);
             let result = self.json_reader.read_string_bytes(&mut |byte| {
                 if pos < buf.len() {
