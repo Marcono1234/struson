@@ -60,6 +60,8 @@ pub(crate) enum StringReadingError {
         kind: SyntaxErrorKind,
         location: JsonReaderPosition,
     },
+    #[error("invalid UTF-8 data at {location}")]
+    InvalidUtf8Data { location: JsonReaderPosition },
     #[error("{0}")]
     IoError(#[from] ReaderIoError),
 }
@@ -69,6 +71,10 @@ impl From<StringReadingError> for ReaderError {
         match e {
             StringReadingError::SyntaxError { kind, location } => ReaderError {
                 kind: ReaderErrorKind::SyntaxError(kind),
+                location,
+            },
+            StringReadingError::InvalidUtf8Data { location } => ReaderError {
+                kind: ReaderErrorKind::InvalidUtf8Data,
                 location,
             },
             StringReadingError::IoError(e) => e.into(),
@@ -105,7 +111,7 @@ fn panic_incorrect_usage(message: &str) -> ! {
 /// unpredictable how much additional data this JSON reader has consumed from the `Read`.
 ///
 /// The data provided by the underlying reader is expected to be valid UTF-8 data.
-/// The JSON reader methods will return a [`ReaderErrorKind::IoError`] if invalid UTF-8 data
+/// The JSON reader methods will return a [`ReaderErrorKind::InvalidUtf8Data`] if invalid UTF-8 data
 /// is detected. A leading byte order mark (BOM) is not allowed.
 ///
 /// If the underlying reader returns an error of kind [`ErrorKind::Interrupted`], this
@@ -138,7 +144,7 @@ fn panic_incorrect_usage(message: &str) -> ! {
 ///
 ///   The only restriction is that member names and string values are valid UTF-8 strings, besides
 ///   that they can contain any code point. They may contain control characters such as the NULL
-///   character (`\0`), code points which are not yet assigned a character or invalid graphemes.
+///   character (`\0`), code points which are not yet assigned a character, or invalid graphemes.
 ///
 /// When processing JSON data from an untrusted source, users of this JSON reader must implement protections
 /// against the above mentioned security issues themselves.
@@ -959,10 +965,9 @@ impl<R: Read> JsonStreamReader<R> {
     }
 
     fn invalid_utf8_error<T>(&self) -> Result<T, StringReadingError> {
-        Err(StringReadingError::IoError(ReaderIoError(
-            IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"),
-            self.error_location(),
-        )))
+        Err(StringReadingError::InvalidUtf8Data {
+            location: self.error_location(),
+        })
     }
 
     fn string_syntax_error<T>(&self, kind: SyntaxErrorKind) -> Result<T, StringReadingError> {
@@ -1169,7 +1174,7 @@ impl<R: Read> JsonStreamReader<R> {
             0x20..=0x7F => {
                 consumer(byte);
             }
-            // Read and validate multibyte UTF-8 data
+            // Read and validate multi-byte UTF-8 data
             _ => {
                 let mut buf = [0_u8; utf8::MAX_BYTES_PER_CHAR];
                 let bytes = self.read_utf8_multibyte(byte, &mut buf)?;
@@ -3016,11 +3021,9 @@ mod tests {
             let mut json_reader = JsonStreamReader::new(bytes.as_slice());
             match json_reader.next_string() {
                 Err(ReaderError {
-                    kind: ReaderErrorKind::IoError(error),
+                    kind: ReaderErrorKind::InvalidUtf8Data,
                     location,
                 }) => {
-                    assert_eq!(ErrorKind::InvalidData, error.kind());
-                    assert_eq!("invalid UTF-8 data", error.to_string());
                     assert_eq!(Some(Vec::new()), location.path);
                     assert_eq!(0, location.line_pos.unwrap().line);
                 }
@@ -3167,9 +3170,26 @@ mod tests {
             Err(e) => {
                 assert_eq!(ErrorKind::Other, e.kind());
                 assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
-                    e.get_ref().unwrap().to_string()
+                    "invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
+                    e.to_string()
                 );
+
+                // Note: StringReadingError is currently not publicly accessible, so this behavior here
+                // may change in the future
+                let cause = e.downcast::<StringReadingError>().unwrap();
+                match cause {
+                    StringReadingError::InvalidUtf8Data { location } => {
+                        assert_eq!(
+                            JsonReaderPosition {
+                                path: Some(Vec::new()),
+                                line_pos: Some(LinePosition { line: 0, column: 1 }),
+                                data_pos: Some(1),
+                            },
+                            location
+                        );
+                    }
+                    _ => panic!("unexpected cause: {cause:?}"),
+                }
             }
         }
         Ok(())
@@ -5492,12 +5512,10 @@ mod tests {
             },
         );
         match &json_reader.peek() {
-            e @ Err(ReaderError {
-                kind: ReaderErrorKind::IoError(error),
+            Err(ReaderError {
+                kind: ReaderErrorKind::InvalidUtf8Data,
                 location,
             }) => {
-                assert_eq!(ErrorKind::InvalidData, error.kind());
-                assert_eq!("invalid UTF-8 data", error.to_string());
                 assert_eq!(
                     &JsonReaderPosition {
                         path: Some(Vec::new()),
@@ -5505,10 +5523,6 @@ mod tests {
                         data_pos: Some(2),
                     },
                     location
-                );
-                assert_eq!(
-                    "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 2 (data pos 2)",
-                    e.as_ref().unwrap_err().to_string()
                 );
             }
             result => panic!("unexpected result: {result:?}"),

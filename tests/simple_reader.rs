@@ -1710,20 +1710,45 @@ fn discarded_error_handling() {
         let mut buf = Vec::new();
         let result = reader.read_to_end(&mut buf);
         assert_eq!(
-            "IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
+            "invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
 
         // Trying to read again should still fail
         let result = reader.read_to_end(&mut buf);
         assert_eq!(
-            "previous error: IO error 'invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
+            "previous error: invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
         Ok(())
     });
     assert_eq!(
-        "IO error 'previous error 'invalid data': invalid UTF-8 data' at (roughly) path '$', line 0, column 1 (data pos 1)",
+        "invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
+        result.unwrap_err().to_string()
+    );
+
+    // Reading string with underlying reader returning IO error
+    let json_reader = SimpleJsonReader::new(EofReader {
+        data: "\"a".as_bytes(),
+    });
+    let result = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = Vec::new();
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "IO error 'custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+
+        // Trying to read again should still fail
+        let result = reader.read_to_end(&mut buf);
+        assert_eq!(
+            "previous error: IO error 'custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+        Ok(())
+    });
+    assert_eq!(
+        "IO error 'previous error 'unexpected end of file': custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
         result.unwrap_err().to_string()
     );
 

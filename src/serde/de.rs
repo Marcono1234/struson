@@ -1101,8 +1101,6 @@ impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut UnitVariant
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
-
     use serde::Deserialize;
     use serde_core::de::VariantAccess;
     use serde_json::de::StrRead;
@@ -1954,11 +1952,9 @@ mod tests {
         let result = deserializer.method(visitor);
         match result {
             Err(DeserializerError::ReaderError(ReaderError {
-                kind: ReaderErrorKind::IoError(error),
+                kind: ReaderErrorKind::InvalidUtf8Data,
                 location,
             })) => {
-                assert_eq!(ErrorKind::InvalidData, error.kind());
-                assert_eq!("invalid UTF-8 data", error.to_string());
                 assert_eq!(
                     JsonReaderPosition {
                         path: Some(Vec::new()),

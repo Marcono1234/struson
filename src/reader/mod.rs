@@ -615,8 +615,14 @@ pub enum ReaderErrorKind {
     #[strum(to_string = "invalid integer number due to '{0:?}'")]
     InvalidIntError(std::num::IntErrorKind), // reuse stdlib error kind; is this a good idea?
 
-    /// An IO error occurred while trying to read from the underlying reader, or
-    /// malformed UTF-8 data was encountered
+    /// Invalid UTF-8 data was encountered
+    ///
+    /// Note that escape sequences representing malformed surrogate pairs are reported as
+    /// [`SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence`] instead.
+    #[strum(to_string = "invalid UTF-8 data")]
+    InvalidUtf8Data,
+
+    /// An IO error occurred while trying to read from the underlying reader
     ///
     /// The [location](ReaderError::location) for errors of this kind might not be completely
     /// accurate. Since the IO error might have been returned by the underlying reader, it might
@@ -649,6 +655,7 @@ impl ReaderErrorKind {
                 number: number.clone(),
             },
             Self::InvalidIntError(kind) => Self::InvalidIntError(*kind),
+            Self::InvalidUtf8Data => Self::InvalidUtf8Data,
             Self::IoError(error) => Self::IoError(IoError::new(error.kind(), error.to_string())),
         }
     }

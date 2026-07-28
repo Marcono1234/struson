@@ -1320,6 +1320,7 @@ mod error_safe_reader {
                         ReaderErrorKind::MaxNestingDepthExceeded { .. } => original_error.rough_clone(),
                         ReaderErrorKind::UnsupportedNumberValue { .. } => original_error.rough_clone(),
                         ReaderErrorKind::InvalidIntError(_) => original_error.rough_clone(),
+                        ReaderErrorKind::InvalidUtf8Data => original_error.rough_clone(),
                         ReaderErrorKind::IoError(error) => ReaderError {
                             kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
                             location: original_error.location.clone(),
@@ -1535,6 +1536,10 @@ mod error_safe_reader {
                     .map(|error| match error {
                         StringReadingError::SyntaxError { kind, location } => ReaderError {
                             kind: ReaderErrorKind::SyntaxError(*kind),
+                            location: location.clone(),
+                        },
+                        StringReadingError::InvalidUtf8Data { location } => ReaderError {
+                            kind: ReaderErrorKind::InvalidUtf8Data,
                             location: location.clone(),
                         },
                         StringReadingError::IoError(ReaderIoError(error, location)) => {
