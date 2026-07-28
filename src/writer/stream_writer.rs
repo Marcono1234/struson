@@ -708,8 +708,9 @@ struct StringValueWriterImpl<'j, W: Write> {
     error: Option<(ErrorKind, String)>,
 }
 
+const UTF8_ERROR_KIND: ErrorKind = ErrorKind::InvalidData;
 fn map_utf8_error(e: Utf8Error) -> IoError {
-    IoError::new(ErrorKind::InvalidData, e)
+    IoError::new(UTF8_ERROR_KIND, e)
 }
 
 fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
@@ -723,6 +724,10 @@ fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
 }
 
 impl<W: Write> StringValueWriterImpl<'_, W> {
+    fn utf8_error(message: &'static str) -> IoError {
+        IoError::new(UTF8_ERROR_KIND, message)
+    }
+
     fn write_impl(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -767,7 +772,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
                     i += 1;
                     continue;
                 } else {
-                    return Err(IoError::new(ErrorKind::InvalidData, "invalid UTF-8 data"));
+                    return Err(Self::utf8_error("invalid UTF-8 data"));
                 }
 
                 let remaining_count = buf.len() - i;
@@ -838,10 +843,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
             if self_.utf8_pos > 0 {
                 // If there is pending incomplete UTF-8 data, then this is an error because str contains
                 // self-contained complete UTF-8 data, and therefore does not complete the incomplete data
-                return Err(IoError::new(
-                    ErrorKind::InvalidData,
-                    "incomplete multi-byte UTF-8 data",
-                ));
+                return Err(Self::utf8_error("incomplete multi-byte UTF-8 data"));
             }
             self_.json_writer.write_string_value_piece(s)
         })
@@ -853,10 +855,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
         // so user cannot retry if it fails, as desired
 
         if self.utf8_pos > 0 {
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                "incomplete multi-byte UTF-8 data",
-            ));
+            return Err(Self::utf8_error("incomplete multi-byte UTF-8 data"));
         }
         self.json_writer.writer.write(b"\"")?;
         self.json_writer.is_string_value_writer_active = false;
