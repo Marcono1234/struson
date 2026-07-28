@@ -708,7 +708,7 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     /// # use struson::writer::*;
     /// # use struson::writer::simple::*;
     /// // Helper function which takes a `ValueWriter` as argument
-    /// fn writeOption<J: JsonWriter>(
+    /// fn write_option<J: JsonWriter>(
     ///     value_writer: impl ValueWriter<J>,
     ///     value: Option<&str>
     /// ) -> Result<(), Box<dyn Error>> {
@@ -723,11 +723,11 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     /// json_writer.write_object(|object_writer| {
     ///     object_writer.write_member(
     ///         "a",
-    ///         |value_writer| writeOption(value_writer, Some("some text"))
+    ///         |value_writer| write_option(value_writer, Some("some text"))
     ///     )?;
     ///     object_writer.write_member(
     ///         "b",
-    ///         |value_writer| writeOption(value_writer, None)
+    ///         |value_writer| write_option(value_writer, None)
     ///     )?;
     ///     Ok(())
     /// })?;
