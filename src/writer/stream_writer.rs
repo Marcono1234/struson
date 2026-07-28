@@ -699,7 +699,7 @@ struct StringValueWriterImpl<'j, W: Write> {
     /// underlying `Write`.
     utf8_buf: [u8; utf8::MAX_BYTES_PER_CHAR],
     /// Index (0-based) within [utf8_buf] where the next byte should be written, respectively
-    /// number of already written bytes
+    /// number of pending incomplete bytes
     utf8_pos: usize,
     /// Expected number of total bytes for the character whose bytes are currently in [utf8_buf]
     utf8_expected_len: usize,
@@ -717,7 +717,7 @@ fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
     match std::str::from_utf8(bytes) {
         Err(e) => Err(map_utf8_error(e)),
         Ok(s) => {
-            debug_assert!(s.chars().count() == 1);
+            debug_assert_eq!(s.chars().count(), 1);
             Ok(s)
         }
     }
@@ -734,28 +734,29 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
         }
 
         let mut start_pos = 0;
+        // Check for pending incomplete UTF-8 data
         if self.utf8_pos > 0 {
             let copy_count = (self.utf8_expected_len - self.utf8_pos).min(buf.len());
             self.utf8_buf[self.utf8_pos..(self.utf8_pos + copy_count)]
                 .copy_from_slice(&buf[..copy_count]);
             self.utf8_pos += copy_count;
 
-            if self.utf8_pos >= self.utf8_expected_len {
-                self.utf8_pos = 0;
+            if self.utf8_pos < self.utf8_expected_len {
+                // Complete `buf` content was drained into UTF-8 buffer (but it is still incomplete)
+                return Ok(copy_count);
+            } else {
                 let s = decode_utf8_char(&self.utf8_buf[..self.utf8_expected_len])?;
                 self.json_writer.write_string_value_piece(s)?;
+                self.utf8_pos = 0;
+                self.utf8_expected_len = 0;
+                start_pos += copy_count;
             }
-            start_pos += copy_count;
         }
 
-        fn max_or_offset_negative(a: usize, b: usize, b_neg_off: usize) -> usize {
-            debug_assert!(b >= a);
-            // Avoids numeric underflow compared to normal `a.max(b - b_neg_off)`
-            if b_neg_off > b { a } else { b - b_neg_off }
-        }
-
-        // Checks for incomplete UTF-8 data and converts the bytes with str::from_utf8
-        let mut i = max_or_offset_negative(start_pos, buf.len(), utf8::MAX_BYTES_PER_CHAR);
+        // Calculate index `i` for which `buf[start_pos..i]` is complete UTF-8 data, then
+        // use `str::from_utf8` to validate that it is valid UTF-8 and convert to str
+        // The remaining incomplete UTF-8 data `buf[i..]` is placed into `self.utf8_buf`
+        let mut i = start_pos.max(buf.len().saturating_sub(utf8::MAX_BYTES_PER_CHAR));
         while i < buf.len() {
             let byte = buf[i];
 
@@ -777,6 +778,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
 
                 let remaining_count = buf.len() - i;
                 if remaining_count < expected_bytes_count {
+                    // Write everything up to (excluding) the start of the current UTF-8 multi-byte char
                     self.json_writer.write_string_value_piece(
                         std::str::from_utf8(&buf[start_pos..i]).map_err(map_utf8_error)?,
                     )?;
@@ -1147,6 +1149,33 @@ mod tests {
         assert_eq!(
             r#"["a b\u0000\u001F\"\\/\b\f\n\r\t"#.to_owned()
                 + "\u{007F}\u{10FFFF}\u{007F}\u{0080}\u{07FF}\u{0800}\u{FFFF}\u{10000}\u{10FFFF}\",\"\u{10FFFF}a \u{10FFFF}bc\",\"\"]",
+            String::from_utf8(writer)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn string_writer_split_utf8() -> TestResult {
+        // 4 byte UTF-8 char (with each byte being different, to detect corruption in the output)
+        let str_content = b"\xF0\x9D\x84\x9E".repeat(30);
+
+        let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
+        let mut string_writer = json_writer.string_value_writer()?;
+        let mut i = 0;
+        while i < str_content.len() {
+            // Always write 5 bytes, splitting the 4 byte UTF-8 char
+            let step = 5;
+            let slice = &str_content[i..(i + step).min(str_content.len())];
+            let written = string_writer.write(slice)?;
+            // Not guaranteed, but for this test assume `write` writes the complete buffer content
+            assert_eq!(slice.len(), written);
+            i += step;
+        }
+        string_writer.finish_value()?;
+
+        let writer = json_writer.finish_document()?;
+        assert_eq!(
+            format!("\"{}\"", String::from_utf8(str_content)?),
             String::from_utf8(writer)?
         );
         Ok(())
