@@ -4,7 +4,6 @@
 #![cfg(feature = "serde")]
 
 use std::{
-    cmp::min,
     error::Error,
     fmt::Debug,
     io::{ErrorKind, Read},
@@ -1558,6 +1557,29 @@ fn closure_error_propagation() {
     }));
 }
 
+/// Reader which returns an EOF error (instead of 0) when the end has been reached
+struct EofReader {
+    data: &'static [u8],
+}
+impl Read for EofReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.data.is_empty() {
+            return Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "custom-message",
+            ));
+        }
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let copy_count = buf.len().min(self.data.len());
+        buf[..copy_count].copy_from_slice(&self.data[..copy_count]);
+        self.data = &self.data[copy_count..];
+        Ok(copy_count)
+    }
+}
+
 /// Tests behavior when a user-provided closure encounters an `Err` from the reader,
 /// but instead of propagating it, returns `Ok`
 #[test]
@@ -1640,28 +1662,21 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    /// Reader which returns an EOF error (instead of 0) when the end has been reached
-    struct EofReader {
-        data: &'static [u8],
-    }
-    impl Read for EofReader {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.data.is_empty() {
-                return Err(std::io::Error::new(
-                    ErrorKind::UnexpectedEof,
-                    "custom-message",
-                ));
-            }
-            if buf.is_empty() {
-                return Ok(0);
-            }
+    let json_reader = SimpleJsonReader::new(EofReader {
+        data: "[\"a".as_bytes(),
+    });
+    let result = json_reader.read_array(|array_reader| {
+        array_reader.read_deserialize::<String>().unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': custom-message' at (roughly) path '$[0]', line 0, column 3 (data pos 3)",
+            ErrorKind::UnexpectedEof
+        ),
+        result.unwrap_err().to_string()
+    );
 
-            let copy_count = min(self.data.len(), buf.len());
-            buf[..copy_count].copy_from_slice(&self.data[..copy_count]);
-            self.data = &self.data[copy_count..];
-            Ok(copy_count)
-        }
-    }
     let json_reader = SimpleJsonReader::new(EofReader {
         data: r#"{"test"#.as_bytes(),
     });

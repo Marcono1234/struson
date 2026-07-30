@@ -223,16 +223,24 @@ mod error_safe_writer {
     use super::*;
     use crate::writer::IoError;
 
+    // Because `std::io::Error` does not impl Clone, at least preserve its kind and `to_string()`
     pub(super) type StoredIoError = (ErrorKind, String);
 
-    pub(super) fn convert_io_error(error: &IoError) -> StoredIoError {
+    /*
+     * Implementation note: When the original error is stored (`convert_original_...` functions),
+     * its original `to_string()` is preserved.
+     * Only when it is repeated from the stored data (i.e. user keeps calling methods despite
+     * error) the "previous error ..." prefix is added.
+     */
+
+    pub(super) fn convert_original_io_error(error: &IoError) -> StoredIoError {
         (error.kind(), error.to_string())
     }
 
-    fn convert_number_error(error: &JsonNumberError) -> StoredIoError {
+    fn convert_original_number_error(error: &JsonNumberError) -> StoredIoError {
         match error {
             JsonNumberError::InvalidNumber { message } => (ErrorKind::Other, message.clone()),
-            JsonNumberError::IoError(e) => convert_io_error(e),
+            JsonNumberError::IoError(e) => convert_original_io_error(e),
         }
     }
 
@@ -265,7 +273,7 @@ mod error_safe_writer {
             use_delegate!(
                 $self,
                 |$json_writer| $writing_action,
-                |original_error| convert_io_error(original_error),
+                |original_error| convert_original_io_error(original_error),
                 |stored_error| stored_error
             )
         };
@@ -342,7 +350,7 @@ mod error_safe_writer {
             use_delegate!(
                 self,
                 |w| w.number_value_from_string(value),
-                |original_error| convert_number_error(original_error),
+                |original_error| convert_original_number_error(original_error),
                 |stored_error| JsonNumberError::IoError(stored_error)
             )
         }
@@ -358,7 +366,7 @@ mod error_safe_writer {
             use_delegate!(
                 self,
                 |w| w.fp_number_value(value),
-                |original_error| convert_number_error(original_error),
+                |original_error| convert_original_number_error(original_error),
                 |stored_error| JsonNumberError::IoError(stored_error)
             )
         }
@@ -374,7 +382,8 @@ mod error_safe_writer {
                 self,
                 |w| w.serialize_value(value),
                 |original_error| match original_error {
-                    SerializerError::IoError(e) => convert_io_error(e),
+                    SerializerError::IoError(e) => convert_original_io_error(e),
+                    // For all other serializer error kinds at least preserve their `to_string()`
                     e => (ErrorKind::Other, e.to_string()),
                 },
                 // Note: Could also create `SerializerError::Custom` instead
@@ -408,7 +417,7 @@ mod error_safe_writer {
 
             let result = f(&mut self.delegate);
             if let Err(error) = &result {
-                *self.error = Some(convert_io_error(error));
+                *self.error = Some(convert_original_io_error(error));
             }
             result
         }
@@ -434,7 +443,7 @@ mod error_safe_writer {
             }
             let result = self.delegate.finish_value();
             if let Err(error) = &result {
-                *self.error = Some(convert_io_error(error));
+                *self.error = Some(convert_original_io_error(error));
             }
             result
         }

@@ -4,7 +4,6 @@
 #![cfg(feature = "serde")]
 
 use std::{
-    cmp::min,
     collections::HashMap,
     error::Error,
     fmt::{Debug, Display},
@@ -332,6 +331,27 @@ fn closure_error_propagation() {
     );
 }
 
+/// Writer which only permits a certain amount of bytes, returning an error afterwards
+struct MaxCapacityWriter {
+    remaining_capacity: usize,
+}
+impl Write for MaxCapacityWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.remaining_capacity == 0 {
+            return Err(std::io::Error::new(ErrorKind::WouldBlock, "custom-error"));
+        }
+
+        let write_count = buf.len().min(self.remaining_capacity);
+        self.remaining_capacity -= write_count;
+        Ok(write_count)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // Do nothing
+        Ok(())
+    }
+}
+
 /// Tests behavior when a user-provided closure encounters an `Err` from the writer,
 /// but instead of propagating it, returns `Ok`
 #[test]
@@ -428,26 +448,18 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
-    /// Writer which only permits a certain amount of bytes, returning an error afterwards
-    struct MaxCapacityWriter {
-        remaining_capacity: usize,
-    }
-    impl Write for MaxCapacityWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            if self.remaining_capacity == 0 {
-                return Err(std::io::Error::new(ErrorKind::WouldBlock, "custom-error"));
-            }
+    let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
+        remaining_capacity: 2,
+    });
+    let result = json_writer.write_array(|array_writer| {
+        array_writer.write_serialize(&true).unwrap_err();
+        Ok(())
+    });
+    assert_eq!(
+        format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
+        result.unwrap_err().to_string()
+    );
 
-            let write_count = min(self.remaining_capacity, buf.len());
-            self.remaining_capacity -= write_count;
-            Ok(write_count)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            // Do nothing
-            Ok(())
-        }
-    }
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
         remaining_capacity: 3,
     });

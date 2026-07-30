@@ -868,7 +868,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::Cell, cmp::min};
+    use std::cell::Cell;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1422,7 +1422,7 @@ mod tests {
                     return Err(IoError::new(ErrorKind::WouldBlock, "custom-error"));
                 }
 
-                let write_count = min(self.remaining_capacity, buf.len());
+                let write_count = buf.len().min(self.remaining_capacity);
                 self.remaining_capacity -= write_count;
                 Ok(write_count)
             }
