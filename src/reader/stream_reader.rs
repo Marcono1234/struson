@@ -2211,9 +2211,7 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::writer::{
-        FiniteNumber, FloatingPointNumber, JsonNumberError, JsonStreamWriter, StringValueWriter,
-    };
+    use crate::writer::JsonStreamWriter;
     use std::io::Write;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -4560,106 +4558,28 @@ mod tests {
 
     #[test]
     fn transfer_to_writer_error() {
-        fn err() -> IoError {
-            IoError::other("test error")
+        fn err<T>() -> Result<T, IoError> {
+            Err(IoError::other("test error"))
         }
 
-        /// [`StringValueWriter`] which is unreachable
-        struct UnreachableStringValueWriter;
-        impl Write for UnreachableStringValueWriter {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                unreachable!()
+        /// Writer which always returns an error
+        struct FailingWriter;
+        impl Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                err()
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
-                unreachable!()
-            }
-        }
-        impl StringValueWriter for UnreachableStringValueWriter {
-            fn write_str(&mut self, _: &str) -> Result<(), IoError> {
-                unreachable!()
-            }
-
-            fn finish_value(self) -> Result<(), IoError> {
-                unreachable!()
-            }
-        }
-
-        /// [`JsonWriter`] which always returns `Err(...)`
-        /* Note: If maintaining this becomes too cumbersome when adjusting JsonWriter API, can remove this test */
-        struct FailingJsonWriter;
-        impl JsonWriter for FailingJsonWriter {
-            type WriterResult = ();
-
-            fn begin_object(&mut self) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn end_object(&mut self) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn begin_array(&mut self) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn end_array(&mut self) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn name(&mut self, _: &str) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn null_value(&mut self) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn bool_value(&mut self, _: bool) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn string_value(&mut self, _: &str) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
-                Err::<UnreachableStringValueWriter, IoError>(err())
-            }
-
-            fn number_value_from_string(&mut self, _: &str) -> Result<(), JsonNumberError> {
-                Err(JsonNumberError::IoError(err()))
-            }
-
-            fn number_value<N: FiniteNumber>(&mut self, _: N) -> Result<(), IoError> {
-                Err(err())
-            }
-
-            fn fp_number_value<N: FloatingPointNumber>(
-                &mut self,
-                _: N,
-            ) -> Result<(), JsonNumberError> {
-                Err(JsonNumberError::IoError(err()))
-            }
-
-            #[cfg(feature = "serde")]
-            fn serialize_value<S: ::serde_core::ser::Serialize>(
-                &mut self,
-                _value: &S,
-            ) -> Result<(), crate::serde::SerializerError> {
-                panic!("Not needed for test")
-            }
-
-            fn finish_document(self) -> Result<(), IoError> {
-                Err(err())
+                err()
             }
         }
 
         let json_values = ["true", "null", "123", "\"a\"", "[]", "{}"];
         for json in json_values {
             let mut json_reader = new_reader(json);
+            let mut json_writer = JsonStreamWriter::new(FailingWriter);
 
-            let result = json_reader.transfer_to(&mut FailingJsonWriter);
+            let result = json_reader.transfer_to(&mut json_writer);
             match result {
                 Err(TransferError::WriterError(e)) => {
                     assert_eq!(ErrorKind::Other, e.kind());
