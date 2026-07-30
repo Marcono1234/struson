@@ -361,10 +361,13 @@ fn discarded_error_handling() {
     }
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer.write_fp_number(f32::NAN).unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': non-finite number: {}",
@@ -375,12 +378,15 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_object(|object_writer| {
         object_writer
             .write_fp_number_member("name", f32::NAN)
             .unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': non-finite number: {}",
@@ -391,13 +397,16 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_object(|object_writer| {
         object_writer.write_member("name", |value_writer| {
             value_writer.write_fp_number(f32::NAN).unwrap_err();
+            was_called = true;
             Ok(())
         })?;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': non-finite number: {}",
@@ -408,10 +417,13 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer.write_number_string("invalid").unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid JSON number: invalid",
@@ -421,10 +433,13 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer.write_serialize(&f32::NAN).unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid number: non-finite number: {}",
@@ -435,11 +450,14 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         let value = HashMap::from([(vec![1, 2], true)]);
         array_writer.write_serialize(&value).unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': map key cannot be converted to string",
@@ -451,10 +469,13 @@ fn discarded_error_handling() {
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
         remaining_capacity: 2,
     });
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer.write_serialize(&true).unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
         result.unwrap_err().to_string()
@@ -463,21 +484,27 @@ fn discarded_error_handling() {
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
         remaining_capacity: 3,
     });
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer.write_string("test").unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
         result.unwrap_err().to_string()
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_string_with_writer(|mut writer| {
         // Malformed UTF-8
         writer.write_all(b"\"\xFF\"").unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid UTF-8 data",
@@ -487,6 +514,7 @@ fn discarded_error_handling() {
     );
 
     let json_writer = new_writer();
+    let mut was_called = false;
     let result = json_writer.write_string_with_writer(|mut writer| {
         // Malformed UTF-8
         writer.write_all(b"\"\xFF\"").unwrap_err();
@@ -498,8 +526,10 @@ fn discarded_error_handling() {
             ),
             result.unwrap_err().to_string()
         );
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid UTF-8 data",
@@ -511,10 +541,13 @@ fn discarded_error_handling() {
     let json_writer = SimpleJsonWriter::new(MaxCapacityWriter {
         remaining_capacity: 3,
     });
+    let mut was_called = false;
     let result = json_writer.write_string_with_writer(|mut writer| {
         writer.write_str("test").unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
         result.unwrap_err().to_string()
@@ -533,24 +566,29 @@ fn discarded_error_handling() {
         }
     }
     let json_writer = SimpleJsonWriter::new(FlushErrorWriter);
+    let mut was_called = false;
     let result = json_writer.write_string_with_writer(|mut writer| {
         let error = writer.flush().unwrap_err();
         assert_eq!(ErrorKind::WouldBlock, error.kind());
         assert_eq!("custom-error", error.to_string());
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
         result.unwrap_err().to_string()
     );
 
     let json_writer = SimpleJsonWriter::new(sink());
+    let mut was_called = false;
     json_writer
         .write_array(|array_writer| {
             array_writer
                 .write_string_with_writer(|mut writer| {
                     // Malformed UTF-8
                     writer.write_all(b"\"\xFF\"").unwrap_err();
+                    was_called = true;
                     Ok(())
                 })
                 .unwrap_err();
@@ -567,18 +605,23 @@ fn discarded_error_handling() {
             Ok(())
         })
         .unwrap_err();
+    assert!(was_called);
 
+    // Test string error in array
     let json_writer = SimpleJsonWriter::new(sink());
+    let mut was_called = false;
     let result = json_writer.write_array(|array_writer| {
         array_writer
             .write_string_with_writer(|mut writer| {
                 // Malformed UTF-8
                 writer.write_all(b"\"\xFF\"").unwrap_err();
+                was_called = true;
                 Ok(())
             })
             .unwrap_err();
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid UTF-8 data",
@@ -587,17 +630,21 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
+    // Test string error in object
     let json_writer = SimpleJsonWriter::new(sink());
+    let mut was_called = false;
     let result = json_writer.write_object(|object_writer| {
         object_writer
             .write_string_member_with_writer("name", |mut writer| {
                 // Malformed UTF-8
                 writer.write_all(b"\"\xFF\"").unwrap_err();
+                was_called = true;
                 Ok(())
             })
             .unwrap_err();
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "previous error '{}': invalid UTF-8 data",

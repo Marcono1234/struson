@@ -1303,6 +1303,7 @@ mod read_seeked_multi {
     #[test]
     fn discarded_error_handling() {
         let json_reader = new_reader(r#"[0, 1]"#);
+        let mut call_count = 0;
         // Path with trailing `[+]`
         let result = json_reader.read_seeked_multi(&multi_json_path![[+]], true, |value_reader| {
             // Discarding error must not cause an infinite loop; `read_seeked_multi` should exit
@@ -1311,8 +1312,10 @@ mod read_seeked_multi {
                 "expected JSON value type Null but got Number at path '$[0]', line 0, column 1 (data pos 1)",
                 result.unwrap_err().to_string()
             );
+            call_count += 1;
             Ok(())
         });
+        assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
             "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1320,6 +1323,7 @@ mod read_seeked_multi {
         );
 
         let json_reader = new_reader(r#"[[0], [1]]"#);
+        let mut call_count = 0;
         // Path with non-trailing `[+]`
         let result = json_reader.read_seeked_multi(&multi_json_path![[+], 0], true, |value_reader| {
             // Discarding error must not cause an infinite loop; `read_seeked_multi` should exit
@@ -1328,8 +1332,10 @@ mod read_seeked_multi {
                 "expected JSON value type Null but got Number at path '$[0][0]', line 0, column 2 (data pos 2)",
                 result.unwrap_err().to_string()
             );
+            call_count += 1;
             Ok(())
         });
+        assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
             "JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
@@ -1337,6 +1343,7 @@ mod read_seeked_multi {
         );
 
         let json_reader = new_reader(r#"[[]]"#);
+        let mut call_count = 0;
         // `[+]` matching nothing
         let result = json_reader.read_array(|array_reader| {
             let result = array_reader.read_seeked_multi(&multi_json_path![[+]], true, |_| {
@@ -1346,8 +1353,10 @@ mod read_seeked_multi {
                 "unexpected JSON structure FewerElementsThanExpected at path '$[0][0]', line 0, column 2 (data pos 2)",
                 result.unwrap_err().to_string()
             );
+            call_count += 1;
             Ok(())
         });
+        assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
             "JSON syntax error IncompleteDocument at path '$[0][0]', line 0, column 2 (data pos 2)",
@@ -1355,6 +1364,7 @@ mod read_seeked_multi {
         );
 
         let json_reader = new_reader(r#"[{}]"#);
+        let mut call_count = 0;
         // `{+}` matching nothing
         let result = json_reader.read_array(|array_reader| {
             let result = array_reader.read_seeked_multi(&multi_json_path![{+}], true, |_| {
@@ -1364,8 +1374,10 @@ mod read_seeked_multi {
                 "unexpected JSON structure FewerElementsThanExpected at path '$[0].<?>', line 0, column 2 (data pos 2)",
                 result.unwrap_err().to_string()
             );
+            call_count += 1;
             Ok(())
         });
+        assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
             "JSON syntax error IncompleteDocument at path '$[0].<?>', line 0, column 2 (data pos 2)",
@@ -1373,6 +1385,7 @@ mod read_seeked_multi {
         );
 
         let json_reader = new_reader(r#"[[]]"#);
+        let mut call_count = 0;
         // `at_least_one_match = true` matching nothing
         let result = json_reader.read_array(|array_reader| {
             let result = array_reader.read_seeked_multi(&multi_json_path![[*]], true, |_| {
@@ -1382,8 +1395,10 @@ mod read_seeked_multi {
                 "no matching value found for path '[*]' at path '$[0]', line 0, column 1 (data pos 1)",
                 result.unwrap_err().to_string()
             );
+            call_count += 1;
             Ok(())
         });
+        assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
             "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1585,11 +1600,16 @@ impl Read for EofReader {
 #[test]
 fn discarded_error_handling() {
     let json_reader = new_reader("[1]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_null().unwrap_err();
-        // Explicit read call after error
-        Ok(array_reader.read_number_as_string()?)
+        // Explicit read call after error, should repeat error
+        let result = array_reader.read_number_as_string();
+        assert!(result.is_err());
+        was_called = true;
+        Ok(result?)
     });
+    assert!(was_called);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
         "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1597,10 +1617,13 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("[1]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_null().unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
         "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1608,11 +1631,14 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("[1, 2]");
+    let mut call_count = 0;
     let result = json_reader.read_array_items(|value_reader| {
         // Discarding error must not cause an infinite loop; `read_array_items` should exit
         value_reader.read_null().unwrap_err();
+        call_count += 1;
         Ok(())
     });
+    assert_eq!(1, call_count);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
         "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1620,11 +1646,14 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader(r#"{"a": 1, "b": 2}"#);
+    let mut call_count = 0;
     let result = json_reader.read_object_owned_names(|_name, value_reader| {
         // Discarding error must not cause an infinite loop; `read_object_owned_names` should exit
         value_reader.read_null().unwrap_err();
+        call_count += 1;
         Ok(())
     });
+    assert_eq!(1, call_count);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
         "JSON syntax error IncompleteDocument at path '$.a', line 0, column 6 (data pos 6)",
@@ -1632,10 +1661,13 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("[]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_null().unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
         "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
@@ -1643,20 +1675,26 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("[?]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_null().unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         "JSON syntax error MalformedJson at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
     );
 
     let json_reader = new_reader("[1000]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_deserialize::<u8>().unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         "invalid integer number due to 'PosOverflow' at path '$[0]', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
@@ -1665,10 +1703,13 @@ fn discarded_error_handling() {
     let json_reader = SimpleJsonReader::new(EofReader {
         data: "[\"a".as_bytes(),
     });
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader.read_deserialize::<String>().unwrap_err();
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "IO error 'previous error '{}': custom-message' at (roughly) path '$[0]', line 0, column 3 (data pos 3)",
@@ -1680,6 +1721,7 @@ fn discarded_error_handling() {
     let json_reader = SimpleJsonReader::new(EofReader {
         data: r#"{"test"#.as_bytes(),
     });
+    let mut call_count = 0;
     let result = json_reader.read_object_borrowed_names(|mut member_reader| {
         let result = member_reader.read_name();
         assert_eq!(
@@ -1687,8 +1729,10 @@ fn discarded_error_handling() {
             result.unwrap_err().to_string()
         );
         member_reader.read_bool().unwrap_err();
+        call_count += 1;
         Ok(())
     });
+    assert_eq!(1, call_count);
     assert_eq!(
         format!(
             "IO error 'previous error '{}': custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
@@ -1698,6 +1742,7 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("\"test");
+    let mut was_called = false;
     let result = json_reader.read_string_with_reader(|mut reader| {
         let mut buf = Vec::new();
         let result = reader.read_to_end(&mut buf);
@@ -1712,8 +1757,10 @@ fn discarded_error_handling() {
             format!("previous error '{}': JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         "JSON syntax error IncompleteDocument at path '$', line 0, column 5 (data pos 5)",
         result.unwrap_err().to_string()
@@ -1721,6 +1768,7 @@ fn discarded_error_handling() {
 
     // Reading malformed UTF-8 data
     let json_reader = SimpleJsonReader::new(b"\"\xFF\"" as &[u8]);
+    let mut was_called = false;
     let result = json_reader.read_string_with_reader(|mut reader| {
         let mut buf = Vec::new();
         let result = reader.read_to_end(&mut buf);
@@ -1735,8 +1783,10 @@ fn discarded_error_handling() {
             format!("previous error '{}': invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         "invalid UTF-8 data at path '$', line 0, column 1 (data pos 1)",
         result.unwrap_err().to_string()
@@ -1746,6 +1796,7 @@ fn discarded_error_handling() {
     let json_reader = SimpleJsonReader::new(EofReader {
         data: "\"a".as_bytes(),
     });
+    let mut was_called = false;
     let result = json_reader.read_string_with_reader(|mut reader| {
         let mut buf = Vec::new();
         let result = reader.read_to_end(&mut buf);
@@ -1760,8 +1811,10 @@ fn discarded_error_handling() {
             format!("previous error '{}': IO error 'custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)", ErrorKind::Other),
             result.unwrap_err().to_string()
         );
+        was_called = true;
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         format!(
             "IO error 'previous error '{}': custom-message' at (roughly) path '$', line 0, column 2 (data pos 2)",
@@ -1771,6 +1824,7 @@ fn discarded_error_handling() {
     );
 
     let json_reader = new_reader("[\"a\\, true]");
+    let mut was_called = false;
     json_reader.read_array(|array_reader| {
         array_reader
             .read_string_with_reader(|mut reader| {
@@ -1780,6 +1834,7 @@ fn discarded_error_handling() {
                     "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
                     result.unwrap_err().to_string()
                 );
+                was_called = true;
                 // Don't propagate error
                 Ok(())
             })
@@ -1794,11 +1849,14 @@ fn discarded_error_handling() {
 
         Ok(())
     }).unwrap_err();
+    assert!(was_called);
 
     let json_reader = new_reader("[\"a\\, true]");
+    let mut was_called = false;
     let result = json_reader.read_array(|array_reader| {
         array_reader
             .read_string_with_reader(|_| {
+                was_called = true;
                 // Does not read from string; remainder should be implicitly skipped and trigger the error
                 Ok(())
             })
@@ -1813,6 +1871,7 @@ fn discarded_error_handling() {
 
         Ok(())
     });
+    assert!(was_called);
     assert_eq!(
         "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
         result.unwrap_err().to_string()
