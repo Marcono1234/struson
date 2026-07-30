@@ -1325,8 +1325,6 @@ mod error_safe_reader {
             },
             // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
             // therefore use a dummy error
-            // Technically `JsonReader` allows retrying for these errors, but that would be error-prone when they occurred during a
-            // `seek_to` or similar where the reader position is uncertain afterwards; therefore don't allow retrying
             ReaderErrorKind::UnexpectedValueType { .. } => create_dummy_error(&error.location).0,
             ReaderErrorKind::UnexpectedStructure { .. } => create_dummy_error(&error.location).0,
         })

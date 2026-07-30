@@ -173,8 +173,6 @@ macro_rules! consume_expected_value {
  * - multiple methods contain `unimplemented!()`
  * - correct API usage is not properly enforced, e.g. it might be possible to consume
  *   an object member value before its name
- * - retrying on any error type may cause unspecified behavior (even the ones for which JsonReader says
- *   it is safe to retry)
  */
 impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     fn peek(&mut self) -> Result<ValueType, ReaderError> {
