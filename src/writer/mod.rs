@@ -525,8 +525,23 @@ pub trait JsonWriter {
     ) -> Result<(), crate::serde::SerializerError> {
         let mut serializer = crate::serde::JsonWriterSerializer::new(self);
         value.serialize(&mut serializer)
-        // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
-        // might not be necessary because Serde's Serialize API enforces this
+
+        /*
+         * Validation checklist:
+         * - exactly one value
+         *   - at least one value:
+         *     `Serialize::serialize` has to return `S::Ok`, and it can only obtain that by calling
+         *     a Serializer method
+         *   - at most one value:
+         *     Serde's Serializer API enforces this by consuming `self`
+         * - no incomplete array or object:
+         *   `Serialize::serialize` has to return `S::Ok`, and it can only obtain that by calling
+         *    a Serializer method, and for tuples and structs calling the `end()` method
+         *
+         * This validation is necessary to ensure fail fast behavior; otherwise a broken Serialize
+         * implementation could leave the JSON writer in an inconsistent state, leading to errors at
+         * a completely unrelated point later.
+         */
     }
 
     /// Verifies that the JSON document is complete and flushes the buffer

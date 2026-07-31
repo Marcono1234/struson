@@ -1516,12 +1516,25 @@ pub trait JsonReader {
         let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
         D::deserialize(&mut deserializer)
 
-        // Note: Probably do not have to verify that value was properly deserialized:
-        // - only single value:
-        //   the methods of Serde's Deserializer API enforce this by consuming `self`
-        // - no incomplete array or object:
-        //   JsonReaderDeserializer currently has all `begin_array` / `end_array` and
-        //   `begin_object` / `end_object` calls paired
+        /*
+         * Validation checklist:
+         * - exactly one value
+         *   - at least one value:
+         *     [not checked] quite unlikely and probably not worth it detecting this; might require
+         *     adding a `self.was_used = true` or similar to all Deserializer methods
+         *   - at most one value:
+         *     Serde's Deserializer API enforces this by consuming `self`
+         * - no incomplete array or object:
+         *   JsonReaderDeserializer currently has all `begin_array` / `end_array` and
+         *   `begin_object` / `end_object` calls paired
+         *
+         * This validation is necessary to ensure fail fast behavior; otherwise a broken Deserialize
+         * implementation could leave the JSON reader in an inconsistent state, leading to errors at
+         * a completely unrelated point later.
+         *
+         * The only issue might be a Deserialize which (accidentally) discards an error from the
+         * Deserializer and then returns Ok. But protecting against that might not be worth it.
+         */
     }
 
     /// Skips the name of the next JSON object member

@@ -381,8 +381,8 @@ impl<R: JsonReader + ?Sized> JsonReaderDeserializer<'_, R> {
 /// # );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+/* JsonReader does not support borrowing data, so 'de is not bound to it */
 /*
- * JsonReader does not support borrowing data, so 'de is not bound to it
  * TODO: In the documentation of the methods below use links when referring to other method,
  *   e.g. [`deserialize_map`]; however, rustdoc seems to be unable to create links?
  */

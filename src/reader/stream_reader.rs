@@ -5922,5 +5922,53 @@ mod tests {
 
             let _ = json_reader.deserialize_next::<String>();
         }
+
+        /// Tests handling of a bad `Deserialize` which returns `Ok` without consuming any data
+        #[test]
+        #[should_panic(expected = "Deserialize did not consume any data")]
+        #[ignore = "this case is quite unlikely; adding detection for it is probably not worth it"]
+        fn deserialize_next_not_consuming_value() {
+            struct BadDeserialize;
+            impl<'de> Deserialize<'de> for BadDeserialize {
+                fn deserialize<D: ::serde::Deserializer<'de>>(
+                    _deserializer: D,
+                ) -> Result<Self, D::Error> {
+                    // Do not consume anything, and return Ok
+                    Ok(BadDeserialize)
+                }
+            }
+
+            let mut json_reader = new_reader(r#"[1]"#);
+            json_reader.begin_array().unwrap();
+
+            let _ = json_reader.deserialize_next::<BadDeserialize>();
+        }
+
+        /// Similar to [`deserialize_next_not_consuming_value`] where nothing is consumed, but unlike that
+        /// test returns `Err`, which should be allowed
+        #[test]
+        fn deserialize_next_error_not_consuming_value() -> TestResult {
+            #[derive(Debug)]
+            struct BadDeserialize;
+            impl<'de> Deserialize<'de> for BadDeserialize {
+                fn deserialize<D: ::serde::Deserializer<'de>>(
+                    _deserializer: D,
+                ) -> Result<Self, D::Error> {
+                    // Do not consume anything
+                    Err(::serde::de::Error::custom("custom error"))
+                }
+            }
+
+            let mut json_reader = new_reader(r#"[1]"#);
+            json_reader.begin_array()?;
+
+            match json_reader.deserialize_next::<BadDeserialize>() {
+                Err(DeserializerError::Custom { message }) => {
+                    assert_eq!("custom error", message)
+                }
+                r => panic!("unexpected result: {r:?}"),
+            }
+            Ok(())
+        }
     }
 }
