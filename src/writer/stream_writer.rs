@@ -642,21 +642,6 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
         }
     }
 
-    #[cfg(feature = "serde")]
-    fn serialize_value<S: serde_core::ser::Serialize>(
-        &mut self,
-        value: &S,
-    ) -> Result<(), crate::serde::SerializerError> {
-        // TODO: Provide this as default implementation? Remove implementation in custom_json_writer test then;
-        // does not seem to be possible though because Self would have to be guaranteed to be `Sized`?
-        // not sure if that should be enforced for the JsonWriter trait
-
-        let mut serializer = crate::serde::JsonWriterSerializer::new(self);
-        value.serialize(&mut serializer)
-        // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
-        // might not be necessary because Serde's Serialize API enforces this
-    }
-
     /// Verifies that the JSON document is complete and flushes the underlying writer
     ///
     /// Returns the underlying writer on success. This method should be called explicitly

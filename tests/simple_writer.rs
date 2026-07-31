@@ -10,6 +10,7 @@ use std::{
     io::{ErrorKind, Sink, Write, sink},
 };
 
+use serde::{Serialize, Serializer, ser::SerializeSeq};
 use struson::writer::{
     JsonStreamWriter,
     simple::{SimpleJsonWriter, ValueWriter},
@@ -478,6 +479,30 @@ fn discarded_error_handling() {
     assert!(was_called);
     assert_eq!(
         format!("previous error '{}': custom-error", ErrorKind::WouldBlock),
+        result.unwrap_err().to_string()
+    );
+
+    /// `Serialize` which returns an error without triggering an error for the underlying writer
+    #[derive(Debug)]
+    struct FailingSerialize;
+    impl Serialize for FailingSerialize {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut seq = serializer.serialize_seq(None)?;
+            seq.serialize_element(&1)?;
+            Err(serde_core::ser::Error::custom("custom error"))
+        }
+    }
+    let json_writer = new_writer();
+    let mut was_called = false;
+    let result = json_writer.write_array(|array_writer| {
+        let result = array_writer.write_serialize(&FailingSerialize);
+        assert_eq!("custom error", result.unwrap_err().to_string());
+        was_called = true;
+        Ok(())
+    });
+    assert!(was_called);
+    assert_eq!(
+        format!("previous error '{}': custom error", ErrorKind::Other),
         result.unwrap_err().to_string()
     );
 

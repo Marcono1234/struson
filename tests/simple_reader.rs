@@ -9,6 +9,7 @@ use std::{
     io::{ErrorKind, Read},
 };
 
+use serde::{Deserialize, Deserializer};
 use struson::{
     json_path,
     reader::{
@@ -577,7 +578,6 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
 
     // Error: Wrong JSON value type
     let json_reader = new_reader("[1]");
-    // Seeking empty path
     let result = json_reader.read_seeked::<()>(&json_path!["a"], |_| {
         panic!("should not have been called");
     });
@@ -637,6 +637,28 @@ fn read_seeked() -> Result<(), Box<dyn Error>> {
     // Check this outside of closure to make sure closure was called
     assert_eq!(vec!["2"], values);
 
+    // Verify that when `read_seeked`, respectively the underlying `seek_to`, reports an error itself
+    // (instead of the delegate JsonReader methods), the error is properly repeated in case it is discarded
+    let json_reader = new_reader("[[true]]");
+    let mut was_called = false;
+    let result = json_reader.read_array(|array_reader| {
+        let result = array_reader.read_seeked::<u32>(&json_path![1], |_| {
+            panic!("should not have been called");
+        });
+        assert_eq!(
+            "unexpected JSON structure TooShortArray(expected_index = 1, actual_len = 1) at path '$[0][1]', line 0, column 6 (data pos 6)",
+            result.unwrap_err().to_string()
+        );
+        was_called = true;
+        Ok(())
+    });
+    assert!(was_called);
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "JSON syntax error IncompleteDocument at path '$[0][1]', line 0, column 6 (data pos 6)",
+        result.unwrap_err().to_string()
+    );
+
     Ok(())
 }
 
@@ -649,7 +671,6 @@ mod read_seeked_multi {
     fn empty_path() -> Result<(), Box<dyn Error>> {
         let json_reader = new_reader("true");
         let mut values = Vec::new();
-        // Seeking empty path
         json_reader.read_seeked_multi(&multi_json_path![], true, |value_reader| {
             values.push(value_reader.read_bool()?);
             Ok(())
@@ -659,7 +680,6 @@ mod read_seeked_multi {
         // Value not consumed (implicitly skipped)
         let json_reader = new_reader("true");
         let mut call_count = 0;
-        // Seeking empty path
         json_reader.read_seeked_multi(&multi_json_path![], true, |_| {
             call_count += 1;
             Ok(())
@@ -668,7 +688,6 @@ mod read_seeked_multi {
 
         // Error: Empty JSON document and value not consumed
         let json_reader = new_reader("");
-        // Seeking empty path
         let result = json_reader.read_seeked_multi(&multi_json_path![], true, |_| Ok(()));
         assert_eq!(
             "JSON syntax error IncompleteDocument at path '$', line 0, column 0 (data pos 0)",
@@ -1718,6 +1737,29 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
+    /// `Deserialize` which returns an error without triggering an error for the underlying reader
+    #[derive(Debug)]
+    struct FailingDeserialize;
+    impl<'de> Deserialize<'de> for FailingDeserialize {
+        fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+            Err(serde_core::de::Error::custom("custom error"))
+        }
+    }
+    let json_reader = new_reader("[1000]");
+    let mut was_called = false;
+    let result = json_reader.read_array(|array_reader| {
+        let result = array_reader.read_deserialize::<FailingDeserialize>();
+        assert_eq!("custom error", result.unwrap_err().to_string());
+        was_called = true;
+        Ok(())
+    });
+    assert!(was_called);
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error, because custom error cannot be preserved
+        "JSON syntax error IncompleteDocument at <location unavailable>",
+        result.unwrap_err().to_string()
+    );
+
     let json_reader = SimpleJsonReader::new(EofReader {
         data: r#"{"test"#.as_bytes(),
     });
@@ -1875,5 +1917,20 @@ fn discarded_error_handling() {
     assert_eq!(
         "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
         result.unwrap_err().to_string()
+    );
+
+    // Verify that when `seek_to` itself reports error (instead of the delegate methods), the error
+    // is properly repeated as well
+    let mut json_reader = new_reader("[true]");
+    let result = json_reader.seek_to(&json_path![1]);
+    assert_eq!(
+        "unexpected JSON structure TooShortArray(expected_index = 1, actual_len = 1) at path '$[1]', line 0, column 5 (data pos 5)",
+        result.unwrap_err().to_string()
+    );
+    // Error should be repeated
+    assert_eq!(
+        // Created a dummy `IncompleteDocument` error
+        "JSON syntax error IncompleteDocument at path '$[1]', line 0, column 5 (data pos 5)",
+        json_reader.peek_value().unwrap_err().to_string()
     );
 }

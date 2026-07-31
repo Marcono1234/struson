@@ -371,6 +371,23 @@ mod error_safe_writer {
             )
         }
 
+        fn finish_document(self) -> Result<Self::WriterResult, IoError> {
+            // Special code instead of `use_delegate!(...)` because this method consumes `self`
+            if let Some(error) = self.error {
+                return Err(error_from_stored(&error));
+            }
+            self.delegate.finish_document()
+        }
+
+        /*
+         * Override default implementations
+         * While they mostly delegate to other JsonWriter methods (without default impl)
+         * whose errors are tracked here and are repeated, the default impls might themselves
+         * also return errors.
+         * If those errors were not recorded, the Simple API would permit calling other methods
+         * afterwards which might panic due to being at an unexpected nesting depth.
+         */
+
         #[cfg(feature = "serde")]
         fn serialize_value<S: serde_core::ser::Serialize>(
             &mut self,
@@ -389,14 +406,6 @@ mod error_safe_writer {
                 // Note: Could also create `SerializerError::Custom` instead
                 |stored_error| SerializerError::IoError(stored_error)
             )
-        }
-
-        fn finish_document(self) -> Result<Self::WriterResult, IoError> {
-            // Special code instead of `use_delegate!(...)` because this method consumes `self`
-            if let Some(error) = self.error {
-                return Err(error_from_stored(&error));
-            }
-            self.delegate.finish_document()
         }
     }
 

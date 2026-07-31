@@ -244,18 +244,6 @@ mod custom_writer {
             }
         }
 
-        #[cfg(feature = "serde")]
-        fn serialize_value<S: serde_core::Serialize>(
-            &mut self,
-            value: &S,
-        ) -> Result<(), struson::serde::SerializerError> {
-            self.check_before_value();
-            let mut serializer = struson::serde::JsonWriterSerializer::new(self);
-            value.serialize(&mut serializer)
-            // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
-            // might not be necessary because Serde's Serialize API enforces this
-        }
-
         fn finish_document(self) -> Result<Self::WriterResult, IoError> {
             self.verify_string_writer_inactive();
             if let Some(value) = self.final_value {

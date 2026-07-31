@@ -205,7 +205,7 @@ fn panic_incorrect_usage(message: &str) -> ! {
 /// to incorrect usage by the user (such as trying to deserialize two map keys after each
 /// other without a value in between) and are unrelated to the JSON data which is processed.
 #[derive(Debug)]
-pub struct JsonReaderDeserializer<'a, R: JsonReader> {
+pub struct JsonReaderDeserializer<'a, R: JsonReader + ?Sized> {
     json_reader: &'a mut R,
     // Implement a nesting limit here because due to Deserializer's API cannot deserialize iteratively,
     // so malicious user could provide deeply nested JSON leading to stack overflow
@@ -217,7 +217,7 @@ pub struct JsonReaderDeserializer<'a, R: JsonReader> {
 
 const DEFAULT_MAX_NESTING_DEPTH: u32 = 128; // update documentation when changing this value
 
-impl<'a, R: JsonReader> JsonReaderDeserializer<'a, R> {
+impl<'a, R: JsonReader + ?Sized> JsonReaderDeserializer<'a, R> {
     /// Creates a deserializer wrapping a [`JsonReader`]
     ///
     /// The `JsonReader` should be positioned to read the next value, for example it should
@@ -310,7 +310,7 @@ macro_rules! check_nesting {
     };
 }
 
-impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
+impl<R: JsonReader + ?Sized> JsonReaderDeserializer<'_, R> {
     fn deserialize_seq_with_length<'de, V: Visitor<'de>>(
         &mut self,
         visitor: V,
@@ -386,7 +386,7 @@ impl<R: JsonReader> JsonReaderDeserializer<'_, R> {
  * TODO: In the documentation of the methods below use links when referring to other method,
  *   e.g. [`deserialize_map`]; however, rustdoc seems to be unable to create links?
  */
-impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R> {
+impl<'de, R: JsonReader + ?Sized> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R> {
     type Error = DeserializerError;
 
     /// Require the `Deserializer` to figure out how to drive the visitor based
@@ -795,12 +795,12 @@ impl<'de, R: JsonReader> Deserializer<'de> for &mut JsonReaderDeserializer<'_, R
 }
 
 #[derive(Debug)]
-struct SeqAccess<'s, 'a, R: JsonReader> {
+struct SeqAccess<'s, 'a, R: JsonReader + ?Sized> {
     de: &'s mut JsonReaderDeserializer<'a, R>,
     expected_len: Option<usize>,
     len: usize,
 }
-impl<'de, R: JsonReader> serde_core::de::SeqAccess<'de> for &mut SeqAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::SeqAccess<'de> for &mut SeqAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn next_element_seed<T: DeserializeSeed<'de>>(
@@ -829,11 +829,11 @@ impl<'de, R: JsonReader> serde_core::de::SeqAccess<'de> for &mut SeqAccess<'_, '
 }
 
 #[derive(Debug)]
-struct MapAccess<'s, 'a, R: JsonReader> {
+struct MapAccess<'s, 'a, R: JsonReader + ?Sized> {
     de: &'s mut JsonReaderDeserializer<'a, R>,
     expects_entry_value: bool,
 }
-impl<'de, R: JsonReader> serde_core::de::MapAccess<'de> for &mut MapAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::MapAccess<'de> for &mut MapAccess<'_, '_, R> {
     type Error = DeserializerError;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(
@@ -975,14 +975,16 @@ impl<'de> Deserializer<'de> for MapKeyDeserializer<'_> {
 
 /// `EnumAccess` and `VariantAccess` for enums encoded as JSON object: `{"variant_name": variant_value}`
 #[derive(Debug)]
-struct VariantAccess<'s, 'a, R: JsonReader> {
+struct VariantAccess<'s, 'a, R: JsonReader + ?Sized> {
     de: &'s mut JsonReaderDeserializer<'a, R>,
     // Used to verify that user consumed variant value; otherwise they might return without consuming
     // variant value which would leave Deserializer in inconsistent state
     consumed_variant_value: bool,
 }
 
-impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut VariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::EnumAccess<'de>
+    for &mut VariantAccess<'_, '_, R>
+{
     type Error = DeserializerError;
     type Variant = Self;
 
@@ -997,7 +999,9 @@ impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut VariantAccess<
     }
 }
 
-impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut VariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::VariantAccess<'de>
+    for &mut VariantAccess<'_, '_, R>
+{
     type Error = DeserializerError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
@@ -1038,14 +1042,16 @@ impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut VariantAcce
 /// `EnumAccess` and `VariantAccess` for enums whose variant name is encoded as JSON string value
 /// without a variant value (implicit unit value)
 #[derive(Debug)]
-struct UnitVariantAccess<'s, 'a, R: JsonReader> {
+struct UnitVariantAccess<'s, 'a, R: JsonReader + ?Sized> {
     de: &'s mut JsonReaderDeserializer<'a, R>,
     // Used to verify that user consumed variant value; otherwise they might return without consuming
     // variant value which would leave Deserializer in inconsistent state
     consumed_variant_value: bool,
 }
 
-impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::EnumAccess<'de>
+    for &mut UnitVariantAccess<'_, '_, R>
+{
     type Error = DeserializerError;
     type Variant = Self;
 
@@ -1058,7 +1064,9 @@ impl<'de, R: JsonReader> serde_core::de::EnumAccess<'de> for &mut UnitVariantAcc
     }
 }
 
-impl<'de, R: JsonReader> serde_core::de::VariantAccess<'de> for &mut UnitVariantAccess<'_, '_, R> {
+impl<'de, R: JsonReader + ?Sized> serde_core::de::VariantAccess<'de>
+    for &mut UnitVariantAccess<'_, '_, R>
+{
     type Error = DeserializerError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {

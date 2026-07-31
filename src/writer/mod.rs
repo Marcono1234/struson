@@ -522,7 +522,12 @@ pub trait JsonWriter {
     fn serialize_value<S: serde_core::ser::Serialize>(
         &mut self,
         value: &S,
-    ) -> Result<(), crate::serde::SerializerError>;
+    ) -> Result<(), crate::serde::SerializerError> {
+        let mut serializer = crate::serde::JsonWriterSerializer::new(self);
+        value.serialize(&mut serializer)
+        // TODO: Verify that value was properly serialized (only single value; no incomplete array or object)
+        // might not be necessary because Serde's Serialize API enforces this
+    }
 
     /// Verifies that the JSON document is complete and flushes the buffer
     ///

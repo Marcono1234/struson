@@ -1508,7 +1508,19 @@ pub trait JsonReader {
     #[cfg(feature = "serde")]
     fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
         &mut self,
-    ) -> Result<D, crate::serde::DeserializerError>;
+    ) -> Result<D, crate::serde::DeserializerError> {
+        // peek here to fail fast if reader is currently not expecting a value
+        self.peek()?;
+        let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
+        D::deserialize(&mut deserializer)
+
+        // Note: Probably do not have to verify that value was properly deserialized:
+        // - only single value:
+        //   the methods of Serde's Deserializer API enforce this by consuming `self`
+        // - no incomplete array or object:
+        //   JsonReaderDeserializer currently has all `begin_array` / `end_array` and
+        //   `begin_object` / `end_object` calls paired
+    }
 
     /// Skips the name of the next JSON object member
     ///

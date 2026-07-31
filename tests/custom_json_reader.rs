@@ -336,19 +336,6 @@ mod custom_reader {
             }
         }
 
-        #[cfg(feature = "serde")]
-        fn deserialize_next<'de, D: serde_core::Deserialize<'de>>(
-            &mut self,
-        ) -> Result<D, struson::serde::DeserializerError> {
-            // peek here to fail fast if reader is currently not expecting a value
-            self.peek()?;
-            let mut deserializer = struson::serde::JsonReaderDeserializer::new(self);
-            D::deserialize(&mut deserializer)
-            // TODO: Verify that value was properly deserialized (only single value; no incomplete array or object)
-            //       might not be necessary because Serde's Deserializer API enforces this by consuming `self`, and
-            //       JsonReaderDeserializer makes sure JSON arrays and objects are read completely
-        }
-
         fn skip_name(&mut self) -> Result<(), ReaderError> {
             self.next_name()?;
             Ok(())

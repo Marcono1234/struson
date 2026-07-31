@@ -372,11 +372,6 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         )
     }
 
-    fn deserialize_next<'de, D: Deserialize<'de>>(&mut self) -> Result<D, DeserializerError> {
-        let mut deserializer = JsonReaderDeserializer::new(self);
-        D::deserialize(&mut deserializer)
-    }
-
     fn skip_name(&mut self) -> Result<(), ReaderError> {
         let _ = self.next_name()?;
         Ok(())

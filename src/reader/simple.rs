@@ -1458,34 +1458,12 @@ mod error_safe_reader {
             use_delegate!(self, |r| r.next_number_as_string())
         }
 
-        fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
-            use_delegate!(self, |r| r.next_number())
-        }
-
-        fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
-            use_delegate!(self, |r| r.next_number_int())
-        }
-
         fn next_bool(&mut self) -> Result<bool, ReaderError> {
             use_delegate!(self, |r| r.next_bool())
         }
 
         fn next_null(&mut self) -> Result<(), ReaderError> {
             use_delegate!(self, |r| r.next_null())
-        }
-
-        #[cfg(feature = "serde")]
-        fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
-            &mut self,
-        ) -> Result<D, crate::serde::DeserializerError> {
-            use crate::serde::DeserializerError;
-
-            use_delegate!(
-                self,
-                |r| r.deserialize_next(),
-                |original_error| convert_original_deserializer_error(original_error),
-                |stored_error| DeserializerError::ReaderError(stored_error)
-            )
         }
 
         fn skip_name(&mut self) -> Result<(), ReaderError> {
@@ -1518,20 +1496,53 @@ mod error_safe_reader {
             self.delegate.current_position(include_path)
         }
 
-        fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
-            use_delegate!(self, |r| r.seek_to(rel_json_path))
-        }
-
-        fn seek_back(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
-            use_delegate!(self, |r| r.seek_back(rel_json_path))
-        }
-
         fn consume_trailing_whitespace(self) -> Result<(), ReaderError> {
             // Special code instead of `use_delegate!(...)` because this method consumes `self`
             if let Some(error) = self.error {
                 return Err(error.0);
             }
             self.delegate.consume_trailing_whitespace()
+        }
+
+        /*
+         * Override default implementations
+         * While they mostly delegate to other JsonReader methods (without default impl)
+         * whose errors are tracked here and are repeated, the default impls might themselves
+         * also return errors. This is especially an issue for methods like `deserialize_next`
+         * and `seek_to` where the error might occur more deeply nested than the original
+         * nesting depth.
+         * If those errors were not recorded, the Simple API would permit calling other methods
+         * afterwards which might panic due to being at an unexpected nesting depth.
+         */
+
+        fn next_number<T: FromStr>(&mut self) -> Result<Result<T, T::Err>, ReaderError> {
+            use_delegate!(self, |r| r.next_number())
+        }
+
+        fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
+            use_delegate!(self, |r| r.next_number_int())
+        }
+
+        #[cfg(feature = "serde")]
+        fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
+            &mut self,
+        ) -> Result<D, crate::serde::DeserializerError> {
+            use crate::serde::DeserializerError;
+
+            use_delegate!(
+                self,
+                |r| r.deserialize_next(),
+                |original_error| convert_original_deserializer_error(original_error),
+                |stored_error| DeserializerError::ReaderError(stored_error)
+            )
+        }
+
+        fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.seek_to(rel_json_path))
+        }
+
+        fn seek_back(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+            use_delegate!(self, |r| r.seek_back(rel_json_path))
         }
     }
 

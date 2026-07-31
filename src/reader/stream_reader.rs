@@ -1925,23 +1925,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(number)
     }
 
-    #[cfg(feature = "serde")]
-    fn deserialize_next<'de, D: serde_core::de::Deserialize<'de>>(
-        &mut self,
-    ) -> Result<D, crate::serde::DeserializerError> {
-        // TODO: Provide this as default implementation? Remove implementation in custom_json_reader test then;
-        // does not seem to be possible though because Self would have to be guaranteed to be `Sized`?
-        // not sure if that should be enforced for the JsonReader trait
-
-        // peek here to fail fast if reader is currently not expecting a value
-        self.peek()?;
-        let mut deserializer = crate::serde::JsonReaderDeserializer::new(self);
-        D::deserialize(&mut deserializer)
-        // TODO: Verify that value was properly deserialized (only single value; no incomplete array or object)
-        //       might not be necessary because Serde's Deserializer API enforces this by consuming `self`, and
-        //       JsonReaderDeserializer makes sure JSON arrays and objects are read completely
-    }
-
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
             panic_incorrect_usage("Cannot skip to top-level when string value reader is active");

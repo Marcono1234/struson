@@ -134,11 +134,11 @@ fn panic_incorrect_usage(message: &str) -> ! {
 /// happen. In general all these cases are related to incorrect usage by the user (such as
 /// trying to serialize two map keys after each other without a value in between).
 #[derive(Debug)]
-pub struct JsonWriterSerializer<'a, W> {
+pub struct JsonWriterSerializer<'a, W: JsonWriter + ?Sized> {
     json_writer: &'a mut W,
 }
 
-impl<'a, W: JsonWriter> JsonWriterSerializer<'a, W> {
+impl<'a, W: JsonWriter + ?Sized> JsonWriterSerializer<'a, W> {
     /// Creates a serializer wrapping a [`JsonWriter`]
     ///
     /// The `JsonWriter` should be positioned to write the next value, for example it should
@@ -211,7 +211,7 @@ fn map_number_err(e: JsonNumberError) -> SerializerError {
  * TODO: In the documentation of the methods below use links when referring to other method,
  *   e.g. [`deserialize_map`]; however, rustdoc seems to be unable to create links?
  */
-impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
+impl<'s, 'a, W: JsonWriter + ?Sized> Serializer for &'s mut JsonWriterSerializer<'a, W> {
     // No result type; data is written to JsonWriter
     type Ok = ();
 
@@ -566,13 +566,13 @@ impl<'s, 'a, W: JsonWriter> Serializer for &'s mut JsonWriterSerializer<'a, W> {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeSeq<'s, 'a, W: JsonWriter> {
+pub struct SerializeSeq<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: Option<usize>,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -606,13 +606,13 @@ impl<W: JsonWriter> serde_core::ser::SerializeSeq for SerializeSeq<'_, '_, W> {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeTuple<'s, 'a, W: JsonWriter> {
+pub struct SerializeTuple<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeTuple for SerializeTuple<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -643,13 +643,15 @@ impl<W: JsonWriter> serde_core::ser::SerializeTuple for SerializeTuple<'_, '_, W
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeTupleStruct<'s, 'a, W: JsonWriter> {
+pub struct SerializeTupleStruct<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeTupleStruct for SerializeTupleStruct<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeTupleStruct
+    for SerializeTupleStruct<'_, '_, W>
+{
     type Ok = ();
     type Error = SerializerError;
 
@@ -680,13 +682,15 @@ impl<W: JsonWriter> serde_core::ser::SerializeTupleStruct for SerializeTupleStru
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeTupleVariant<'s, 'a, W: JsonWriter> {
+pub struct SerializeTupleVariant<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeTupleVariant for SerializeTupleVariant<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeTupleVariant
+    for SerializeTupleVariant<'_, '_, W>
+{
     type Ok = ();
     type Error = SerializerError;
 
@@ -720,14 +724,14 @@ impl<W: JsonWriter> serde_core::ser::SerializeTupleVariant for SerializeTupleVar
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeMap<'s, 'a, W: JsonWriter> {
+pub struct SerializeMap<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: Option<usize>,
     len: usize,
     expects_entry_value: bool,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -780,13 +784,13 @@ impl<W: JsonWriter> serde_core::ser::SerializeMap for SerializeMap<'_, '_, W> {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeStruct<'s, 'a, W: JsonWriter> {
+pub struct SerializeStruct<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
     type Ok = ();
     type Error = SerializerError;
 
@@ -822,13 +826,15 @@ impl<W: JsonWriter> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_,
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SerializeStructVariant<'s, 'a, W: JsonWriter> {
+pub struct SerializeStructVariant<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
 }
 
-impl<W: JsonWriter> serde_core::ser::SerializeStructVariant for SerializeStructVariant<'_, '_, W> {
+impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeStructVariant
+    for SerializeStructVariant<'_, '_, W>
+{
     type Ok = ();
     type Error = SerializerError;
 
@@ -870,11 +876,11 @@ impl<W: JsonWriter> serde_core::ser::SerializeStructVariant for SerializeStructV
 /// Tries to match serde_json's internal [`MapKeySerializer`](https://github.com/serde-rs/json/blob/v1.0.107/src/ser.rs#L791)
 /// behavior.
 #[derive(Debug)]
-struct MapKeyStringSerializer<'a, W: JsonWriter> {
+struct MapKeyStringSerializer<'a, W: JsonWriter + ?Sized> {
     json_writer: &'a mut W,
 }
 
-impl<W: JsonWriter> MapKeyStringSerializer<'_, W> {
+impl<W: JsonWriter + ?Sized> MapKeyStringSerializer<'_, W> {
     fn serialize_finite_number_key<N: FiniteNumber>(
         &mut self,
         number: N,
@@ -900,7 +906,7 @@ fn err_key_not_string<T>() -> Result<T, SerializerError> {
     Err(SerializerError::MapKeyNotString)
 }
 
-impl<W: JsonWriter> Serializer for &mut MapKeyStringSerializer<'_, W> {
+impl<W: JsonWriter + ?Sized> Serializer for &mut MapKeyStringSerializer<'_, W> {
     type Ok = ();
     type Error = SerializerError;
     type SerializeSeq = Impossible<(), Self::Error>;
