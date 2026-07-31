@@ -135,6 +135,12 @@ pub struct WriterSettings {
     /// ```
     pub multi_top_level_values: Option<MultiTopLevelValuesSettings>,
 }
+impl WriterSettings {
+    /// Whether to only escape the chars required by the JSON specification
+    fn escape_only_required(&self) -> bool {
+        !(self.escape_all_control_chars || self.escape_all_non_ascii)
+    }
+}
 
 /// Settings for writing multiple top-level values
 ///
@@ -460,10 +466,18 @@ impl<W: Write> JsonStreamWriter<W> {
 
 // Implementation with string writing methods
 impl<W: Write> JsonStreamWriter<W> {
-    fn should_escape(&self, c: char) -> bool {
+    /// Whether the char should be escaped according to the JSON specification, ignoring
+    /// any writer settings which require additional chars to be escaped
+    ///
+    /// See [`WriterSettings::escape_only_required`].
+    fn should_escape_required(&self, c: char) -> bool {
         matches!(c, '"' | '\\')
         // Control characters which must be escaped per JSON specification
         || matches!(c, '\u{0}'..='\u{1F}')
+    }
+
+    fn should_escape(&self, c: char) -> bool {
+        self.should_escape_required(c)
             || (self.writer_settings.escape_all_non_ascii && !c.is_ascii())
             || (self.writer_settings.escape_all_control_chars && c.is_control())
     }
@@ -524,13 +538,31 @@ impl<W: Write> JsonStreamWriter<W> {
         let bytes = value.as_bytes();
         let mut next_to_write_index = 0;
 
-        for (index, char) in value.char_indices() {
-            if self.should_escape(char) {
-                if index > next_to_write_index {
-                    self.writer.write(&bytes[next_to_write_index..index])?;
+        if self.writer_settings.escape_only_required() {
+            // Optimized implementation which only has to check ASCII chars for escaping
+            for index in 0..bytes.len() {
+                // Pretend the byte is a Unicode char; ASCII chars are the only ones which need
+                // escaping here, and for them the UTF-8 byte is equivalent
+                // For everything else it does not matter that the char is incorrect; those UTF-8
+                // bytes have a `1` as most significant bit and cannot be misinterpreted as ASCII
+                let char = bytes[index] as char;
+                if self.should_escape_required(char) {
+                    if index > next_to_write_index {
+                        self.writer.write(&bytes[next_to_write_index..index])?;
+                    }
+                    self.write_escaped_char(char)?;
+                    next_to_write_index = index + 1;
                 }
-                self.write_escaped_char(char)?;
-                next_to_write_index = index + char.len_utf8();
+            }
+        } else {
+            for (index, char) in value.char_indices() {
+                if self.should_escape(char) {
+                    if index > next_to_write_index {
+                        self.writer.write(&bytes[next_to_write_index..index])?;
+                    }
+                    self.write_escaped_char(char)?;
+                    next_to_write_index = index + char.len_utf8();
+                }
             }
         }
         // Write remaining bytes
