@@ -101,6 +101,11 @@ fn debug_assert_valid_utf8(bytes: &[u8]) {
 /// Converts bytes to a `str`, possibly without validating that the bytes are valid UTF-8 data
 ///
 /// Must only be called if UTF-8 validation on the bytes has already been performed manually.
+/*
+ * TODO: currently only used by tests; keep it for now in case it will be used again,
+ * e.g. for https://github.com/Marcono1234/struson/issues/11
+ */
+#[cfg(test)]
 pub(crate) fn to_str_unchecked(bytes: &[u8]) -> &str {
     debug_assert_valid_utf8(bytes);
     // TODO: Once confident enough that UTF-8 validation in this crate is correct, use `std::str::from_utf8_unchecked` instead

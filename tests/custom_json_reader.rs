@@ -21,12 +21,9 @@ use struson::{
 mod custom_reader {
     use serde_json::Value;
     use std::{io::Read, iter::Peekable};
-    use struson::{
-        reader::{
-            JsonReader, JsonReaderPosition, ReaderError, ReaderErrorKind, TransferError,
-            UnexpectedStructureKind, ValueType, json_path::JsonPathPiece,
-        },
-        writer::{JsonNumberError, JsonWriter},
+    use struson::reader::{
+        JsonReader, JsonReaderPosition, ReaderError, ReaderErrorKind, UnexpectedStructureKind,
+        ValueType, json_path::JsonPathPiece,
     };
 
     enum StackValue<'a> {
@@ -385,74 +382,6 @@ mod custom_reader {
                     }
                 }
             }
-            Ok(())
-        }
-
-        fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
-            if self.expects_name {
-                panic_incorrect_usage("Cannot transfer value when expecting member name");
-            }
-
-            let mut depth: u32 = 0;
-            loop {
-                if depth > 0 && !self.has_next()? {
-                    if let StackValue::Array(_) = self.stack.last().unwrap() {
-                        self.end_array()?;
-                        json_writer.end_array()?;
-                    } else {
-                        self.end_object()?;
-                        json_writer.end_object()?;
-                    }
-                    depth -= 1;
-                } else {
-                    if self.expects_name {
-                        let name = self.next_name()?;
-                        json_writer.name(name)?;
-                    }
-
-                    match self.peek()? {
-                        ValueType::Array => {
-                            self.begin_array()?;
-                            json_writer.begin_array()?;
-                            depth += 1;
-                        }
-                        ValueType::Object => {
-                            self.begin_object()?;
-                            json_writer.begin_object()?;
-                            depth += 1;
-                        }
-                        ValueType::String => {
-                            json_writer.string_value(self.next_str()?)?;
-                        }
-                        ValueType::Number => {
-                            let number = self.next_number_as_str()?;
-                            // Should not fail since next_number_as_string would have returned Err for invalid JSON number
-                            if let Err(e) = json_writer.number_value_from_string(number) {
-                                match e {
-                                    JsonNumberError::InvalidNumber { message } => panic!(
-                                        "Unexpected: JSON writer rejected valid JSON number '{number}': {message}"
-                                    ),
-                                    JsonNumberError::IoError(e) => {
-                                        return Err(TransferError::WriterError(e));
-                                    }
-                                }
-                            }
-                        }
-                        ValueType::Boolean => {
-                            json_writer.bool_value(self.next_bool()?)?;
-                        }
-                        ValueType::Null => {
-                            self.next_null()?;
-                            json_writer.null_value()?;
-                        }
-                    }
-                }
-
-                if depth == 0 {
-                    break;
-                }
-            }
-
             Ok(())
         }
 

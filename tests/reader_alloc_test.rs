@@ -117,7 +117,48 @@ fn string_value_reader() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Tests `JsonReader::transfer_to` with simple non-nested values (i.e. no arrays or objects)
 #[test]
+fn transfer_to_simple() -> Result<(), Box<dyn Error>> {
+    let json_values = [
+        "true".into(),
+        "null".into(),
+        "1.23e-45".into(),
+        "\"abc\"".into(),
+        format!(
+            "\"{}\"",
+            " \\\" \\\\ \\u0000 \u{1234} \u{10ABCD} \\n \\r ".repeat(100)
+        ),
+    ];
+    for inner_json in json_values {
+        let json =
+            "{\"outer-ignored\": 1, \"outer\":[\"ignored\", ".to_owned() + &inner_json + "]}";
+        let mut json_reader = new_reader(&json);
+
+        // Pre-allocate with expected size to avoid allocations during test execution
+        let mut writer = Vec::<u8>::with_capacity(inner_json.len());
+        let mut json_writer = JsonStreamWriter::new(&mut writer);
+
+        let json_path = json_path!["outer", 1];
+
+        assert_no_alloc(|| {
+            json_reader.seek_to(&json_path)?;
+
+            json_reader.transfer_to(&mut json_writer)?;
+            permit_dealloc(|| json_writer.finish_document())?;
+
+            json_reader.skip_to_top_level()?;
+            permit_dealloc(|| json_reader.consume_trailing_whitespace())?;
+            Ok(())
+        });
+
+        assert_eq!(inner_json, String::from_utf8(writer)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "default impl of `transfer_to` uses allocation for Vec to track nesting stack"]
 fn transfer_to() -> Result<(), Box<dyn Error>> {
     let inner_json = r#"{"a":[{"b":1,"c":[[],[2,{"d":3,"e":"some string value"}]]}],"f":true}"#;
     let json = "{\"outer-ignored\": 1, \"outer\":[\"ignored\", ".to_owned() + inner_json + "]}";

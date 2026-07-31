@@ -12,10 +12,9 @@ use serde::Deserialize;
 use struson::{
     reader::{
         JsonReader, JsonReaderPosition, JsonStreamReader, LinePosition, ReaderError,
-        ReaderErrorKind, SyntaxErrorKind, TransferError, UnexpectedStructureKind, ValueType,
+        ReaderErrorKind, SyntaxErrorKind, UnexpectedStructureKind, ValueType,
     },
     serde::{DeserializerError, JsonReaderDeserializer},
-    writer::JsonWriter,
 };
 
 #[derive(Debug, PartialEq)]
@@ -408,10 +407,6 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
     }
 
     fn skip_to_top_level(&mut self) -> Result<(), ReaderError> {
-        unimplemented!()
-    }
-
-    fn transfer_to<W: JsonWriter>(&mut self, _json_writer: &mut W) -> Result<(), TransferError> {
         unimplemented!()
     }
 

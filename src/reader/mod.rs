@@ -205,7 +205,7 @@ pub mod json_path {
 
 use std::{
     fmt::{Debug, Display, Formatter},
-    io::Read,
+    io::{ErrorKind, Read, Write},
     num::ParseIntError,
     str::FromStr,
 };
@@ -213,7 +213,7 @@ use std::{
 use thiserror::Error;
 
 use self::json_path::{JsonPath, JsonPathPiece, format_abs_json_path};
-use crate::writer::JsonWriter;
+use crate::writer::{JsonWriter, StringValueWriter, TransferredNumber};
 
 mod stream_reader;
 // Re-export streaming implementation under `reader` module
@@ -721,7 +721,9 @@ pub enum TransferError {
     ReaderError(#[from] ReaderError),
     /// Error which occurred while writing to the JSON writer
     #[error("writer error: {0}")]
-    WriterError(#[from] IoError),
+    // Don't use `#[from] IoError` here, otherwise this could accidentally convert reader-related
+    // errors into writer errors (especially for string value reader which returns IO errors)
+    WriterError(IoError),
 }
 
 impl TransferError {
@@ -1916,7 +1918,148 @@ pub trait JsonReader {
      * TODO: Choose a different name which makes it clearer that only the next value is transferred, e.g. `transfer_next_to`?
      * TODO: Are the use cases common enough to justify the existence of this method?
      */
-    fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError>;
+    fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
+        // peek here to fail fast if reader is currently not expecting a value
+        self.peek()?;
+
+        fn string_error_as_reader_error<R: JsonReader + ?Sized>(
+            error: IoError,
+            json_reader: &R,
+        ) -> TransferError {
+            // If the error originates from JsonStreamReader use the underlying error without
+            // redundantly wrapping it
+            TransferError::ReaderError(match error.downcast::<StringReadingError>() {
+                Ok(reader_error) => reader_error.into(),
+                Err(io_error) => ReaderError {
+                    kind: ReaderErrorKind::IoError(io_error),
+                    location: json_reader.current_position(true),
+                },
+            })
+        }
+
+        fn as_writer_error(error: IoError) -> TransferError {
+            TransferError::WriterError(error)
+        }
+
+        #[derive(Debug)]
+        enum StackValue {
+            Array,
+            Object,
+        }
+        let mut stack = Vec::<StackValue>::new();
+        let mut before_first_value = true;
+
+        loop {
+            match stack.last() {
+                Some(StackValue::Array) => {
+                    if !self.has_next()? {
+                        self.end_array()?;
+                        json_writer.end_array().map_err(as_writer_error)?;
+                        stack.pop();
+                        continue;
+                    }
+                    // otherwise fall-through and process value
+                }
+                Some(StackValue::Object) => {
+                    if self.has_next()? {
+                        let name = self.next_name()?;
+                        json_writer.name(name).map_err(as_writer_error)?;
+                        // fall-through and process member value
+                    } else {
+                        self.end_object()?;
+                        json_writer.end_object().map_err(as_writer_error)?;
+                        stack.pop();
+                        continue;
+                    }
+                }
+                None => {
+                    if !before_first_value {
+                        // Transferring value finished
+                        break;
+                    }
+                }
+            }
+
+            before_first_value = false;
+
+            match self.peek()? {
+                ValueType::Array => {
+                    self.begin_array()?;
+                    json_writer.begin_array().map_err(as_writer_error)?;
+                    stack.push(StackValue::Array);
+                }
+                ValueType::Object => {
+                    self.begin_object()?;
+                    json_writer.begin_object().map_err(as_writer_error)?;
+                    stack.push(StackValue::Object);
+                }
+                ValueType::String => {
+                    // Process string in a streaming way using string value reader and writer,
+                    // because it might be arbitrarily large
+                    let mut string_reader = self.next_string_reader()?;
+                    let mut string_writer =
+                        json_writer.string_value_writer().map_err(as_writer_error)?;
+
+                    /// Calls `Read::read`, retrying on `ErrorKind::Interrupted`
+                    fn read_retrying(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+                        loop {
+                            match r.read(buf) {
+                                Ok(n) => return Ok(n),
+                                Err(e) => {
+                                    if e.kind() == ErrorKind::Interrupted {
+                                        continue;
+                                    } else {
+                                        return Err(e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut buf = [0_u8; 128];
+                    loop {
+                        // TODO: Use `read_str` (from https://github.com/Marcono1234/struson/issues/11, in case it is added)
+                        //   and `StringValueWriter::write_str` to avoid duplicate UTF-8 validation for writing?
+                        //   But `read_str` will add its own overhead then?
+
+                        let read_count = match read_retrying(&mut string_reader, &mut buf) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                drop(string_reader);
+                                return Err(string_error_as_reader_error(e, self));
+                            }
+                        };
+                        if read_count == 0 {
+                            break;
+                        }
+                        string_writer
+                            .write_all(&buf[..read_count])
+                            .map_err(as_writer_error)?;
+                    }
+                    string_writer.finish_value().map_err(as_writer_error)?;
+                }
+                ValueType::Number => {
+                    let number = self.next_number_as_str()?;
+                    // Don't use `JsonWriter::number_value_from_string` to avoid redundant number string validation
+                    // because `next_number_as_str` already made sure that number is valid
+                    json_writer
+                        .number_value(TransferredNumber::new(number))
+                        .map_err(as_writer_error)?;
+                }
+                ValueType::Boolean => {
+                    json_writer
+                        .bool_value(self.next_bool()?)
+                        .map_err(as_writer_error)?;
+                }
+                ValueType::Null => {
+                    self.next_null()?;
+                    json_writer.null_value().map_err(as_writer_error)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 
     /// Consumes trailing whitespace at the end of the top-level value
     ///

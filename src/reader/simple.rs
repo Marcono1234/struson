@@ -1478,19 +1478,6 @@ mod error_safe_reader {
             use_delegate!(self, |r| r.skip_to_top_level())
         }
 
-        fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
-            use_delegate!(
-                self,
-                |r| r.transfer_to(json_writer),
-                |original_error| match original_error {
-                    TransferError::ReaderError(e) => convert_original_reader_error(e),
-                    // Cannot easily preserve this, and reporting it as reader IO error might be confusing
-                    TransferError::WriterError(_) => create_unknown_pos_error(),
-                },
-                |stored_error| TransferError::ReaderError(stored_error)
-            )
-        }
-
         fn current_position(&self, include_path: bool) -> JsonReaderPosition {
             // Permit calling this even if error occurred before
             self.delegate.current_position(include_path)
@@ -1543,6 +1530,19 @@ mod error_safe_reader {
 
         fn seek_back(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
             use_delegate!(self, |r| r.seek_back(rel_json_path))
+        }
+
+        fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
+            use_delegate!(
+                self,
+                |r| r.transfer_to(json_writer),
+                |original_error| match original_error {
+                    TransferError::ReaderError(e) => convert_original_reader_error(e),
+                    // Cannot easily preserve this, and reporting it as reader IO error might be confusing
+                    TransferError::WriterError(_) => create_unknown_pos_error(),
+                },
+                |stored_error| TransferError::ReaderError(stored_error)
+            )
         }
     }
 

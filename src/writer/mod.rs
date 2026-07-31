@@ -827,8 +827,14 @@ impl FloatingPointNumber for type_template {
 /// Internal number struct which is used by [`JsonReader::transfer_to`] to avoid
 /// redundant JSON number string validation by `JsonWriter`
 #[derive(Debug)]
-pub(crate) struct TransferredNumber<'a>(pub &'a str);
+pub(crate) struct TransferredNumber<'a>(&'a str);
 impl private::Sealed for TransferredNumber<'_> {}
+impl<'a> TransferredNumber<'a> {
+    pub(crate) fn new(json_number: &'a str) -> Self {
+        debug_assert!(is_valid_json_number(json_number));
+        Self(json_number)
+    }
+}
 impl FiniteNumber for TransferredNumber<'_> {
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,

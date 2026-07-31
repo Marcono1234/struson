@@ -1956,97 +1956,6 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         Ok(())
     }
 
-    fn transfer_to<W: JsonWriter>(&mut self, json_writer: &mut W) -> Result<(), TransferError> {
-        if self.expects_member_name {
-            panic_incorrect_usage("Cannot transfer value when expecting member name");
-        }
-
-        let mut depth: u32 = 0;
-        loop {
-            if depth > 0 && !self.has_next()? {
-                if self.is_in_array() {
-                    self.end_array()?;
-                    json_writer.end_array()?;
-                } else {
-                    self.end_object()?;
-                    json_writer.end_object()?;
-                }
-                depth -= 1;
-            } else {
-                if self.expects_member_name {
-                    let name = self.next_name()?;
-                    json_writer.name(name)?;
-                }
-
-                match self.peek()? {
-                    ValueType::Array => {
-                        self.begin_array()?;
-                        json_writer.begin_array()?;
-                        depth += 1;
-                    }
-                    ValueType::Object => {
-                        self.begin_object()?;
-                        json_writer.begin_object()?;
-                        depth += 1;
-                    }
-                    ValueType::String => {
-                        self.start_expected_value_type(ValueType::String, false)?;
-                        // Write value in a streaming way using value writer
-                        let mut string_writer = json_writer.string_value_writer()?;
-
-                        let mut buf = [0_u8; 64];
-                        loop {
-                            let mut reached_end = false;
-                            let mut read_count = 0;
-                            // Buffer must have enough bytes free to read next char UTF-8 bytes
-                            while buf.len() - read_count >= utf8::MAX_BYTES_PER_CHAR {
-                                reached_end = self
-                                    .read_string_bytes(&mut |byte| {
-                                        buf[read_count] = byte;
-                                        read_count += 1;
-                                    })
-                                    .map_err(ReaderError::from)?;
-
-                                if reached_end {
-                                    break;
-                                }
-                            }
-
-                            // `read_string_bytes` call above performed validation and only placed complete UTF-8
-                            // data into buffer, so unchecked conversion should be safe
-                            let string = utf8::to_str_unchecked(&buf[..read_count]);
-                            string_writer.write_str(string)?;
-                            if reached_end {
-                                break;
-                            }
-                        }
-                        string_writer.finish_value()?;
-                        self.on_value_end();
-                    }
-                    ValueType::Number => {
-                        let number = self.next_number_as_str()?;
-                        // Don't use `JsonWriter::number_value_from_string` to avoid redundant number string validation
-                        // because `next_number_as_str` already made sure that number is valid
-                        json_writer.number_value(TransferredNumber(number))?;
-                    }
-                    ValueType::Boolean => {
-                        json_writer.bool_value(self.next_bool()?)?;
-                    }
-                    ValueType::Null => {
-                        self.next_null()?;
-                        json_writer.null_value()?;
-                    }
-                }
-            }
-
-            if depth == 0 {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
     fn consume_trailing_whitespace(mut self) -> Result<(), ReaderError> {
         if self.is_string_value_reader_active {
             panic_incorrect_usage(
@@ -4511,7 +4420,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Incorrect reader usage: Cannot transfer value when expecting member name"
+        expected = "Incorrect reader usage: Cannot peek value when expecting member name"
     )]
     fn transfer_to_name() {
         let mut writer = Vec::<u8>::new();
