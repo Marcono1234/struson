@@ -42,7 +42,7 @@ enum PeekedValue {
 // Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
 #[error("IO error '{0}' at (roughly) {1}")]
 // `pub(crate)` because this is used by simple-api
-pub(crate) struct ReaderIoError(pub(crate) IoError, pub(crate) JsonReaderPosition);
+pub(crate) struct ReaderIoError(#[source] pub(crate) IoError, pub(crate) JsonReaderPosition);
 
 impl From<ReaderIoError> for ReaderError {
     fn from(value: ReaderIoError) -> Self {

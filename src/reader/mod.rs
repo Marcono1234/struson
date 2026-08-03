@@ -723,7 +723,7 @@ pub enum TransferError {
     #[error("writer error: {0}")]
     // Don't use `#[from] IoError` here, otherwise this could accidentally convert reader-related
     // errors into writer errors (especially for string value reader which returns IO errors)
-    WriterError(IoError),
+    WriterError(#[source] IoError),
 }
 
 impl TransferError {
@@ -1945,6 +1945,15 @@ pub trait JsonReader {
         ) -> TransferError {
             // If the error originates from JsonStreamReader use the underlying error without
             // redundantly wrapping it
+            /*
+             * TODO: Not ideal that this only works for JsonStreamReader; a syntax error during
+             * string reading for custom JSON reader would be reported as reader IO error for
+             * `transfer_to` then.
+             * But cannot be easily solved? Either don't use string value reader and writer, but
+             * could be a performance problem for large strings; or maybe make StringReadingError
+             * public and tell custom JSON reader implementations to use it for their string value
+             * reader?
+             */
             TransferError::ReaderError(match error.downcast::<StringReadingError>() {
                 Ok(reader_error) => reader_error.into(),
                 Err(io_error) => ReaderError {
