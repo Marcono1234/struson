@@ -47,16 +47,17 @@ Two variants of the API are provided:
 
 ### Simple API
 
-**🔬 Experimental**\
-The simple API and its naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
-It has to be enabled by specifying the `simple-api` feature in `Cargo.toml`:
-
-```toml
-[dependencies]
-struson = { version = "...", features = ["simple-api"] }
-```
-
-Any feedback is appreciated!
+> [!NOTE]
+> **🔬 Experimental**\
+> The simple API and its naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
+> It has to be enabled by specifying the `simple-api` feature in `Cargo.toml`:
+>
+> ```toml
+> [dependencies]
+> struson = { version = "...", features = ["simple-api"] }
+> ```
+>
+> Any feedback is appreciated!
 
 #### Reading
 

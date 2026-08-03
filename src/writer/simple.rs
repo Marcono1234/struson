@@ -8,6 +8,8 @@
 //! **🔬 Experimental**\
 //! This API and the naming is currently experimental, please provide feedback [here](https://github.com/Marcono1234/struson/issues/34).
 //! Any feedback is appreciated!
+//!
+//! ----
 
 use std::{error::Error, io::Write};
 

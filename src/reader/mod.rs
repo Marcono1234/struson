@@ -1272,14 +1272,18 @@ pub trait JsonReader {
 
     /// Consumes and returns a JSON number parsed as integer
     ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/167).
+    ///
+    /// ----
+    ///
     /// The default implementation is equivalent to calling [`next_number`](Self::next_number),
     /// but JSON reader implementations might provide a more efficient implementation.
     ///
     /// It might be necessary to help the Rust compiler a bit by explicitly specifying the
     /// number type in case it cannot be inferred automatically, for example `next_number_int::<u32>()`.
-    ///
-    /// **🔬 Experimental**\
-    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/167).
     ///
     /// # Examples
     /// ```
