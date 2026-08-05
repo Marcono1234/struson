@@ -8,18 +8,10 @@ use std::{
 
 use thiserror::Error;
 
-#[allow(
-    unused_imports,
-    reason = "false positive for import of `json_path!` macro"
-)]
 use crate::{
     json_number::{NumberBytesProvider, consume_json_number},
-    reader::{
-        json_path::{JsonPathPiece, json_path},
-        *,
-    },
+    reader::{json_path::JsonPathPiece, *},
     utf8,
-    writer::{StringValueWriter, TransferredNumber},
 };
 
 #[derive(PartialEq, Clone, Copy, strum::Display, Debug)]
@@ -2104,6 +2096,7 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 
 #[cfg(test)]
 mod tests {
+    use super::json_path::json_path;
     use super::*;
     use crate::writer::JsonStreamWriter;
     use std::io::Write;
