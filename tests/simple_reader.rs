@@ -503,6 +503,381 @@ fn object_owned_member_value_not_consumed() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+mod deserialize_recoverable {
+    use super::*;
+    use struson::reader::simple::{RecoverySuccess, UnrecoverableError};
+
+    #[test]
+    fn no_recovery_needed() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader("1");
+        assert!(matches!(
+            json_reader.read_deserialize_recoverable::<u32>()?,
+            RecoverySuccess::WithoutError(1)
+        ));
+
+        let json_reader = new_reader("[1]");
+        let result = json_reader
+            .read_array(|array_reader| Ok(array_reader.read_deserialize_recoverable::<u32>()?))?;
+        assert!(matches!(result, RecoverySuccess::WithoutError(1)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn recovered() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader("[null, 1, [true], 2]");
+        let result = json_reader.read_array(|array_reader| {
+            let mut numbers = Vec::<u32>::new();
+
+            let result = array_reader.read_deserialize_recoverable::<u32>()?;
+            match result {
+                RecoverySuccess::Recovered { original_error } => {
+                    assert_eq!(
+                        "expected JSON value type Number but got Null at path '$[0]', line 0, column 1 (data pos 1)",
+                        original_error.to_string()
+                    );
+                }
+                _ => panic!("unexpected result: {result:?}"),
+            }
+
+            numbers.push(array_reader.read_number()??);
+
+            // Can also recover from error for nested value
+            let result = array_reader.read_deserialize_recoverable::<Vec<u32>>()?;
+            match result {
+                RecoverySuccess::Recovered { original_error } => {
+                    assert_eq!(
+                        "expected JSON value type Number but got Boolean at path '$[2][0]', line 0, column 11 (data pos 11)",
+                        original_error.to_string()
+                    );
+                }
+                _ => panic!("unexpected result: {result:?}"),
+            }
+
+            numbers.push(array_reader.read_number()??);
+            Ok(numbers)
+        })?;
+        assert_eq!(vec![1, 2], result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_deserialize_error() -> Result<(), Box<dyn Error>> {
+        #[derive(Debug)]
+        struct BadDeserialize;
+        impl<'de> Deserialize<'de> for BadDeserialize {
+            fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+                Err(serde_core::de::Error::custom("custom error"))
+            }
+        }
+
+        let json_reader = new_reader("[[1], 2]");
+        let result = json_reader.read_array(|array_reader| {
+            let result = array_reader.read_deserialize_recoverable::<Vec<BadDeserialize>>()?;
+            match result {
+                RecoverySuccess::Recovered { original_error } => {
+                    assert_eq!("custom error", original_error.to_string())
+                }
+                _ => panic!("unexpected result: {result:?}"),
+            }
+
+            Ok(array_reader.read_number::<u32>()??)
+        })?;
+        assert_eq!(2, result);
+
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_object_member() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"[{"a": [true]}, 2]"#);
+        let mut was_called = false;
+        json_reader.read_array(|array_reader| {
+            array_reader.read_object_borrowed_names(|mut member_reader| {
+                assert_eq!("a", member_reader.read_name()?);
+
+                let result = member_reader.read_deserialize_recoverable::<Vec<u32>>();
+                match result {
+                    Ok(RecoverySuccess::Recovered { original_error }) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            original_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+                was_called = true;
+                Ok(())
+            })?;
+
+            assert_eq!("2", array_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+
+        assert!(was_called);
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_object_member_skipped_name() -> Result<(), Box<dyn Error>> {
+        let json_reader = new_reader(r#"[{"a": [true]}, 2]"#);
+        let mut was_called = false;
+        json_reader.read_array(|array_reader| {
+            array_reader.read_object_borrowed_names(|member_reader| {
+                // Implicitly skip name
+
+                let result = member_reader.read_deserialize_recoverable::<Vec<u32>>();
+                match result {
+                    Ok(RecoverySuccess::Recovered { original_error }) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            original_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                }
+                was_called = true;
+                Ok(())
+            })?;
+
+            assert_eq!("2", array_reader.read_number_as_string()?);
+            Ok(())
+        })?;
+
+        assert!(was_called);
+        Ok(())
+    }
+
+    #[test]
+    fn unrecoverable_object_member_skipped_name_error() {
+        // Member name with invalid escape sequence
+        let json_reader = new_reader(r#"{"a \x": [true]}"#);
+        let mut was_called = false;
+        let result = json_reader.read_object_borrowed_names(|member_reader| {
+            // Implicitly skip name
+
+            // Should return error from skipping name
+            let result = member_reader.read_deserialize_recoverable::<Vec<u32>>();
+            match result {
+                Err(UnrecoverableError { original_error, recovery_error: None }) => {
+                    assert_eq!(
+                        "JSON syntax error UnknownEscapeSequence at path '$.<?>', line 0, column 4 (data pos 4)",
+                        original_error.to_string()
+                    );
+                }
+                _ => panic!("unexpected result: {result:?}"),
+            }
+            was_called = true;
+            // Discard error (should be repeated by enclosing method nonetheless)
+            Ok(())
+        });
+
+        assert!(was_called);
+        // Error should have been repeated
+        assert_eq!(
+            "JSON syntax error UnknownEscapeSequence at path '$.<?>', line 0, column 4 (data pos 4)",
+            result.unwrap_err().to_string()
+        );
+    }
+
+    // Note: Recovery at top-level might not be that useful (because `self` is consumed), but for completeness
+    // verify that it works as well
+    #[test]
+    fn recovered_top_level() {
+        let json_reader = new_reader("[true]");
+        let result = json_reader.read_deserialize_recoverable::<Vec<u32>>();
+        match result {
+            Ok(RecoverySuccess::Recovered { original_error }) => {
+                assert_eq!(
+                    "expected JSON value type Number but got Boolean at path '$[0]', line 0, column 1 (data pos 1)",
+                    original_error.to_string()
+                );
+            }
+            _ => panic!("unexpected result: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn unrecoverable() {
+        let json_reader = new_reader("[[a, 1]]");
+        let mut was_called = false;
+        let result = json_reader
+            .read_array(|array_reader| {
+                let result = array_reader.read_deserialize_recoverable::<Vec<u32>>();
+                match result {
+                    Err(UnrecoverableError {
+                        original_error,
+                        recovery_error: None,
+                    }) => {
+                        assert_eq!(
+                            "JSON syntax error MalformedJson at path '$[0][0]', line 0, column 2 (data pos 2)",
+                            original_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                };
+
+                // Error should be repeated
+                let result = array_reader.has_next();
+                assert_eq!(
+                    "JSON syntax error MalformedJson at path '$[0][0]', line 0, column 2 (data pos 2)",
+                    result.unwrap_err().to_string()
+                );
+
+                was_called = true;
+                // Discard error (should be repeated by enclosing method nonetheless)
+                Ok(())
+            });
+
+        assert!(was_called);
+        // Error should have been repeated
+        assert_eq!(
+            "JSON syntax error MalformedJson at path '$[0][0]', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+    }
+
+    /// Verify that recovery is not possible if there is no next array item
+    ///
+    /// In that case the user should have called `has_next` first.
+    #[test]
+    fn unrecoverable_no_next() {
+        let json_reader = new_reader("[]");
+        let mut was_called = false;
+        json_reader
+            .read_array(|array_reader| {
+                let result = array_reader.read_deserialize_recoverable::<u32>();
+                match result {
+                    Err(UnrecoverableError {
+                        original_error,
+                        recovery_error: None,
+                    }) => {
+                        assert_eq!(
+                            "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
+                            original_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                };
+
+                // Error should be repeated
+                let result = array_reader.has_next();
+                assert_eq!(
+                    // Created a dummy `IncompleteDocument` error
+                    "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+                    result.unwrap_err().to_string()
+                );
+
+                was_called = true;
+                // Discard error (should be repeated by enclosing method nonetheless)
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(was_called);
+    }
+
+    #[test]
+    fn unrecoverable_top_level_trailing_data() {
+        let json_reader = new_reader("1 2");
+        let result = json_reader.read_deserialize_recoverable::<u32>();
+        match result {
+            Err(UnrecoverableError {
+                original_error,
+                recovery_error: None,
+            }) => {
+                assert_eq!(
+                    "JSON syntax error TrailingData at path '$', line 0, column 2 (data pos 2)",
+                    original_error.to_string()
+                );
+            }
+            _ => panic!("unexpected result: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn recovery_failed() {
+        let json_reader = new_reader("[[null, a]]");
+        let mut was_called = false;
+        json_reader
+            .read_array(|array_reader| {
+                let result = array_reader.read_deserialize_recoverable::<Vec<u32>>();
+                match result {
+                    Err(UnrecoverableError {
+                        original_error,
+                        recovery_error: Some(recovery_error),
+                    }) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Null at path '$[0][0]', line 0, column 2 (data pos 2)",
+                            original_error.to_string()
+                        );
+                        assert_eq!(
+                            "JSON syntax error MalformedJson at path '$[0][1]', line 0, column 8 (data pos 8)",
+                            recovery_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                };
+
+                // Error should be repeated
+                let result = array_reader.has_next();
+                assert_eq!(
+                    "JSON syntax error MalformedJson at path '$[0][1]', line 0, column 8 (data pos 8)",
+                    result.unwrap_err().to_string()
+                );
+
+                was_called = true;
+                // Discard error (should be repeated by enclosing method nonetheless)
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(was_called);
+    }
+
+    #[test]
+    fn cannot_recover_previous_error() {
+        let json_reader = new_reader("[null, 1]");
+        let mut was_called = false;
+        json_reader
+            .read_array(|array_reader| {
+                let result = array_reader.read_bool();
+                assert_eq!(
+                    "expected JSON value type Boolean but got Null at path '$[0]', line 0, column 1 (data pos 1)",
+                    result.unwrap_err().to_string()
+                );
+
+                // Cannot recover from previous unrelated error
+                let result = array_reader.read_deserialize_recoverable::<u32>();
+                match result {
+                    Err(UnrecoverableError {
+                        original_error,
+                        recovery_error: None,
+                    }) => {
+                        assert_eq!(
+                            // Created a dummy `IncompleteDocument` error
+                            "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+                            original_error.to_string()
+                        );
+                    }
+                    _ => panic!("unexpected result: {result:?}"),
+                };
+
+                // Error should be repeated
+                let result = array_reader.has_next();
+                assert_eq!(
+                    "JSON syntax error IncompleteDocument at path '$[0]', line 0, column 1 (data pos 1)",
+                    result.unwrap_err().to_string()
+                );
+
+                was_called = true;
+                // Discard error (should be repeated by enclosing method nonetheless)
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(was_called);
+    }
+}
+
 #[test]
 fn seek_to() -> Result<(), Box<dyn Error>> {
     let mut json_reader = new_reader(

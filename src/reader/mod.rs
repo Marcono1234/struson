@@ -218,6 +218,13 @@ use crate::writer::{JsonWriter, StringValueWriter, TransferredNumber};
 mod stream_reader;
 // Re-export streaming implementation under `reader` module
 pub use stream_reader::*;
+
+#[cfg(feature = "serde")]
+mod recovery;
+// Re-export recovery implementation under `reader` module
+#[cfg(feature = "serde")]
+pub use recovery::*;
+
 #[cfg(feature = "simple-api")]
 pub mod simple;
 
@@ -700,7 +707,7 @@ impl ReaderError {
     /// [`ReaderErrorKind::IoError`].
     ///
     /// **Important:** This should not be used as indication whether it is safe to retry
-    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// the operation which caused this error. As mentioned in the [`JsonReader` documentation](JsonReader#error-handling),
     /// processing should be aborted in case of any error, regardless of type.
     pub fn is_io(&self) -> bool {
         matches!(
@@ -732,7 +739,7 @@ impl TransferError {
     /// This considers errors reported by the reader and the writer.
     ///
     /// **Important:** This should not be used as indication whether it is safe to retry
-    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// the operation which caused this error. As mentioned in the [`JsonReader` documentation](JsonReader#error-handling),
     /// processing should be aborted in case of any error, regardless of type.
     pub fn is_io(&self) -> bool {
         match self {
@@ -761,7 +768,7 @@ impl TransferError {
 ///     - [`next_number`](Self::next_number), [`next_number_int`](Self::next_number_int), [`next_number_as_str`](Self::next_number_as_str), [`next_number_as_string`](Self::next_number_as_string): Reading a JSON number value
 ///     - [`next_bool`](Self::next_bool): Reading a JSON boolean value
 ///     - [`next_null`](Self::next_null): Reading a JSON null value
-///     - [`deserialize_next`](Self::deserialize_next): Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value (optional feature)
+///     - [`deserialize_next`](Self::deserialize_next), [`deserialize_next_recoverable`](Self::deserialize_next_recoverable): Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value (optional feature)
 ///  - Skipping values
 ///     - [`skip_name`](Self::skip_name): Skipping the name of a JSON object member
 ///     - [`skip_value`](Self::skip_value): Skipping a value
@@ -1506,6 +1513,11 @@ pub trait JsonReader {
     /// Errors can occur when either this JSON reader or the `Deserialize` encounters an
     /// error. In which situations this can happen depends on the `Deserialize` implementation.
     ///
+    /// Note that in general if an error occurs during deserialization, reading must be aborted,
+    /// see the [`JsonReader` documentation](JsonReader#error-handling). However, instead of this method
+    /// the method [`deserialize_next_recoverable`](Self::deserialize_next_recoverable) can be
+    /// used which supports recovering from some errors.
+    ///
     /// # Panics
     /// Panics when called on a JSON reader which currently expects a member name, or
     /// when called after the top-level value has already been consumed and multiple top-level
@@ -1539,6 +1551,149 @@ pub trait JsonReader {
          * The only issue might be a Deserialize which (accidentally) discards an error from the
          * Deserializer and then returns Ok. But protecting against that might not be worth it.
          */
+    }
+
+    /// Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value,
+    /// supporting recovery for some reader and deserialization errors
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this issue](https://github.com/Marcono1234/struson/issues/180).
+    ///
+    /// ----
+    ///
+    /// This method is similar to [`deserialize_next`](Self::deserialize_next), see its documentation
+    /// for details on error and panic behavior, and for security considerations. The main difference
+    /// is that this method here supports 'recovering' from some errors. As mentioned in the
+    /// [`JsonReader` documentation](JsonReader#error-handling), normally when an error occurs reading must be
+    /// aborted. However, this method here supports recovering from some errors by skipping remaining
+    /// data of the current value, allowing to continue with the next value afterwards.
+    ///
+    /// Recovery works like this: The error type of this method is `(DeserializerError, Option<ReaderRecovery>)`.
+    /// The `DeserializerError` is the 'original error' which had occurred. If recovery is possible, the
+    /// recovery value will be `Some(ReaderRecovery)`. It then allows performing recovery by calling
+    /// [`ReaderRecovery::recover_reader`]. `ReaderRecovery` holds a reference to this JSON reader,
+    /// which intentionally prevents any further usage of the reader until recovery has been performed.
+    ///
+    /// That means **recovery was only successful if:**
+    /// 1. The error had `Some(ReaderRecovery)`
+    /// 2. `ReaderRecovery::recover_reader` returned `Ok`
+    ///
+    /// In all other cases recovery was either not possible or was unsuccessful and the JSON reader
+    /// must not be used any further.
+    ///
+    /// Recovery is normally possible for these kind of errors:
+    /// - Unexpected JSON structure (e.g. expected JSON array with 3 items but only got 2)
+    ///
+    ///   However, if the unexpected structure occurs for `deserialize_next_recoverable` itself
+    ///   and not the value it is deserializing (that is, the JSON reader is inside an array but
+    ///   there is no next item), then recovery is not possible. This situation can be avoided by
+    ///   checking [`has_next`](Self::has_next) before trying to call `deserialize_next_recoverable`.
+    /// - Unexpected JSON value type (e.g. expected a JSON array but got a JSON object)
+    /// - Errors reported by the `Deserialize`
+    /// - Errors reported by the `Deserializer` itself
+    ///
+    /// But this does not guarantee that recovery will be successful. For example a syntax error
+    /// or an IO error during recovery will still cause it to fail.
+    ///
+    /// **Tip:** If the intention is to skip deserializing values of a certain type, prefer
+    /// using [`peek`](Self::peek) combined with [`deserialize_next`](Self::deserialize_next)
+    /// instead. This avoids some overhead which this method has, and reduces the risk of
+    /// accidentally recovering from errors which should have caused reading to fail according
+    /// to application logic. See the examples below.
+    ///
+    /// **Important:**
+    /// - Whether recovery is possible and successful is only from the perspective of this
+    ///   JSON reader. If a `Deserialize` implementation might have side-effects, then it
+    ///   might not actually be safe to attempt recovery.\
+    ///   In general it is recommended to always inspect the original `DeserializerError`,
+    ///   possibly also logging it for easier troubleshooting.
+    /// - This method should only be used if recovery is really needed. Overuse can lead to
+    ///   situations where errors which should have caused a failure according to application
+    ///   logic to be accidentally discarded and 'recovered' from instead.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::*;
+    /// // JSON data with `[x, y]` points, containing a malformed `[3, null]` entry
+    /// let json = "[[1, 2], [3, null], [5, 6]]";
+    /// let mut json_reader = JsonStreamReader::new(json.as_bytes());
+    ///
+    /// let mut points = Vec::<(u32, u32)>::new();
+    /// json_reader.begin_array()?;
+    /// while json_reader.has_next()? {
+    ///     match json_reader.deserialize_next_recoverable() {
+    ///         Ok(point) => points.push(point),
+    ///         // unrecoverable
+    ///         Err((err, None)) => return Err(err.into()),
+    ///         // recoverable
+    ///         Err((err, Some(recovery))) => {
+    ///             println!("Encountered recoverable error, trying recovery: {err}");
+    ///             recovery.recover_reader()?;
+    ///             println!("Recovery successful, continuing with next value");
+    ///         }
+    ///     }
+    /// }
+    /// json_reader.end_array()?;
+    ///
+    /// assert_eq!(
+    ///     points,
+    ///     vec![(1, 2), (5, 6)]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// As mentioned above, if JSON values of certain types should be skipped, prefer
+    /// [`peek`](Self::peek) combined with [`deserialize_next`](Self::deserialize_next):
+    /// ```
+    /// # use struson::reader::*;
+    /// // JSON data with `[x, y]` points, where `null` entries should be skipped
+    /// let json = "[[1, 2], null, [3, 4]]";
+    /// let mut json_reader = JsonStreamReader::new(json.as_bytes());
+    ///
+    /// let mut points = Vec::<(u32, u32)>::new();
+    /// json_reader.begin_array()?;
+    /// while json_reader.has_next()? {
+    ///     // Skip JSON null
+    ///     if json_reader.peek()? == ValueType::Null {
+    ///         json_reader.skip_value()?;
+    ///         continue;
+    ///     }
+    ///
+    ///     // Deserialize value using regular `deserialize_next`
+    ///     points.push(json_reader.deserialize_next()?);
+    /// }
+    /// json_reader.end_array()?;
+    ///
+    /// assert_eq!(
+    ///     points,
+    ///     vec![(1, 2), (3, 4)]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    /*
+     * Note: The Err type is intentionally a tuple, which does not impl Error itself (and does not
+     * support the `?` operator). The rationale is that if the user used this method instead of
+     * `deserialize_next`, then they will likely perform recovery and have to unwrap the Err result
+     * anyway. It is unlikely that they want to propagate it (instead of the wrapped DeserializerError),
+     * including the ReaderRecovery and the JsonReader reference it holds.
+     */
+    #[cfg(feature = "serde")]
+    #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
+    fn deserialize_next_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        &mut self,
+    ) -> Result<
+        D,
+        (
+            crate::serde::DeserializerError,
+            Option<ReaderRecovery<'_, Self>>,
+        ),
+    > {
+        let mut recoverable_reader = RecoverableJsonReader::new(self);
+        recoverable_reader
+            .deserialize_next()
+            .map_err(|err| (err, recoverable_reader.create_recovery()))
     }
 
     /// Skips the name of the next JSON object member

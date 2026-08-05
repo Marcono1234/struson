@@ -63,7 +63,7 @@ impl DeserializerError {
     /// Returns whether the error is IO related
     ///
     /// **Important:** This should not be used as indication whether it is safe to retry
-    /// the operation which caused this error. As mentioned in the [`JsonReader`] documentation,
+    /// the operation which caused this error. As mentioned in the [`JsonReader` documentation](JsonReader#error-handling),
     /// processing should be aborted in case of any error, regardless of type.
     pub fn is_io(&self) -> bool {
         matches!(self, Self::ReaderError(e) if e.is_io())
@@ -1109,8 +1109,10 @@ impl<'de, R: JsonReader + ?Sized> serde_core::de::VariantAccess<'de>
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Formatter;
+
     use serde::Deserialize;
-    use serde_core::de::VariantAccess;
+    use serde_core::de::{EnumAccess, MapAccess, SeqAccess, VariantAccess};
     use serde_json::de::StrRead;
 
     use super::*;
@@ -1313,10 +1315,7 @@ mod tests {
             self.visit(Visited::NewtypeStructEnd)
         }
 
-        fn visit_seq<A: serde_core::de::SeqAccess<'de>>(
-            self,
-            mut seq: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
             self.visit(Visited::SeqStart)?;
 
             while seq
@@ -1327,10 +1326,7 @@ mod tests {
             self.visit(Visited::SeqEnd)
         }
 
-        fn visit_map<A: serde_core::de::MapAccess<'de>>(
-            self,
-            mut map: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
             self.visit(Visited::MapStart)?;
 
             while map
@@ -1343,10 +1339,7 @@ mod tests {
             self.visit(Visited::MapEnd)
         }
 
-        fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
-            self,
-            data: A,
-        ) -> Result<Self::Value, A::Error> {
+        fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
             self.visit(Visited::EnumStart)?;
 
             let (_, variant) = data.variant_seed(VisitingDeserialize { visitor: self })?;
@@ -2270,7 +2263,7 @@ mod tests {
                             write!(formatter, "map")
                         }
 
-                        fn visit_map<A: serde_core::de::MapAccess<'de>>(
+                        fn visit_map<A: MapAccess<'de>>(
                             self,
                             mut $map: A,
                         ) -> Result<Self::Value, A::Error> {
@@ -2870,10 +2863,7 @@ mod tests {
                 write!(formatter, "enum")
             }
 
-            fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
-                self,
-                data: A,
-            ) -> Result<Self::Value, A::Error> {
+            fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
                 // Deserialize the object member name (string) as bool
                 let (name, variant_access) = data.variant::<bool>()?;
                 let enum_value = variant_access.newtype_variant()?;
@@ -2900,14 +2890,11 @@ mod tests {
         impl<'de> Visitor<'de> for V {
             type Value = ();
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(formatter, "enum")
             }
 
-            fn visit_enum<A: serde_core::de::EnumAccess<'de>>(
-                self,
-                data: A,
-            ) -> Result<Self::Value, A::Error> {
+            fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
                 // Bad implementation; in both cases does not deserialize variant value
                 if self.consume_variant_name {
                     data.variant::<String>()?;

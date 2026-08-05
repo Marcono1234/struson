@@ -571,6 +571,11 @@ pub trait ValueReader<J: JsonReader> {
     /// This method is part of the optional Serde integration feature, see the
     /// [`serde` module](crate::serde) of this crate for more information.
     ///
+    /// Note that in general if an error occurs during deserialization, reading must be aborted,
+    /// see the [`SimpleJsonReader` documentation](SimpleJsonReader#error-handling).
+    /// However, instead of this method the method [`read_deserialize_recoverable`](Self::read_deserialize_recoverable)
+    /// can be used which supports recovering from some errors.
+    ///
     /// # Examples
     /// ```
     /// # use struson::reader::simple::*;
@@ -602,6 +607,108 @@ pub trait ValueReader<J: JsonReader> {
     fn read_deserialize<'de, D: serde_core::de::Deserialize<'de>>(
         self,
     ) -> Result<D, crate::serde::DeserializerError>;
+
+    /// Deserializes a Serde [`Deserialize`](serde_core::de::Deserialize) from the next value,
+    /// supporting recovery for some reader and deserialization errors
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this issue](https://github.com/Marcono1234/struson/issues/180).
+    ///
+    /// ----
+    ///
+    /// This method is similar to [`read_deserialize`](Self::read_deserialize), see its documentation
+    /// for details and for security considerations. The main difference is that this method here
+    /// supports 'recovering' from some errors. If recovery is possible this method will attempt to
+    /// skip any remaining data of the current value for which the error had occurred, so that the
+    /// reader can be used to read the next value afterwards.
+    ///
+    /// Recovery happens automatically; if no error occurred (and no recovery was necessary) or if
+    /// an error occurred and recovery was successful [`RecoverySuccess`] is returned. Otherwise,
+    /// if recovery was not possible or it failed [`UnrecoverableError`] is returned. Only for
+    /// `RecoverySuccess` the reader may continue to be used afterwards. For `UnrecoverableError`
+    /// reading must be aborted.
+    ///
+    /// **Tip:** If the intention is to skip deserializing values of a certain type, prefer
+    /// using [`peek_value`](Self::peek_value) combined with [`read_deserialize`](Self::read_deserialize)
+    /// instead. This avoids some overhead which this method has, and reduces the risk of
+    /// accidentally recovering from errors which should have caused reading to fail according
+    /// to application logic. See the examples below.
+    ///
+    /// **Important:**
+    /// - Whether recovery is possible and successful is only from the perspective of this
+    ///   JSON reader. If a `Deserialize` implementation might have side-effects, then it
+    ///   might not actually be safe to continue after recovery.\
+    ///   In general it is recommended to always inspect the [original `DeserializerError`](RecoverySuccess::Recovered::original_error),
+    ///   possibly also logging it for easier troubleshooting.
+    /// - This method should only be used if recovery is really needed. Overuse can lead to
+    ///   situations where errors which should have caused a failure according to application
+    ///   logic to be accidentally discarded and 'recovered' from instead.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::simple::*;
+    /// // JSON data with `[x, y]` points, containing a malformed `[3, null]` entry
+    /// let json = "[[1, 2], [3, null], [5, 6]]";
+    /// let json_reader = SimpleJsonReader::new(json.as_bytes());
+    ///
+    /// let mut points = Vec::<(u32, u32)>::new();
+    /// json_reader.read_array_items(|item_reader| {
+    ///     match item_reader.read_deserialize_recoverable::<(u32, u32)>()? {
+    ///         RecoverySuccess::WithoutError(value) => points.push(value),
+    ///         RecoverySuccess::Recovered { original_error } => {
+    ///             println!("Recovered from error: {original_error}")
+    ///         }
+    ///     }
+    ///     Ok(())
+    /// })?;
+    ///
+    /// assert_eq!(
+    ///     points,
+    ///     vec![(1, 2), (5, 6)]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// As mentioned above, if JSON values of certain types should be skipped, prefer
+    /// [`peek_value`](Self::peek_value) combined with [`read_deserialize`](Self::read_deserialize):
+    /// ```
+    /// # use struson::reader::simple::*;
+    /// # use struson::reader::*;
+    /// // JSON data with `[x, y]` points, where `null` entries should be skipped
+    /// let json = "[[1, 2], null, [3, 4]]";
+    /// let json_reader = SimpleJsonReader::new(json.as_bytes());
+    ///
+    /// let mut points = Vec::<(u32, u32)>::new();
+    /// json_reader.read_array_items(|mut item_reader| {
+    ///     // Skip JSON null
+    ///     if item_reader.peek_value()? == ValueType::Null {
+    ///         item_reader.skip_value()?;
+    ///         return Ok(());
+    ///     }
+    ///
+    ///     // Deserialize value using regular `read_deserialize`
+    ///     points.push(item_reader.read_deserialize()?);
+    ///     Ok(())
+    /// })?;
+    ///
+    /// assert_eq!(
+    ///     points,
+    ///     vec![(1, 2), (3, 4)]
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    /*
+     * Note: Maybe it would be better to not perform auto-recovery here and instead have a `ReaderRecovery`
+     * similar to the Advanced API. However, it seems this cannot work: This method consumes `self` but the
+     * recovery would have to keep a reference to the underlying reader.
+     */
+    #[cfg(feature = "serde")]
+    #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
+    fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        self,
+    ) -> Result<RecoverySuccess<D>, UnrecoverableError>;
 
     /// Skips the next JSON value
     ///
@@ -871,6 +978,69 @@ pub trait ValueReader<J: JsonReader> {
         at_least_one_match: bool,
         f: impl FnMut(SingleValueReader<'_, J>) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>>;
+}
+
+/// Returned by [`ValueReader::read_deserialize_recoverable`] if successful
+///
+/// Either no error has occurred (and no recovery happened), or recovery was successful.
+/// The reader is still functioning and can continue to be used.
+#[cfg(feature = "serde")]
+#[derive(Debug)]
+// Note: Name is a bit misleading; if value was deserialized successfully then no recovery happened;
+//   however including "recovery" or similar in name is still useful to indicate that it is related
+//   to `read_deserialize_recoverable`
+pub enum RecoverySuccess<T> {
+    /// Value was deserialized successfully, without any error
+    ///
+    /// No recovery was needed.
+    WithoutError(T),
+    /// An error occurred during deserialization, but the reader recovered
+    ///
+    /// Deserialization had failed and the remainder of the value has been successfully skipped.
+    /// The JSON reader is still functioning and can continue to be used.
+    ///
+    /// **Important:** Recovery only applies to the JSON reader; if the `Deserialize` may have had
+    /// any side-effects, the error should be inspected to determine if it is really safe to
+    /// continue.
+    Recovered {
+        /// Error which the reader recovered from
+        ///
+        /// It may be useful to process the error in some way (e.g. by logging it) to make
+        /// troubleshooting easier.
+        original_error: crate::serde::DeserializerError,
+    },
+}
+
+/// Returned by [`ValueReader::read_deserialize_recoverable`] if unsuccessful
+///
+/// Recovery was not possible or failed; reading must be aborted.
+#[cfg(feature = "serde")]
+#[derive(Debug, thiserror::Error)]
+pub struct UnrecoverableError {
+    /*
+     * Note: Don't mark either of the fields as thiserror `#[source]`
+     * The std::error::Error doc says if the Display impl includes the inner error (which
+     * is the case here, see below) it should not additionally be returned as source
+     * Additionally it might be ambiguous which of the two errors should be considered
+     * the source.
+     */
+    /// Original error which occurred during deserialization
+    pub original_error: crate::serde::DeserializerError,
+    /// Error which occurred during recovery
+    ///
+    /// `None` if recovery was not possible for [`original_error`](Self::original_error)
+    /// in the first place. `Some` if recovery was attempted but failed.
+    pub recovery_error: Option<ReaderError>,
+}
+#[cfg(feature = "serde")]
+impl std::fmt::Display for UnrecoverableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.original_error)?;
+        if let Some(recovery_error) = &self.recovery_error {
+            write!(f, "; and recovery failed: {recovery_error}")?;
+        }
+        Ok(())
+    }
 }
 
 fn read_array<J: JsonReader, T>(
@@ -1526,6 +1696,22 @@ mod error_safe_reader {
             )
         }
 
+        /*
+         * Note: Cannot and should not override `deserialize_next_recoverable` here by
+         * delegating to delegate:
+         * - Its result `ReaderRecovery<Delegate>` would be incompatible with `ReaderRecovery<Self>`
+         *   which is required here
+         * - The recovery would directly call the methods of the `delegate` instead of the
+         *   error tracking ones here, therefore not recording errors during recovery
+         *
+         * And overriding but delegating to default method impl is not possible, see https://github.com/rust-lang/rfcs/pull/3329
+         *
+         * This is mostly fine. When the 'recoverable reader' then itself checks for some
+         * errors (such as unexpected value type) it will prevent them from occurring here
+         * in the delegating methods. So they are indeed still recoverable.
+         * However, if recovery is not used, they most be stored and repeated manually.
+         */
+
         fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
             use_delegate!(self, |r| r.seek_to(rel_json_path))
         }
@@ -1545,6 +1731,57 @@ mod error_safe_reader {
                 },
                 |stored_error| TransferError::ReaderError(stored_error)
             )
+        }
+    }
+
+    impl<J: JsonReader> ErrorSafeJsonReader<J> {
+        /// Helper method which delegates to [`Self::deserialize_next_recoverable`] and handles
+        /// storing of errors and auto-recovery
+        #[cfg(feature = "serde")]
+        #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
+        pub(super) fn read_deserialize_recoverable<'de, D: serde_core::Deserialize<'de>>(
+            &mut self,
+        ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
+            // Note: Probably don't need an explicit check for a previous error (stored in `self.error`);
+            // if one is present, `deserialize_next_recoverable()` would trigger and repeat it itself
+            // and not consider it recoverable
+            match self.deserialize_next_recoverable() {
+                Ok(value) => Ok(RecoverySuccess::WithoutError(value)),
+                // unrecoverable
+                Err((err, None)) => {
+                    // Overwrite the error, even if there is one already, because DeserializerError is the one
+                    // which occurred last and might be more specific (in case of original ReaderError then
+                    // most likely DeserializerError is actually wrapping it)
+                    self.error = Some(convert_original_deserializer_error(&err));
+                    Err(UnrecoverableError {
+                        original_error: err,
+                        recovery_error: None,
+                    })
+                }
+                // recoverable
+                Err((err, Some(recovery))) => {
+                    match recovery.recover_reader() {
+                        Ok(()) => {
+                            // Do not store as `self.error`; recovery was successful so reader should still be
+                            // useable and not repeat recovered error
+                            Ok(RecoverySuccess::Recovered {
+                                original_error: err,
+                            })
+                        }
+                        Err(recovery_err) => {
+                            // Store error, overwriting any existing one if necessary because this error is
+                            // more recent
+                            // (most likely this is redundant because recovery delegates to other reader methods
+                            // and they would have stored the recovery error themselves)
+                            self.error = Some(convert_original_reader_error(&recovery_err));
+                            Err(UnrecoverableError {
+                                original_error: err,
+                                recovery_error: Some(recovery_err),
+                            })
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1915,6 +2152,18 @@ impl<J: JsonReader> ValueReader<J> for SimpleJsonReader<J> {
         Ok(result)
     }
 
+    #[cfg(feature = "serde")]
+    fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        mut self,
+    ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
+        let result = self.json_reader.read_deserialize_recoverable()?;
+        self.finish().map_err(|err| UnrecoverableError {
+            original_error: crate::serde::DeserializerError::ReaderError(err),
+            recovery_error: None,
+        })?;
+        Ok(result)
+    }
+
     fn skip_value(mut self) -> Result<(), ReaderError> {
         self.json_reader.skip_value()?;
         self.finish()
@@ -2048,6 +2297,13 @@ impl<J: JsonReader> ValueReader<J> for &mut ArrayReader<'_, J> {
         self.json_reader.deserialize_next()
     }
 
+    #[cfg(feature = "serde")]
+    fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        self,
+    ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
+        self.json_reader.read_deserialize_recoverable()
+    }
+
     fn skip_value(self) -> Result<(), ReaderError> {
         self.json_reader.skip_value()
     }
@@ -2154,6 +2410,14 @@ impl<J: JsonReader> ValueReader<J> for SingleValueReader<'_, J> {
     ) -> Result<D, crate::serde::DeserializerError> {
         *self.consumed_value = true;
         self.json_reader.deserialize_next()
+    }
+
+    #[cfg(feature = "serde")]
+    fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        self,
+    ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
+        *self.consumed_value = true;
+        self.json_reader.read_deserialize_recoverable()
     }
 
     fn skip_value(self) -> Result<(), ReaderError> {
@@ -2321,6 +2585,23 @@ impl<J: JsonReader> ValueReader<J> for MemberReader<'_, J> {
         self.json_reader.deserialize_next()
     }
 
+    #[cfg(feature = "serde")]
+    fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
+        mut self,
+    ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
+        self.check_skip_name().map_err(|err| {
+            // If skipping name fails, then cannot recover; this MemberReader is only used if it
+            // is known that there is a next member (and therefore member name), so the only
+            // possible error kinds are unrecoverable ones such as syntax errors
+            UnrecoverableError {
+                original_error: crate::serde::DeserializerError::ReaderError(err),
+                recovery_error: None,
+            }
+        })?;
+        *self.consumed_value = true;
+        self.json_reader.read_deserialize_recoverable()
+    }
+
     fn skip_value(mut self) -> Result<(), ReaderError> {
         self.check_skip_name()?;
         *self.consumed_value = true;
@@ -2401,5 +2682,39 @@ pub struct StringValueReader<'a> {
 impl Read for StringValueReader<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.delegate.read(buf)
+    }
+}
+
+// Just covers simple tests here; functionality tests are in the test `simple_reader.rs`
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(feature = "serde")]
+    fn unrecoverable_error_display() {
+        use super::*; // move this import to enclosing `mod tests { ... }` once there are other tests
+        use crate::reader::ReaderErrorKind;
+        use crate::serde::DeserializerError;
+
+        let error = UnrecoverableError {
+            original_error: DeserializerError::Custom {
+                message: "custom error".to_owned(),
+            },
+            recovery_error: None,
+        };
+        assert_eq!(error.to_string(), "custom error");
+
+        let error = UnrecoverableError {
+            original_error: DeserializerError::Custom {
+                message: "custom error".to_owned(),
+            },
+            recovery_error: Some(ReaderError {
+                kind: ReaderErrorKind::InvalidUtf8Data,
+                location: JsonReaderPosition::unknown_position(),
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            "custom error; and recovery failed: invalid UTF-8 data at <location unavailable>"
+        );
     }
 }

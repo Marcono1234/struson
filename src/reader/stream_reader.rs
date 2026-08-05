@@ -874,6 +874,8 @@ impl<R: Read> JsonStreamReader<R> {
             if check_depth {
                 // Check nesting depth before consuming token, so that error location points
                 // at token instead of behind it
+                // This happens before caller adjusted `self.stack`; therefore it checks
+                // for `>=` instead of `>`
                 if let Some(max_nesting_depth) = self.reader_settings.max_nesting_depth
                     && self.stack.len() as u32 >= max_nesting_depth
                 {
@@ -5859,116 +5861,556 @@ mod tests {
     mod serde {
         use super::*;
         use crate::serde::DeserializerError;
-        use ::serde::Deserialize;
+        use ::serde::{Deserialize, Deserializer};
         use std::{collections::HashMap, vec};
 
-        #[test]
-        fn deserialize_next() -> TestResult {
-            let mut json_reader = new_reader(r#"{"a": 5, "b":{"key": "value"}, "c": [1, 2]}"#);
+        mod deserialize_next {
+            use super::*;
 
-            #[derive(Deserialize, PartialEq, Debug)]
-            struct CustomStruct {
-                a: u64,
-                b: HashMap<String, String>,
-                c: Vec<i32>,
+            #[test]
+            fn successful() -> TestResult {
+                let mut json_reader = new_reader(r#"{"a": 5, "b": {"key": "value"}, "c": [1, 2]}"#);
+
+                #[derive(Deserialize, PartialEq, Debug)]
+                struct CustomStruct {
+                    a: u64,
+                    b: HashMap<String, String>,
+                    c: Vec<i32>,
+                }
+                let value = json_reader.deserialize_next()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                assert_eq!(
+                    CustomStruct {
+                        a: 5,
+                        b: HashMap::from([("key".to_owned(), "value".to_owned())]),
+                        c: vec![1, 2]
+                    },
+                    value
+                );
+                Ok(())
             }
-            let value = json_reader.deserialize_next()?;
-            json_reader.consume_trailing_whitespace()?;
 
-            assert_eq!(
-                CustomStruct {
-                    a: 5,
-                    b: HashMap::from([("key".to_owned(), "value".to_owned())]),
-                    c: vec![1, 2]
-                },
-                value
-            );
+            #[test]
+            fn unexpected_value_type() {
+                let mut json_reader = new_reader("true");
+                match json_reader.deserialize_next::<u64>() {
+                    Err(DeserializerError::ReaderError(ReaderError {
+                        kind:
+                            ReaderErrorKind::UnexpectedValueType {
+                                expected: ValueType::Number,
+                                actual: ValueType::Boolean,
+                            },
+                        location,
+                    })) => {
+                        assert_eq!(
+                            JsonReaderPosition {
+                                path: Some(Vec::new()),
+                                line_pos: Some(LinePosition { line: 0, column: 0 }),
+                                data_pos: Some(0),
+                            },
+                            location
+                        );
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+            }
 
-            Ok(())
+            #[test]
+            #[should_panic(
+                expected = "Incorrect reader usage: Cannot peek value when expecting member name"
+            )]
+            fn no_value_expected() {
+                let mut json_reader = new_reader(r#"{"a": 1}"#);
+                json_reader.begin_object().unwrap();
+
+                let _ = json_reader.deserialize_next::<String>();
+            }
+
+            /// Tests handling of a bad `Deserialize` which returns `Ok` without consuming any data
+            #[test]
+            #[should_panic(expected = "Deserialize did not consume any data")]
+            #[ignore = "this case is quite unlikely; adding detection for it is probably not worth it"]
+            fn not_consuming_value() {
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        _deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        // Do not consume anything, and return Ok
+                        Ok(BadDeserialize)
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[1]"#);
+                json_reader.begin_array().unwrap();
+
+                let _ = json_reader.deserialize_next::<BadDeserialize>();
+            }
+
+            /// Similar to [`not_consuming_value`] where nothing is consumed, but unlike that test
+            /// here it returns `Err`, which should be allowed
+            #[test]
+            fn error_not_consuming_value() -> TestResult {
+                #[derive(Debug)]
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        _deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        // Do not consume anything
+                        Err(serde_core::de::Error::custom("custom error"))
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[1]"#);
+                json_reader.begin_array()?;
+
+                match json_reader.deserialize_next::<BadDeserialize>() {
+                    Err(DeserializerError::Custom { message }) => {
+                        assert_eq!("custom error", message)
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+                Ok(())
+            }
         }
 
-        #[test]
-        fn deserialize_next_invalid() {
-            let mut json_reader = new_reader("true");
-            match json_reader.deserialize_next::<u64>() {
-                Err(DeserializerError::ReaderError(ReaderError {
-                    kind:
-                        ReaderErrorKind::UnexpectedValueType {
-                            expected: ValueType::Number,
-                            actual: ValueType::Boolean,
+        mod deserialize_next_recoverable {
+            use super::*;
+            use ::serde::de::{MapAccess, Visitor};
+
+            #[test]
+            fn no_recovery_needed() -> TestResult {
+                let mut json_reader = new_reader(r#"{"a": 5, "b": {"key": "value"}, "c": [1, 2]}"#);
+
+                #[derive(Deserialize, PartialEq, Debug)]
+                struct CustomStruct {
+                    a: u64,
+                    b: HashMap<String, String>,
+                    c: Vec<i32>,
+                }
+                let value = json_reader.deserialize_next_recoverable().unwrap();
+                json_reader.consume_trailing_whitespace()?;
+
+                assert_eq!(
+                    CustomStruct {
+                        a: 5,
+                        b: HashMap::from([("key".to_owned(), "value".to_owned())]),
+                        c: vec![1, 2]
+                    },
+                    value
+                );
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_unexpected_value_type() -> TestResult {
+                // Direct unexpected value
+                let mut json_reader = new_reader(r#"[true, 1]"#);
+                json_reader.begin_array()?;
+
+                match json_reader.deserialize_next_recoverable::<u32>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Boolean at path '$[0]', line 0, column 1 (data pos 1)",
+                            reader_error.to_string()
+                        );
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("1", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                // Nested unexpected value
+                let mut json_reader = new_reader(r#"[{"a": [true, 2], "b": []}, 1]"#);
+                json_reader.begin_array()?;
+
+                match json_reader.deserialize_next_recoverable::<HashMap<String, Vec<u32>>>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            reader_error.to_string()
+                        );
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("1", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_unexpected_structure_object() -> TestResult {
+                #[derive(Deserialize, Debug)]
+                #[expect(dead_code, reason = "fields are not used")]
+                enum CustomEnum {
+                    A(u32),
+                    B(bool),
+                }
+
+                // Missing enum variant name
+                let mut json_reader = new_reader("[{}, 2]");
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<CustomEnum>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
+                        assert_eq!(
+                            "unexpected JSON structure FewerElementsThanExpected at path '$[0].<?>', line 0, column 2 (data pos 2)",
+                            reader_error.to_string()
+                        );
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                // Unexpected additional enum variant name
+                let mut json_reader = new_reader(r#"[{"A": 1, "X": 0}, 2]"#);
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<CustomEnum>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
+                        assert_eq!(
+                            "unexpected JSON structure MoreElementsThanExpected at path '$[0].A', line 0, column 10 (data pos 10)",
+                            reader_error.to_string()
+                        );
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_deserialize_error() -> TestResult {
+                #[derive(Debug)]
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        _deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        // Returns error without consuming anything
+                        Err(serde_core::de::Error::custom("custom error"))
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[true, 2]"#);
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<BadDeserialize>() {
+                    Err((DeserializerError::Custom { message }, Some(recovery))) => {
+                        assert_eq!("custom error", message);
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_deserialize_error_after_full_consumption() -> TestResult {
+                #[derive(Debug)]
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        let value = bool::deserialize(deserializer)?;
+                        assert_eq!(true, value);
+                        // Returns error after value was successfully consumed
+                        Err(serde_core::de::Error::custom("custom error"))
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[true, 2]"#);
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<BadDeserialize>() {
+                    Err((DeserializerError::Custom { message }, Some(recovery))) => {
+                        assert_eq!("custom error", message);
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_deserialize_error_member_name() -> TestResult {
+                #[derive(Debug)]
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        struct MapVisitor;
+                        impl<'de> Visitor<'de> for MapVisitor {
+                            type Value = BadDeserialize;
+
+                            fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+                                write!(formatter, "a map")
+                            }
+
+                            fn visit_map<A: MapAccess<'de>>(
+                                self,
+                                _map: A,
+                            ) -> Result<Self::Value, A::Error> {
+                                // Returns error before reading member name
+                                Err(serde_core::de::Error::custom("custom error"))
+                            }
+                        }
+
+                        deserializer.deserialize_map(MapVisitor)
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[{"a": 1}, 2]"#);
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<BadDeserialize>() {
+                    Err((DeserializerError::Custom { message }, Some(recovery))) => {
+                        assert_eq!("custom error", message);
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+                Ok(())
+            }
+
+            #[test]
+            fn recovered_deserialize_error_member_value() -> TestResult {
+                #[derive(Debug)]
+                struct BadDeserialize;
+                impl<'de> Deserialize<'de> for BadDeserialize {
+                    fn deserialize<D: Deserializer<'de>>(
+                        deserializer: D,
+                    ) -> Result<Self, D::Error> {
+                        struct MapVisitor;
+                        impl<'de> Visitor<'de> for MapVisitor {
+                            type Value = BadDeserialize;
+
+                            fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+                                write!(formatter, "a map")
+                            }
+
+                            fn visit_map<A: MapAccess<'de>>(
+                                self,
+                                mut map: A,
+                            ) -> Result<Self::Value, A::Error> {
+                                assert_eq!(Some("a".to_owned()), map.next_key::<String>()?);
+                                // Returns error after member name, but before member value
+                                Err(serde_core::de::Error::custom("custom error"))
+                            }
+                        }
+
+                        deserializer.deserialize_map(MapVisitor)
+                    }
+                }
+
+                let mut json_reader = new_reader(r#"[{"a": 1, "b": 0}, 2]"#);
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<BadDeserialize>() {
+                    Err((DeserializerError::Custom { message }, Some(recovery))) => {
+                        assert_eq!("custom error", message);
+
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("2", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+                Ok(())
+            }
+
+            /// Verify that recovery from `DeserializerError::MaxNestingDepthExceeded` is possible
+            ///
+            /// This is most likely safe; recovery is implemented in a non-recursive way and if the underlying
+            /// JSON reader uses recursion for skipping values, then it itself might return a `ReaderErrorKind::MaxNestingDepthExceeded`
+            /// during recovery if necessary.
+            #[test]
+            fn recovered_deserializer_nesting_depth_error() -> TestResult {
+                #[derive(Deserialize, Debug)]
+                #[expect(dead_code, reason = "field is not used")]
+                struct CustomStruct(Vec<CustomStruct>);
+
+                let nesting_depth = 20_000;
+                let json = "[".repeat(nesting_depth) + "]".repeat(nesting_depth).as_str();
+                let json = format!("[{json}, 1]");
+                let mut json_reader = new_reader_with_limit(&json, None);
+
+                json_reader.begin_array()?;
+                match json_reader.deserialize_next_recoverable::<CustomStruct>() {
+                    Err((
+                        DeserializerError::MaxNestingDepthExceeded {
+                            max_nesting_depth: 128,
                         },
-                    location,
-                })) => {
-                    assert_eq!(
-                        JsonReaderPosition {
-                            path: Some(Vec::new()),
-                            line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: Some(0),
-                        },
-                        location
-                    );
+                        Some(recovery),
+                    )) => {
+                        recovery.recover_reader()?;
+                    }
+                    r => panic!("unexpected result: {r:?}"),
                 }
-                r => panic!("unexpected result: {r:?}"),
-            }
-        }
 
-        #[test]
-        #[should_panic(
-            expected = "Incorrect reader usage: Cannot peek value when expecting member name"
-        )]
-        fn deserialize_next_no_value_expected() {
-            let mut json_reader = new_reader(r#"{"a": 1}"#);
-            json_reader.begin_object().unwrap();
-
-            let _ = json_reader.deserialize_next::<String>();
-        }
-
-        /// Tests handling of a bad `Deserialize` which returns `Ok` without consuming any data
-        #[test]
-        #[should_panic(expected = "Deserialize did not consume any data")]
-        #[ignore = "this case is quite unlikely; adding detection for it is probably not worth it"]
-        fn deserialize_next_not_consuming_value() {
-            struct BadDeserialize;
-            impl<'de> Deserialize<'de> for BadDeserialize {
-                fn deserialize<D: ::serde::Deserializer<'de>>(
-                    _deserializer: D,
-                ) -> Result<Self, D::Error> {
-                    // Do not consume anything, and return Ok
-                    Ok(BadDeserialize)
-                }
+                // Can continue reading
+                assert!(json_reader.has_next()?);
+                assert_eq!("1", json_reader.next_number_as_str()?);
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
+                Ok(())
             }
 
-            let mut json_reader = new_reader(r#"[1]"#);
-            json_reader.begin_array().unwrap();
+            #[test]
+            fn unrecoverable() -> TestResult {
+                let mut json_reader = new_reader("[[a, 1]]");
+                json_reader.begin_array()?;
 
-            let _ = json_reader.deserialize_next::<BadDeserialize>();
-        }
-
-        /// Similar to [`deserialize_next_not_consuming_value`] where nothing is consumed, but unlike that
-        /// test returns `Err`, which should be allowed
-        #[test]
-        fn deserialize_next_error_not_consuming_value() -> TestResult {
-            #[derive(Debug)]
-            struct BadDeserialize;
-            impl<'de> Deserialize<'de> for BadDeserialize {
-                fn deserialize<D: ::serde::Deserializer<'de>>(
-                    _deserializer: D,
-                ) -> Result<Self, D::Error> {
-                    // Do not consume anything
-                    Err(::serde::de::Error::custom("custom error"))
+                match json_reader.deserialize_next_recoverable::<Vec<u32>>() {
+                    Err((DeserializerError::ReaderError(reader_error), None)) => {
+                        assert_eq!(
+                            "JSON syntax error MalformedJson at path '$[0][0]', line 0, column 2 (data pos 2)",
+                            reader_error.to_string()
+                        );
+                    }
+                    r => panic!("unexpected result: {r:?}"),
                 }
+                Ok(())
             }
 
-            let mut json_reader = new_reader(r#"[1]"#);
-            json_reader.begin_array()?;
+            /// Verify that cannot recover if inside an array, and there is no next value
+            ///
+            /// In that case the user should have called `has_next` before trying to deserialize value.
+            /// Also there cannot even be a reasonable way to recover:
+            /// - doing nothing might lead to an infinite loop because the user might keep calling
+            ///   `deserialize_next_recoverable`
+            /// - ending the enclosing array would cause a mismatch for `begin_array` / `end_array` calls
+            #[test]
+            fn unrecoverable_no_has_next() -> TestResult {
+                let mut json_reader = new_reader("[]");
+                json_reader.begin_array()?;
 
-            match json_reader.deserialize_next::<BadDeserialize>() {
-                Err(DeserializerError::Custom { message }) => {
-                    assert_eq!("custom error", message)
+                match json_reader.deserialize_next_recoverable::<u32>() {
+                    Err((DeserializerError::ReaderError(reader_error), None)) => {
+                        assert_eq!(
+                            "unexpected JSON structure FewerElementsThanExpected at path '$[0]', line 0, column 1 (data pos 1)",
+                            reader_error.to_string()
+                        );
+                    }
+                    r => panic!("unexpected result: {r:?}"),
                 }
-                r => panic!("unexpected result: {r:?}"),
+                Ok(())
             }
-            Ok(())
+
+            #[test]
+            fn recovery_failed() -> TestResult {
+                let mut json_reader = new_reader("[[null, a]]");
+                json_reader.begin_array()?;
+
+                match json_reader.deserialize_next_recoverable::<Vec<u32>>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Null at path '$[0][0]', line 0, column 2 (data pos 2)",
+                            reader_error.to_string()
+                        );
+
+                        let recovery_result = recovery.recover_reader();
+                        assert_eq!(
+                            "JSON syntax error MalformedJson at path '$[0][1]', line 0, column 8 (data pos 8)",
+                            recovery_result.unwrap_err().to_string()
+                        );
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+                Ok(())
+            }
+
+            /// Tests behavior when `ReaderRecovery::recover_reader` is not called
+            ///
+            /// **Important:** This should not be done by users; the JSON reader must not be used any
+            /// further if recovery was not performed because there is no guarantee where the position
+            /// of the JSON reader in the document is.\
+            /// This test here mainly verifies that no auto-recovery or similar happens.
+            #[test]
+            fn recover_not_called() -> TestResult {
+                let mut json_reader = new_reader("[true, 1]");
+                json_reader.begin_array()?;
+
+                match json_reader.deserialize_next_recoverable::<u32>() {
+                    Err((DeserializerError::ReaderError(reader_error), Some(_recovery))) => {
+                        assert_eq!(
+                            "expected JSON value type Number but got Boolean at path '$[0]', line 0, column 1 (data pos 1)",
+                            reader_error.to_string()
+                        );
+
+                        // Does not perform recovery
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                // Bad: Using JSON reader without having performed recovery
+                // Verify that no auto-recovery occurred
+                assert_eq!(ValueType::Boolean, json_reader.peek()?);
+
+                Ok(())
+            }
+
+            #[test]
+            #[should_panic(
+                expected = "Incorrect reader usage: Cannot peek value when expecting member name"
+            )]
+            fn no_value_expected() {
+                let mut json_reader = new_reader(r#"{"a": 1}"#);
+                json_reader.begin_object().unwrap();
+
+                let _ = json_reader.deserialize_next_recoverable::<String>();
+            }
         }
     }
 }
