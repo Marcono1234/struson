@@ -85,6 +85,18 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
 
     let json_reader = new_reader("\"test\"");
     let value = json_reader.read_string_with_reader(|mut reader| {
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf)?;
+
+        // Nothing to skip
+        assert_eq!(0, reader.skip_remainder()?);
+
+        Ok(buf)
+    })?;
+    assert_eq!("test", value);
+
+    let json_reader = new_reader("\"test \u{1F600}\"");
+    let value = json_reader.read_string_with_reader(|mut reader| {
         let mut value = Vec::new();
 
         let mut buf = [0_u8; 1];
@@ -93,7 +105,7 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
         }
         Ok(value)
     })?;
-    assert_eq!(b"test" as &[u8], value);
+    assert_eq!("test \u{1F600}".as_bytes(), value);
 
     let json_reader = new_reader("\"\u{1F600}\"");
     let value = json_reader.read_string_with_reader(|mut reader| {
@@ -104,22 +116,43 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
         assert_eq!(1, read_count);
         value.push(buf[0]);
 
-        // Implicitly skip remainder of multi-byte UTF-8 char
+        // Skip remainder of multi-byte UTF-8 char
+        let skipped = reader.skip_remainder()?;
+        assert_eq!(3, skipped);
 
         Ok(value)
     })?;
     assert_eq!(b"\xF0" as &[u8], value);
 
-    let json_reader = new_reader("[\"some string\", 12]");
+    let json_reader = new_reader("[\"some string\", 2]");
     let value = json_reader.read_array(|array_reader| {
-        array_reader.read_string_with_reader(|_| {
-            // Implicitly skip complete string
+        array_reader.read_string_with_reader(|reader| {
+            // Skip complete string
+            let skipped = reader.skip_remainder()?;
+            assert_eq!(11, skipped);
+
             Ok(())
         })?;
 
         Ok(array_reader.read_number_as_string()?)
     })?;
-    assert_eq!("12", value);
+    assert_eq!("2", value);
+
+    // Skipping large string
+    let json = format!("[\"{}\", 1]", "test ".repeat(200));
+    let json_reader = new_reader(&json);
+    let value = json_reader.read_array(|array_reader| {
+        array_reader.read_string_with_reader(|reader| {
+            // Skip complete string
+            let skipped = reader.skip_remainder()?;
+            assert_eq!(1000, skipped);
+
+            Ok(())
+        })?;
+
+        Ok(array_reader.read_number_as_string()?)
+    })?;
+    assert_eq!("1", value);
 
     let json_reader = new_reader("[\"some string\", 12]");
     let value = json_reader.read_array(|array_reader| {
@@ -131,7 +164,8 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
             assert_eq!(1, read_count);
             value.push(buf[0]);
 
-            // Implicitly skip remainder
+            let skipped = reader.skip_remainder()?;
+            assert_eq!(10, skipped);
 
             Ok(value)
         })?;
@@ -150,6 +184,8 @@ fn read_string_with_reader() -> Result<(), Box<dyn Error>> {
         "expected JSON value type String but got Number at path '$', line 0, column 0 (data pos 0)",
         result.unwrap_err().to_string()
     );
+
+    /* String reading errors are covered by `discarded_error_handling` test below */
 
     Ok(())
 }
@@ -2158,6 +2194,33 @@ fn discarded_error_handling() {
         result.unwrap_err().to_string()
     );
 
+    // Reader not consuming string value
+    let json_reader = new_reader("[\"test\"]");
+    let mut was_called = false;
+    let result = json_reader.read_array(|array_reader| {
+        let result = array_reader.read_string_with_reader(|_| {
+            // Does not read value
+
+            was_called = true;
+            Ok(())
+        });
+
+        assert_eq!(
+            "IO error 'string value was not completely consumed' at (roughly) path '$[0]', line 0, column 3 (data pos 3)",
+            result.unwrap_err().to_string()
+        );
+        Ok(())
+    });
+    assert!(was_called);
+    assert_eq!(
+        format!(
+            "IO error 'previous error '{}': string value was not completely consumed' at (roughly) path '$[0]', line 0, column 3 (data pos 3)",
+            ErrorKind::Other
+        ),
+        result.unwrap_err().to_string()
+    );
+
+    // Incomplete string value
     let json_reader = new_reader("\"test");
     let mut was_called = false;
     let result = json_reader.read_string_with_reader(|mut reader| {
@@ -2268,13 +2331,42 @@ fn discarded_error_handling() {
     }).unwrap_err();
     assert!(was_called);
 
-    let json_reader = new_reader("[\"a\\, true]");
+    let json_reader = new_reader("[\"\\, true]");
     let mut was_called = false;
-    let result = json_reader.read_array(|array_reader| {
+    json_reader.read_array(|array_reader| {
         array_reader
             .read_string_with_reader(|_| {
                 was_called = true;
-                // Does not read from string; remainder should be implicitly skipped and trigger the error
+                // Does not read from string; error should occur when `read_string_with_reader`
+                // checks for trailing data
+                Ok(())
+            })
+            .unwrap_err();
+
+        // Error should have been stored for enclosing JSON reader
+        let result = array_reader.has_next();
+        assert_eq!(
+            "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 2 (data pos 2)",
+            result.unwrap_err().to_string()
+        );
+
+        Ok(())
+    }).unwrap_err();
+    assert!(was_called);
+
+    let json_reader = new_reader("[\"a\\, true]");
+    let mut was_called = false;
+    json_reader.read_array(|array_reader| {
+        array_reader
+            .read_string_with_reader(|reader| {
+                let result = reader.skip_remainder();
+                assert_eq!(
+                    "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
+                    result.unwrap_err().to_string()
+                );
+
+                was_called = true;
+                // Don't propagate error
                 Ok(())
             })
             .unwrap_err();
@@ -2287,12 +2379,8 @@ fn discarded_error_handling() {
         );
 
         Ok(())
-    });
+    }).unwrap_err();
     assert!(was_called);
-    assert_eq!(
-        "JSON syntax error UnknownEscapeSequence at path '$[0]', line 0, column 3 (data pos 3)",
-        result.unwrap_err().to_string()
-    );
 
     // Verify that when `seek_to` itself reports error (instead of the delegate methods), the error
     // is properly repeated as well

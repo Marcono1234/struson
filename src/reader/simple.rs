@@ -14,17 +14,15 @@
 use std::{error::Error, io::Read, str::FromStr};
 
 use self::{
-    error_safe_reader::ErrorSafeJsonReader,
+    error_safe_reader::{ErrorSafeJsonReader, convert_original_reader_error, create_dummy_error},
     multi_json_path::{MultiJsonPath, MultiJsonPathPiece},
 };
 use crate::{
     reader::{
-        JsonReader, JsonReaderPosition, JsonStreamReader, ReaderError, SyntaxErrorKind,
-        TransferError, ValueType,
+        JsonReader, JsonReaderPosition, JsonStreamReader, ReaderError, ReaderErrorKind,
+        SyntaxErrorKind, TransferError, ValueType,
         json_path::{JsonPath, JsonPathPiece},
-        simple::error_safe_reader::create_dummy_error,
     },
-    utf8,
     writer::JsonWriter,
 };
 
@@ -496,9 +494,12 @@ pub trait ValueReader<J: JsonReader> {
     /// Consumes a JSON string using a [`Read`]
     ///
     /// The function `f` is called with a reader as argument which allows reading the JSON string
-    /// value. Escape sequences will be automatically converted to the corresponding characters. If
-    /// the function returns `Ok` but did not consume all bytes of the string value, the remaining
-    /// bytes will be skipped automatically.
+    /// value. Escape sequences will be automatically converted to the corresponding characters.
+    ///
+    /// If the function returns `Ok` it must have consumed all bytes of the string value, that means
+    /// `read` has to be called with a non-empty buffer until it returns `Ok(0)`. To skip remaining
+    /// data, the convenience method [`StringValueReader::skip_remainder`] can be used.\
+    /// If the function `f` returns `Err`, reading is aborted and the error is propagated.
     ///
     /// This method is mainly intended for reading large JSON string values in a streaming way;
     /// for short string values prefer [`read_str`](Self::read_str) or [`read_string`](Self::read_string).
@@ -731,7 +732,8 @@ pub trait ValueReader<J: JsonReader> {
     /// If the function `f` returns `Ok` it must have consumed all array items, either by
     /// reading them or by calling [`ArrayReader::skip_value`](ValueReader::skip_value) until
     /// there are no more items (can be checked using [`ArrayReader::has_next`]). Otherwise
-    /// an error is returned.
+    /// an error is returned.\
+    /// If the function returns `Err`, reading is aborted and the error is propagated.
     ///
     /// # Examples
     /// ```
@@ -881,7 +883,8 @@ pub trait ValueReader<J: JsonReader> {
     /// If the function `f` returns `Ok` but did not consume the value, it will be skipped
     /// automatically. After the function has been called this method traverses back to
     /// the original nesting level, therefore acting as if it only consumed one value
-    /// (and its nested values) at that level.
+    /// (and its nested values) at that level.\
+    /// If the function returns `Err`, reading is aborted and the error is propagated.
     ///
     /// For seeking to and reading multiple values use [`read_seeked_multi`](Self::read_seeked_multi).
     ///
@@ -1117,19 +1120,36 @@ fn read_string_with_reader<J: JsonReader, T>(
         return Err(error.0.rough_clone().into());
     }
 
-    // Skip remaining bytes, if any
-    // First check with small buffer if there are any bytes to skip
-    // TODO: Should this retry on `ErrorKind::Interrupted`?
-    if delegate.read(&mut [0_u8; utf8::MAX_BYTES_PER_CHAR])? > 0 {
-        // Then use larger buffer for skipping
-        let mut buf = [0_u8; 512];
-
-        while delegate.read(&mut buf)? > 0 {
-            // Do nothing
-        }
+    fn has_trailing_data(mut reader: impl Read) -> std::io::Result<bool> {
+        // Try reading 1 byte
+        // Note: Don't check for ErrorKind::Interrupted; delegate reader would not allow
+        // retrying anyway
+        let read_count = reader.read(&mut [0_u8; 1])?;
+        Ok(read_count > 0)
     }
 
-    Ok(result)
+    // Fail in case of trailing data
+    // This is consistent with other methods here where if the value was started it must be fully
+    // consumed (e.g. `read_array`). Skipping the trailing data would be error-prone because it
+    // might hide bugs in user code for handling malformed / unexpected application data.
+    // (The only automatic skipping in the other methods happens for cases where the user does
+    // not inspect a value or member name at all.)
+    if has_trailing_data(delegate)? {
+        let error = ReaderError {
+            kind: ReaderErrorKind::IoError(std::io::Error::other(
+                "string value was not completely consumed",
+            )),
+            // Not completely accurate because `has_trailing_data` advanced reader; but IO error
+            // locations are generally only an estimation
+            location: json_reader.current_position(true),
+        };
+
+        json_reader.error = Some(convert_original_reader_error(&error));
+
+        Err(error.into())
+    } else {
+        Ok(result)
+    }
 }
 
 /// Reads a value with `f`, implicitly skipping the value if `f` did not consume it
@@ -1451,7 +1471,7 @@ mod error_safe_reader {
     #[derive(Debug)]
     pub(super) struct StoredError(pub(super) ReaderError);
 
-    pub(super) fn clone_original_io_error(error: &IoError) -> IoError {
+    fn clone_original_io_error(error: &IoError) -> IoError {
         // Report as `Other` kind (and with custom message) to avoid caller indefinitely retrying
         // because it considers the original error kind as safe to retry
         #[expect(
@@ -1482,7 +1502,7 @@ mod error_safe_reader {
         create_dummy_error(&JsonReaderPosition::unknown_position())
     }
 
-    fn convert_original_reader_error(error: &ReaderError) -> StoredError {
+    pub(super) fn convert_original_reader_error(error: &ReaderError) -> StoredError {
         StoredError(match &error.kind {
             // Note: List all error types instead of using a 'catch-all' to explicitly decide for each the
             // correct handling, especially when future error types are being added
@@ -2678,6 +2698,22 @@ pub struct StringValueReader<'a> {
     //   easily possible when `JsonReader::next_string_reader()` does not use associated type
     //   and `FnOnce` cannot use `impl Trait` for arguments
     delegate: &'a mut dyn Read,
+}
+impl StringValueReader<'_> {
+    /// Skips the remainder of the string value, returning the number of skipped bytes
+    pub fn skip_remainder(mut self) -> std::io::Result<usize> {
+        let mut skipped_count = 0;
+        let mut buf = [0_u8; 512];
+        loop {
+            // Note: Don't check for ErrorKind::Interrupted; delegate reader would not allow
+            // retrying anyway
+            let n = self.read(&mut buf)?;
+            if n == 0 {
+                return Ok(skipped_count);
+            }
+            skipped_count += n;
+        }
+    }
 }
 impl Read for StringValueReader<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {

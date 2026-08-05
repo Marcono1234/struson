@@ -796,6 +796,8 @@ impl<J: JsonWriter> ObjectWriter<'_, J> {
     }
 
     /// Writes a member with a JSON string as value, using a [`Write`]
+    ///
+    /// See [`ValueWriter::write_string_with_writer`] for details.
     pub fn write_string_member_with_writer(
         &mut self,
         name: &str,
