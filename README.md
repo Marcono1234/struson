@@ -226,6 +226,8 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
   > A queryable, streaming, JSON pull-parser with low allocation overhead.
 - <https://github.com/michel-kraemer/actson-rs>
   > Actson is a low-level JSON parser for reactive applications and non-blocking I/O.
+- <https://github.com/core-json/core-json>
+  > A non-allocating no-`std` JSON deserializer in Rust
 - [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
