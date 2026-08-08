@@ -14,7 +14,7 @@ use crate::{
     utf8,
 };
 
-#[derive(PartialEq, Clone, Copy, strum::Display, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 enum PeekedValue {
     ObjectStart,
     ObjectEnd,
@@ -29,7 +29,26 @@ enum PeekedValue {
     BooleanTrue,
     BooleanFalse,
 }
-
+impl core::fmt::Display for PeekedValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::ObjectStart => "ObjectStart",
+                Self::ObjectEnd => "ObjectEnd",
+                Self::ArrayStart => "ArrayStart",
+                Self::ArrayEnd => "ArrayEnd",
+                Self::StringStart => "StringStart",
+                Self::NameStart => "NameStart",
+                Self::NumberStart => "NumberStart",
+                Self::Null => "Null",
+                Self::BooleanTrue => "BooleanTrue",
+                Self::BooleanFalse => "BooleanFalse",
+            }
+        )
+    }
+}
 #[derive(Error, Debug)]
 // Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
 #[error("IO error '{0}' at (roughly) {1}")]
