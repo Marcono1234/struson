@@ -249,7 +249,8 @@ pub enum ValueType {
 
     // No ArrayEnd and ObjectEnd, should use has_next()
 }
-impl core::fmt::Display for ValueType {
+
+impl Display for ValueType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -265,6 +266,7 @@ impl core::fmt::Display for ValueType {
         )
     }
 }
+
 /// Sealed trait for integer number types such as `u32`
 ///
 /// Implementing this trait for custom number types is not possible. Use the
@@ -506,7 +508,7 @@ pub enum SyntaxErrorKind {
     /// This error kind is used by [`JsonReader::consume_trailing_whitespace`].
     TrailingData,
 }
-impl core::fmt::Display for SyntaxErrorKind {
+impl Display for SyntaxErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -523,7 +525,7 @@ impl core::fmt::Display for SyntaxErrorKind {
                 Self::UnexpectedColon => "UnexpectedColon",
                 Self::MissingColon => "MissingColon",
                 Self::MalformedNumber => "MalformedNumber",
-                Self::TrailingDataAfterNumber => "TrailingDataAfterNumbrr",
+                Self::TrailingDataAfterNumber => "TrailingDataAfterNumber",
                 Self::ExpectingMemberNameOrObjectEnd => "ExpectingMemberNameOrObjectEnd",
                 Self::MalformedJson => "MalformedJson",
                 Self::NotEscapedControlCharacter => "NotEscapedControlCharacter",
@@ -536,6 +538,7 @@ impl core::fmt::Display for SyntaxErrorKind {
         )
     }
 }
+
 /// Kind of [`ReaderErrorKind::UnexpectedStructure`]
 ///
 /// Describes why the JSON document is considered to have an unexpected structure.
@@ -570,7 +573,7 @@ pub enum UnexpectedStructureKind {
     /// A JSON array or object has more elements than expected
     MoreElementsThanExpected,
 }
-impl core::fmt::Display for UnexpectedStructureKind {
+impl Display for UnexpectedStructureKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TooShortArray {
@@ -588,6 +591,7 @@ impl core::fmt::Display for UnexpectedStructureKind {
         }
     }
 }
+
 /// Kind of a [`ReaderError`]
 #[non_exhaustive]
 // Cannot derive PartialEq, Eq or Clone because std::io::Error does not implement them
@@ -688,7 +692,7 @@ pub enum ReaderErrorKind {
     /// multiple bytes ahead while fetching more data from the underlying reader.
     IoError(IoError),
 }
-impl core::fmt::Display for ReaderErrorKind {
+impl Display for ReaderErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SyntaxError(e) => write!(f, "JSON syntax error {e}"),
