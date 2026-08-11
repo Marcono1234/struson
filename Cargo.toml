@@ -14,8 +14,19 @@ categories = ["parser-implementations"]
 
 [dependencies]
 thiserror = "2.0.18"
-duplicate = "2.0.1"
 
+# Disable 'module_disambiguation' default feature; currently not needed and it has transitive
+# dependency on `heck`
+duplicate = { version = "2.0.1", default-features = false, features = [
+    # Keep 'pretty_errors' for now, for easier troubleshooting
+    "pretty_errors",
+] }
+
+# Note: Could possibly use `default-features = false, features = ["alloc"]` here for serde_core,
+# but not sure if this is worth it (might not provide any noticeable build speed improvements),
+# and it would differ from how most users use serde (that is, with default features)
+# It might also require that Struson has to implement Deserializer methods which otherwise have
+# a default impl when the default features are enabled
 serde_core = { version = "1.0.228", optional = true }
 
 [dev-dependencies]
