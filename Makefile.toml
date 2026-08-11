@@ -12,6 +12,11 @@ RUSTDOCFLAGS = "--deny warnings"
 # The following differentiates between default features and Serde interoperability feature
 # to detect build issues when Serde feature is not enabled
 
+# Ideally would run cargo with `--locked` to avoid updating the lockfile in case it is outdated,
+# see also https://github.com/rust-lang/cargo/issues/8207
+# However, it seems cargo-make itself also implicitly updates the lockfile, so there is no point
+# in using `--locked` then for the cargo commands here. Instead the CI workflow runs `git diff`.
+
 # Default features
 [tasks.build-default]
 command = "cargo"

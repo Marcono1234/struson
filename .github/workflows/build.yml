@@ -35,7 +35,10 @@ jobs:
           tool: cargo-make@0.37.24
 
       - name: Build
-        run: cargo make
+        # Additionally verify that lockfile was not implicitly updated, see https://github.com/rust-lang/cargo/issues/8207
+        run: |
+          cargo make
+          git diff --exit-code -- Cargo.lock
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9  #v2.82.2
@@ -46,4 +49,4 @@ jobs:
         # `--all-targets` is probably not actually needed to ensure that users of the library can use it
         # with 'rust-version' (`--all-targets` includes tests, benches, examples); but for now keep it
         # to ensure that users can also build Struson themselves with that 'rust-version'
-        run: cargo hack check --rust-version --workspace --all-targets --all-features
+        run: cargo hack check --rust-version --workspace --all-targets --all-features --locked
