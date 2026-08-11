@@ -43,4 +43,7 @@ jobs:
           tool: cargo-hack@0.6.42
       # See https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version
       - name: Check 'rust-version' compatibility
+        # `--all-targets` is probably not actually needed to ensure that users of the library can use it
+        # with 'rust-version' (`--all-targets` includes tests, benches, examples); but for now keep it
+        # to ensure that users can also build Struson themselves with that 'rust-version'
         run: cargo hack check --rust-version --workspace --all-targets --all-features

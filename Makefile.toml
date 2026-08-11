@@ -15,7 +15,7 @@ RUSTDOCFLAGS = "--deny warnings"
 # Default features
 [tasks.build-default]
 command = "cargo"
-args = ["build", "--all-targets"]
+args = ["build"]
 
 [tasks.test-default]
 command = "cargo"
@@ -29,7 +29,7 @@ dependencies = ["build-default"]
 # (build this feature on its own to ensure it does not accidentally rely on other features)
 [tasks.build-serde-interop]
 command = "cargo"
-args = ["build", "--all-targets", "--features", "serde"]
+args = ["build", "--features", "serde"]
 
 [tasks.test-serde-interop]
 command = "cargo"
@@ -43,13 +43,23 @@ dependencies = ["build-serde-interop"]
 # (build this feature on its own to ensure it does not accidentally rely on other features)
 [tasks.build-simple-api]
 command = "cargo"
-args = ["build", "--all-targets", "--features", "simple-api"]
+args = ["build", "--features", "simple-api"]
 
 
 # All features
 [tasks.build-all-features]
 command = "cargo"
-args = ["build", "--all-targets", "--all-features"]
+args = ["build", "--all-features"]
+
+# All features, all targets
+# This is the only `cargo build ... --all-targets` task here because building all targets
+# includes the dev dependencies whose feature selection could affect the main dependencies
+# For example, the `serde` dev dependency might enable additional features of the `serde_core`
+# main dependency; building with `--all-targets` could make the build succeed but when users then
+# try to use Struson they would encounter errors if Struson forgot to implement specific methods
+[tasks.build-all-features-all-targets]
+command = "cargo"
+args = ["build", "--all-features", "--all-targets"]
 
 [tasks.test-all-features]
 command = "cargo"
@@ -72,6 +82,7 @@ dependencies = [
     "build-serde-interop",
     "build-simple-api",
     "build-all-features",
+    "build-all-features-all-targets",
 ]
 
 [tasks.test]
