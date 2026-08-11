@@ -231,7 +231,7 @@ pub mod simple;
 type IoError = std::io::Error;
 
 /// Type of a JSON value
-#[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ValueType {
     /// JSON array: `[ ... ]`
     Array,
@@ -248,6 +248,23 @@ pub enum ValueType {
     // No EndOfDocument because peeking after top-level element is a logic error
 
     // No ArrayEnd and ObjectEnd, should use has_next()
+}
+
+impl Display for ValueType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Array => "Array",
+                Self::Object => "Object",
+                Self::String => "String",
+                Self::Number => "Number",
+                Self::Boolean => "Boolean",
+                Self::Null => "Null",
+            }
+        )
+    }
 }
 
 /// Sealed trait for integer number types such as `u32`
@@ -427,7 +444,7 @@ impl Display for JsonReaderPosition {
 ///
 /// Describes why the JSON data is considered to have invalid syntax.
 #[non_exhaustive]
-#[derive(PartialEq, Eq, Clone, Copy, strum::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum SyntaxErrorKind {
     /// A comment was encountered, but comments are not [enabled in the `ReaderSettings`](ReaderSettings::allow_comments)
     CommentsNotEnabled,
@@ -491,17 +508,44 @@ pub enum SyntaxErrorKind {
     /// This error kind is used by [`JsonReader::consume_trailing_whitespace`].
     TrailingData,
 }
+impl Display for SyntaxErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::CommentsNotEnabled => "CommentsNotEnabled",
+                Self::IncompleteComment => "IncompleteComment",
+                Self::InvalidLiteral => "InvalidLiteral",
+                Self::TrailingDataAfterLiteral => "TrailingDataAfterLiteral",
+                Self::UnexpectedClosingBracket => "UnexpectedClosingBracket",
+                Self::UnexpectedComma => "UnexpectedComma",
+                Self::MissingComma => "MissingComma",
+                Self::TrailingCommaNotEnabled => "TrailingCommaNotEnabled",
+                Self::UnexpectedColon => "UnexpectedColon",
+                Self::MissingColon => "MissingColon",
+                Self::MalformedNumber => "MalformedNumber",
+                Self::TrailingDataAfterNumber => "TrailingDataAfterNumber",
+                Self::ExpectingMemberNameOrObjectEnd => "ExpectingMemberNameOrObjectEnd",
+                Self::MalformedJson => "MalformedJson",
+                Self::NotEscapedControlCharacter => "NotEscapedControlCharacter",
+                Self::UnknownEscapeSequence => "UnknownEscapeSequence",
+                Self::MalformedEscapeSequence => "MalformedEscapeSequence",
+                Self::UnpairedSurrogatePairEscapeSequence => "UnpairedSurrogatePairEscapeSequence",
+                Self::IncompleteDocument => "IncompleteDocument",
+                Self::TrailingData => "TrailingData",
+            }
+        )
+    }
+}
 
 /// Kind of [`ReaderErrorKind::UnexpectedStructure`]
 ///
 /// Describes why the JSON document is considered to have an unexpected structure.
-#[derive(PartialEq, Eq, Clone, strum::Display, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum UnexpectedStructureKind {
     /// A JSON array has fewer items than expected
     /* include field values in string; not included by default */
-    #[strum(
-        to_string = "TooShortArray(expected_index = {expected_index}, actual_len = {actual_len})"
-    )]
     TooShortArray {
         /// Index (starting at 0) of the expected item
         expected_index: u32,
@@ -514,7 +558,6 @@ pub enum UnexpectedStructureKind {
 
     /// A JSON object does not have a member with a certain name
     /* include field value in string; not included by default */
-    #[strum(to_string = "MissingObjectMember(\"{member_name}\")")]
     MissingObjectMember {
         /// Name of the expected member
         member_name: String,
@@ -530,15 +573,32 @@ pub enum UnexpectedStructureKind {
     /// A JSON array or object has more elements than expected
     MoreElementsThanExpected,
 }
+impl Display for UnexpectedStructureKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooShortArray {
+                expected_index,
+                actual_len,
+            } => write!(
+                f,
+                "TooShortArray(expected_index = {expected_index}, actual_len = {actual_len})"
+            ),
+            Self::MissingObjectMember { member_name } => {
+                write!(f, "MissingObjectMember(\"{member_name}\")")
+            }
+            Self::FewerElementsThanExpected => write!(f, "FewerElementsThanExpected"),
+            Self::MoreElementsThanExpected => write!(f, "MoreElementsThanExpected"),
+        }
+    }
+}
 
 /// Kind of a [`ReaderError`]
 #[non_exhaustive]
 // Cannot derive PartialEq, Eq or Clone because std::io::Error does not implement them
-#[derive(strum::Display, Debug)]
+#[derive(Debug)]
 // TODO: Rename to `JsonReaderErrorKind`? (see ReaderError TODO)
 pub enum ReaderErrorKind {
     /// A JSON syntax error was encountered
-    #[strum(to_string = "JSON syntax error {0}")]
     SyntaxError(SyntaxErrorKind),
 
     /// The next JSON value had an unexpected type
@@ -548,7 +608,6 @@ pub enum ReaderErrorKind {
     /// If the type of a JSON value is unknown in advance, errors of this kind can be avoided by using
     /// [`JsonReader::peek`] to determine the type of the next JSON value and then using the corresponding
     /// value reading method.
-    #[strum(to_string = "expected JSON value type {expected} but got {actual}")]
     UnexpectedValueType {
         /// The expected JSON value type
         expected: ValueType,
@@ -586,13 +645,11 @@ pub enum ReaderErrorKind {
     ///     }
     ///     # Ok::<(), Box<dyn std::error::Error>>(())
     ///     ```
-    #[strum(to_string = "unexpected JSON structure {0}")]
     UnexpectedStructure(UnexpectedStructureKind),
 
     /// The maximum nesting depth was exceeded while reading
     ///
     /// See [`ReaderSettings::max_nesting_depth`] for more information.
-    #[strum(to_string = "maximum nesting depth {max_nesting_depth} exceeded")]
     MaxNestingDepthExceeded {
         /// The maximum nesting depth
         max_nesting_depth: u32,
@@ -601,7 +658,6 @@ pub enum ReaderErrorKind {
     /// An unsupported JSON number value was encountered
     ///
     /// See [`ReaderSettings::restrict_number_values`] for more information.
-    #[strum(to_string = "unsupported number value '{number}'")]
     UnsupportedNumberValue {
         /// The unsupported number value
         number: String,
@@ -619,14 +675,12 @@ pub enum ReaderErrorKind {
     /// JSON number (and `MalformedNumber` would be more appropriate) when they fail fast,
     /// for example when parsing an unsigned `u64` but the number starts with a `-`.
     /* use Debug string `:?` because `IntErrorKind` does not implement Display */
-    #[strum(to_string = "invalid integer number due to '{0:?}'")]
     InvalidIntError(std::num::IntErrorKind), // reuse stdlib error kind; is this a good idea?
 
     /// Invalid UTF-8 data was encountered
     ///
     /// Note that escape sequences representing malformed surrogate pairs are reported as
     /// [`SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence`] instead.
-    #[strum(to_string = "invalid UTF-8 data")]
     InvalidUtf8Data,
 
     /// An IO error occurred while trying to read from the underlying reader
@@ -636,10 +690,28 @@ pub enum ReaderErrorKind {
     /// not be related to the content of the JSON document. For example the location might still
     /// point to the beginning of the current JSON value while the IO error actually occurred
     /// multiple bytes ahead while fetching more data from the underlying reader.
-    #[strum(to_string = "IO error '{0}'")]
     IoError(IoError),
 }
-
+impl Display for ReaderErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SyntaxError(e) => write!(f, "JSON syntax error {e}"),
+            Self::UnexpectedValueType { expected, actual } => {
+                write!(f, "expected JSON value type {expected} but got {actual}")
+            }
+            Self::UnexpectedStructure(e) => write!(f, "unexpected JSON structure {e}"),
+            Self::MaxNestingDepthExceeded { max_nesting_depth } => {
+                write!(f, "maximum nesting depth {max_nesting_depth} exceeded")
+            }
+            Self::UnsupportedNumberValue { number } => {
+                write!(f, "unsupported number value '{number}'")
+            }
+            Self::InvalidIntError(e) => write!(f, "invalid integer number due to '{e:?}'"),
+            Self::InvalidUtf8Data => write!(f, "invalid UTF-8 data"),
+            Self::IoError(e) => write!(f, "IO error '{e}'"),
+        }
+    }
+}
 impl ReaderErrorKind {
     /// Creates a clone of this error kind
     ///

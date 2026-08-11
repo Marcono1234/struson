@@ -14,7 +14,7 @@ use crate::{
     utf8,
 };
 
-#[derive(PartialEq, Clone, Copy, strum::Display, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 enum PeekedValue {
     ObjectStart,
     ObjectEnd,
