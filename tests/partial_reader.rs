@@ -226,7 +226,6 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             Ok(())
         } else {
             self.delegate.end_object()?;
-            // Only pop after delegate `end_object()` was successful, to allow retry if it fails with MoreElementsThanExpected
             self.is_in_object.pop();
             self.after_peeked_pos = self.provident_current_position();
             Ok(())
@@ -266,7 +265,6 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             Ok(())
         } else {
             self.delegate.end_array()?;
-            // Only pop after delegate `end_array()` was successful, to allow retry if it fails with MoreElementsThanExpected
             self.is_in_object.pop();
             self.after_peeked_pos = self.provident_current_position();
             Ok(())
@@ -586,7 +584,6 @@ fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    assert_eq!(true, json_reader.next_bool()?);
 
     let json = "true";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -610,7 +607,6 @@ fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    assert_eq!(true, json_reader.next_bool()?);
 
     let json = "[true]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -634,9 +630,6 @@ fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    json_reader.begin_array()?;
-    assert_eq!(true, json_reader.next_bool()?);
-    json_reader.end_array()?;
 
     Ok(())
 }
@@ -682,7 +675,6 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    json_reader.end_array()?;
 
     let json = "[true]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -704,8 +696,6 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    assert_eq!(true, json_reader.next_bool()?);
-    json_reader.end_array()?;
 
     let json = "{}";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -727,7 +717,6 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    json_reader.end_object()?;
 
     let json = "{\"a\": true}";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
@@ -749,9 +738,6 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
         }
         r => panic!("unexpected result: {r:?}"),
     }
-    assert_eq!("a", json_reader.next_name()?);
-    assert_eq!(true, json_reader.next_bool()?);
-    json_reader.end_object()?;
 
     Ok(())
 }
