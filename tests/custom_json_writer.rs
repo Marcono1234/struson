@@ -214,15 +214,10 @@ mod custom_writer {
             &mut self,
             value: N,
         ) -> Result<(), JsonNumberError> {
-            let number = if let Some(n) = value.as_f64() {
-                Some(serde_number_from_f64(n)?)
-            } else {
-                None
-            };
-
-            if let Some(n) = number {
+            if let Some(n) = value.as_f64() {
+                let number = serde_number_from_f64(n)?;
                 self.check_before_value();
-                self.add_value(Value::Number(n));
+                self.add_value(Value::Number(number));
                 Ok(())
             } else {
                 // TODO: Cannot match over possible implementations? Therefore have to use string representation
