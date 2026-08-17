@@ -115,8 +115,14 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
         self.stack().last() == Some(&StackValue::Array)
     }
 
+    // Don't mark this as `#[cold]` because for recoverable reader errors are expected
     fn error_location(&self) -> JsonReaderPosition {
         self.delegate.current_position(true)
+    }
+
+    // Don't mark this as `#[cold]` because for recoverable reader errors are expected
+    fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
+        Err(ReaderError::new(kind, self.error_location()))
     }
 
     /// Called before a JSON value of any type
@@ -134,11 +140,8 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
          *   called for member value, only for member name
          */
         if self.is_in_array() && !self.has_next()? {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::FewerElementsThanExpected,
-                ),
-                self.error_location(),
+            return self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::FewerElementsThanExpected,
             ));
         }
         Ok(())
@@ -149,13 +152,10 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
 
         let peeked = self.peek()?;
         if peeked != value_type {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedValueType {
-                    expected: value_type,
-                    actual: peeked,
-                },
-                self.error_location(),
-            ));
+            return self.error(ReaderErrorKind::UnexpectedValueType {
+                expected: value_type,
+                actual: peeked,
+            });
         }
 
         self.on_value_started();
@@ -176,11 +176,8 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
 
     fn before_name(&mut self) -> Result<(), ReaderError> {
         if !self.has_next()? {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::FewerElementsThanExpected,
-                ),
-                self.error_location(),
+            return self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::FewerElementsThanExpected,
             ));
         }
         // Note: At this point the name has not actually been consumed yet, but this happens
@@ -191,11 +188,8 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
 
     fn before_container_end(&mut self) -> Result<(), ReaderError> {
         if self.has_next()? {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::MoreElementsThanExpected,
-                ),
-                self.error_location(),
+            return self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::MoreElementsThanExpected,
             ));
         }
         self.stack_mut()

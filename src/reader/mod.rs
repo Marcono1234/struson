@@ -749,6 +749,7 @@ pub struct ReaderError {
 }
 impl ReaderError {
     /// Creates a new error
+    #[cold]
     pub fn new(kind: ReaderErrorKind, location: JsonReaderPosition) -> Self {
         ReaderError { kind, location }
     }
@@ -1914,6 +1915,17 @@ pub trait JsonReader {
      *   is a proper phrase in this context
      */
     fn seek_to(&mut self, rel_json_path: &JsonPath) -> Result<(), ReaderError> {
+        #[cold]
+        fn structure_error(
+            json_reader: &(impl JsonReader + ?Sized),
+            kind: UnexpectedStructureKind,
+        ) -> Result<(), ReaderError> {
+            Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedStructure(kind),
+                json_reader.current_position(true),
+            ))
+        }
+
         // peek here to fail if reader is currently not expecting a value, even if `rel_json_path` is empty
         // and it would otherwise not be detected
         self.peek()?;
@@ -1924,15 +1936,13 @@ pub trait JsonReader {
                     self.begin_array()?;
                     for i in 0..=*index {
                         if !self.has_next()? {
-                            return Err(ReaderError::new(
-                                ReaderErrorKind::UnexpectedStructure(
-                                    UnexpectedStructureKind::TooShortArray {
-                                        expected_index: *index,
-                                        actual_len: i,
-                                    },
-                                ),
-                                self.current_position(true),
-                            ));
+                            return structure_error(
+                                self,
+                                UnexpectedStructureKind::TooShortArray {
+                                    expected_index: *index,
+                                    actual_len: i,
+                                },
+                            );
                         }
 
                         // Last iteration only makes sure has_next() succeeds; don't have to skip value
@@ -1955,14 +1965,12 @@ pub trait JsonReader {
                     }
 
                     if !found_member {
-                        return Err(ReaderError::new(
-                            ReaderErrorKind::UnexpectedStructure(
-                                UnexpectedStructureKind::MissingObjectMember {
-                                    member_name: name.clone(),
-                                },
-                            ),
-                            self.current_position(true),
-                        ));
+                        return structure_error(
+                            self,
+                            UnexpectedStructureKind::MissingObjectMember {
+                                member_name: name.clone(),
+                            },
+                        );
                     }
                 }
             }
@@ -2173,10 +2181,11 @@ pub trait JsonReader {
         // peek here to fail fast if reader is currently not expecting a value
         self.peek()?;
 
+        #[cold]
         fn string_error_as_reader_error<R: JsonReader + ?Sized>(
             error: IoError,
             json_reader: &R,
-        ) -> TransferError {
+        ) -> Result<(), TransferError> {
             // If the error originates from JsonStreamReader use the underlying error without
             // redundantly wrapping it
             /*
@@ -2188,15 +2197,18 @@ pub trait JsonReader {
              * public and tell custom JSON reader implementations to use it for their string value
              * reader?
              */
-            TransferError::ReaderError(match error.downcast::<StringReadingError>() {
-                Ok(reader_error) => reader_error.into(),
-                Err(io_error) => ReaderError::new(
-                    ReaderErrorKind::IoError(io_error),
-                    json_reader.current_position(true),
-                ),
-            })
+            Err(TransferError::ReaderError(
+                match error.downcast::<StringReadingError>() {
+                    Ok(reader_error) => reader_error.into(),
+                    Err(io_error) => ReaderError::new(
+                        ReaderErrorKind::IoError(io_error),
+                        json_reader.current_position(true),
+                    ),
+                },
+            ))
         }
 
+        #[cold]
         fn as_writer_error(error: IoError) -> TransferError {
             TransferError::WriterError(error)
         }
@@ -2286,7 +2298,7 @@ pub trait JsonReader {
                             Ok(n) => n,
                             Err(e) => {
                                 drop(string_reader);
-                                return Err(string_error_as_reader_error(e, self));
+                                return string_error_as_reader_error(e, self);
                             }
                         };
                         if read_count == 0 {

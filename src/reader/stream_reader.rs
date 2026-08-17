@@ -397,14 +397,17 @@ impl<R: Read> JsonStreamReader<R> {
 
 // Implementation with error utility methods, and methods for inspecting JSON structure state
 impl<R: Read> JsonStreamReader<R> {
+    #[cold]
     fn error_location(&self) -> JsonReaderPosition {
         self.current_position(true)
     }
 
+    #[cold]
     fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
         Err(ReaderError::new(kind, self.error_location()))
     }
 
+    #[cold]
     fn syntax_error<T>(&self, kind: SyntaxErrorKind) -> Result<T, ReaderError> {
         self.error(ReaderErrorKind::SyntaxError(kind))
     }
@@ -432,6 +435,11 @@ impl<R: Read> JsonStreamReader<R> {
 
 // Implementation with low level byte reading methods
 impl<R: Read> JsonStreamReader<R> {
+    #[cold]
+    fn reader_io_error<T>(&self, e: IoError) -> Result<T, ReaderIoError> {
+        Err(ReaderIoError(e, self.error_location()))
+    }
+
     /// Peeks at the next byte without consuming it
     ///
     /// Returns `None` if the end of the input has been reached.
@@ -448,7 +456,7 @@ impl<R: Read> JsonStreamReader<R> {
                 self.peeked_byte = byte;
                 Ok(byte)
             }
-            Err(e) => Err(ReaderIoError(e, self.error_location())),
+            Err(e) => self.reader_io_error(e),
         }
     }
 
@@ -951,12 +959,14 @@ impl<R: Read> JsonStreamReader<R> {
         self.string_value_buf.insert(value)
     }
 
+    #[cold]
     fn invalid_utf8_error<T>(&self) -> Result<T, StringReadingError> {
         Err(StringReadingError::InvalidUtf8Data {
             location: self.error_location(),
         })
     }
 
+    #[cold]
     fn string_syntax_error<T>(&self, kind: SyntaxErrorKind) -> Result<T, StringReadingError> {
         Err(StringReadingError::SyntaxError {
             kind,
