@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer};
 use struson::{
     json_path,
     reader::{
-        JsonStreamReader, ReaderError, ReaderErrorKind, SyntaxErrorKind, ValueType,
+        JsonStreamReader, ReaderErrorKind, SyntaxErrorKind, ValueType,
         simple::{SimpleJsonReader, ValueReader},
     },
 };
@@ -56,13 +56,11 @@ fn read() -> Result<(), Box<dyn Error>> {
 #[test]
 fn read_trailing_data() {
     let json_reader = new_reader("true 1");
-    match json_reader.read_bool() {
-        Err(ReaderError {
-            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingData),
-            ..
-        }) => {}
-        r => panic!("unexpected result: {r:?}"),
-    }
+    let err = json_reader.read_bool().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingData)
+    ));
 }
 
 #[test]
@@ -613,7 +611,7 @@ mod deserialize_recoverable {
             let result = array_reader.read_deserialize_recoverable::<Vec<BadDeserialize>>()?;
             match result {
                 RecoverySuccess::Recovered { original_error } => {
-                    assert_eq!("custom error", original_error.to_string())
+                    assert_eq!("custom error", original_error.to_string());
                 }
                 _ => panic!("unexpected result: {result:?}"),
             }

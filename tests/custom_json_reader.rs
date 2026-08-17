@@ -12,7 +12,7 @@ use serde_json::json;
 use std::io::Read;
 use struson::{
     reader::{
-        JsonReader, ReaderError, ReaderErrorKind, UnexpectedStructureKind, ValueType,
+        JsonReader, ReaderErrorKind, UnexpectedStructureKind, ValueType,
         json_path::{JsonPath, json_path},
     },
     writer::{JsonStreamWriter, JsonWriter},
@@ -79,10 +79,10 @@ mod custom_reader {
             if actual == expected {
                 Ok(())
             } else {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::UnexpectedValueType { expected, actual },
-                    location: self.create_error_location(),
-                })
+                Err(ReaderError::new(
+                    ReaderErrorKind::UnexpectedValueType { expected, actual },
+                    self.create_error_location(),
+                ))
             }
         }
 
@@ -114,12 +114,12 @@ mod custom_reader {
                         if let Some(value) = iter.next() {
                             self.next_value = Some(value);
                         } else {
-                            return Err(ReaderError {
-                                kind: ReaderErrorKind::UnexpectedStructure(
+                            return Err(ReaderError::new(
+                                ReaderErrorKind::UnexpectedStructure(
                                     UnexpectedStructureKind::FewerElementsThanExpected,
                                 ),
-                                location: self.create_error_location(),
-                            });
+                                self.create_error_location(),
+                            ));
                         }
                     }
                     _ => unreachable!(
@@ -158,12 +158,12 @@ mod custom_reader {
             }
             if let Some(StackValue::Object(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::UnexpectedStructure(
+                    Err(ReaderError::new(
+                        ReaderErrorKind::UnexpectedStructure(
                             UnexpectedStructureKind::MoreElementsThanExpected,
                         ),
-                        location: self.create_error_location(),
-                    })
+                        self.create_error_location(),
+                    ))
                 } else {
                     self.stack.pop();
                     self.json_path.pop();
@@ -194,12 +194,12 @@ mod custom_reader {
         fn end_array(&mut self) -> Result<(), ReaderError> {
             if let Some(StackValue::Array(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::UnexpectedStructure(
+                    Err(ReaderError::new(
+                        ReaderErrorKind::UnexpectedStructure(
                             UnexpectedStructureKind::MoreElementsThanExpected,
                         ),
-                        location: self.create_error_location(),
-                    })
+                        self.create_error_location(),
+                    ))
                 } else {
                     self.stack.pop();
                     self.json_path.pop();
@@ -242,12 +242,12 @@ mod custom_reader {
                             name = n.as_str();
                             self.next_value = Some(v);
                         } else {
-                            return Err(ReaderError {
-                                kind: ReaderErrorKind::UnexpectedStructure(
+                            return Err(ReaderError::new(
+                                ReaderErrorKind::UnexpectedStructure(
                                     UnexpectedStructureKind::FewerElementsThanExpected,
                                 ),
-                                location: self.create_error_location(),
-                            });
+                                self.create_error_location(),
+                            ));
                         }
                     }
                     _ => unreachable!("stack should contain Object when expects_name == true"),
@@ -605,7 +605,12 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let result = $result;
                 match result {
-                    Err(ReaderError { kind: ReaderErrorKind::UnexpectedStructure($kind), .. }) => $assertion,
+                    Err(err) => {
+                        match err.kind() {
+                            ReaderErrorKind::UnexpectedStructure($kind) => $assertion,
+                            _ => panic!("unexpected error: {err:?}")
+                        }
+                    },
                     // Note: Cannot include `{result:?}` because for `next_string_reader` value does not implement Debug
                     _ => panic!("unexpected result"),
                 }
@@ -692,10 +697,15 @@ fn unexpected_value_type() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let result = $result;
                 match result {
-                    Err(ReaderError { kind: ReaderErrorKind::UnexpectedValueType {
-                        expected: ValueType::$expected,
-                        actual: ValueType::$actual,
-                    }, ..}) => {}
+                    Err(err) => {
+                        assert!(matches!(
+                            err.kind(),
+                            ReaderErrorKind::UnexpectedValueType {
+                                expected: ValueType::$expected,
+                                actual: ValueType::$actual,
+                            }
+                        ));
+                    }
                     // Note: Cannot include `{result:?}` because for `next_string_reader` value does not implement Debug
                     _ => panic!("unexpected result"),
                 }

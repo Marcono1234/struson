@@ -38,10 +38,7 @@ pub(crate) struct ReaderIoError(#[source] pub(crate) IoError, pub(crate) JsonRea
 
 impl From<ReaderIoError> for ReaderError {
     fn from(value: ReaderIoError) -> Self {
-        ReaderError {
-            kind: ReaderErrorKind::IoError(value.0),
-            location: value.1,
-        }
+        ReaderError::new(ReaderErrorKind::IoError(value.0), value.1)
     }
 }
 
@@ -62,14 +59,12 @@ pub(crate) enum StringReadingError {
 impl From<StringReadingError> for ReaderError {
     fn from(e: StringReadingError) -> Self {
         match e {
-            StringReadingError::SyntaxError { kind, location } => ReaderError {
-                kind: ReaderErrorKind::SyntaxError(kind),
-                location,
-            },
-            StringReadingError::InvalidUtf8Data { location } => ReaderError {
-                kind: ReaderErrorKind::InvalidUtf8Data,
-                location,
-            },
+            StringReadingError::SyntaxError { kind, location } => {
+                ReaderError::new(ReaderErrorKind::SyntaxError(kind), location)
+            }
+            StringReadingError::InvalidUtf8Data { location } => {
+                ReaderError::new(ReaderErrorKind::InvalidUtf8Data, location)
+            }
             StringReadingError::IoError(e) => e.into(),
         }
     }
@@ -407,10 +402,7 @@ impl<R: Read> JsonStreamReader<R> {
     }
 
     fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
-        Err(ReaderError {
-            kind,
-            location: self.error_location(),
-        })
+        Err(ReaderError::new(kind, self.error_location()))
     }
 
     fn syntax_error<T>(&self, kind: SyntaxErrorKind) -> Result<T, ReaderError> {
@@ -1634,10 +1626,10 @@ impl NumberBytesCollector<String> for CollectingNumberBytesCollector {
         // >= e100, <= e-100 or complete number longer than 100 chars
         // Note: When making this stricter, might have to adjust `next_number_int`
         if self.restrict_number_values && (exponent_digits_count > 2 || number_str.len() > 100) {
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnsupportedNumberValue { number: number_str },
-                location: error_location_provider(),
-            })
+            Err(ReaderError::new(
+                ReaderErrorKind::UnsupportedNumberValue { number: number_str },
+                error_location_provider(),
+            ))
         } else {
             Ok(number_str)
         }
@@ -2135,27 +2127,25 @@ mod tests {
         expected_byte_pos: u64,
     ) {
         let input_display_str = input.map_or("".to_owned(), |s| format!(" for '{s}'"));
-        match result {
-            Err(ReaderError {
-                kind: ReaderErrorKind::SyntaxError(kind),
-                location,
-            }) => {
-                assert_eq!(expected_kind, kind, "For input: {input:?}");
-                assert_eq!(
-                    JsonReaderPosition {
-                        path: Some(expected_path.to_vec()),
-                        line_pos: Some(LinePosition {
-                            line: 0,
-                            column: expected_column
-                        }),
-                        data_pos: Some(expected_byte_pos),
-                    },
-                    location,
-                    "For input: {input:?}"
-                )
+        let err = result.expect_err(&format!("unexpected result{input_display_str}"));
+        match err.kind() {
+            ReaderErrorKind::SyntaxError(kind) => {
+                assert_eq!(&expected_kind, kind, "for input: {input:?}");
             }
-            r => panic!("unexpected result{input_display_str}: {r:?}"),
+            _ => panic!("unexpected error{input_display_str}: {err:?}"),
         }
+        assert_eq!(
+            &JsonReaderPosition {
+                path: Some(expected_path.to_vec()),
+                line_pos: Some(LinePosition {
+                    line: 0,
+                    column: expected_column
+                }),
+                data_pos: Some(expected_byte_pos),
+            },
+            err.location(),
+            "for input: {input:?}"
+        )
     }
 
     fn assert_parse_error_with_path<T: Debug>(
@@ -2382,27 +2372,23 @@ mod tests {
                 result: Result<T, ReaderError>,
                 expected_kind: IntErrorKind,
             ) {
-                match result {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::InvalidIntError(kind),
-                        location,
-                    }) => {
-                        assert_eq!(kind, expected_kind);
-                        assert_eq!(
-                            location,
-                            JsonReaderPosition {
-                                path: Some(vec![]),
-                                // Should not have advanced position
-                                line_pos: Some(LinePosition {
-                                    line: 0,
-                                    column: 0,
-                                }),
-                                data_pos: Some(0),
-                            },
-                        )
-                    }
-                    _ => panic!("unexpected result: {result:?}"),
+                let err = result.unwrap_err();
+                match err.kind() {
+                    ReaderErrorKind::InvalidIntError(kind) => assert_eq!(kind, &expected_kind),
+                    _ => panic!("unexpected error: {err:?}")
                 }
+                assert_eq!(
+                    err.location(),
+                    &JsonReaderPosition {
+                        path: Some(vec![]),
+                        // Should not have advanced position
+                        line_pos: Some(LinePosition {
+                            line: 0,
+                            column: 0,
+                        }),
+                        data_pos: Some(0),
+                    },
+                )
             }
 
             // Sanity check: Ensure that numbers which are supported by `next_number_int` would not be restricted when
@@ -2538,27 +2524,20 @@ mod tests {
             }
 
             fn assert_syntax_error(invalid_json: &str) {
-                let result = read(invalid_json);
-                match result {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber),
-                        location,
-                    }) => {
-                        assert_eq!(
-                            location,
-                            JsonReaderPosition {
-                                path: Some(vec![]),
-                                // Should not have advanced position
-                                line_pos: Some(LinePosition {
-                                    line: 0,
-                                    column: 0,
-                                }),
-                                data_pos: Some(0),
-                            },
-                        )
-                    }
-                    _ => panic!("unexpected result: {result:?}"),
-                }
+                let err = read(invalid_json).unwrap_err();
+                assert!(matches!(err.kind(), ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber)));
+                assert_eq!(
+                    err.location(),
+                    &JsonReaderPosition {
+                        path: Some(vec![]),
+                        // Should not have advanced position
+                        line_pos: Some(LinePosition {
+                            line: 0,
+                            column: 0,
+                        }),
+                        data_pos: Some(0),
+                    },
+                );
 
                 // For completeness directly call impl as well, to make sure the above expected error was
                 // not reported by JsonStreamReader itself
@@ -2569,51 +2548,37 @@ mod tests {
             // reject the value as invalid JSON number
             fn assert_syntax_error_impl(invalid_json: &str) {
                 let mut reader = new_reader(invalid_json);
-                let result = <$num_type as IntNumberImpl>::parse_number(&mut reader);
-                match result {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber),
-                        location,
-                    }) => {
-                        assert_eq!(
-                            location,
-                            JsonReaderPosition {
-                                path: Some(vec![]),
-                                // Should not have advanced position
-                                line_pos: Some(LinePosition {
-                                    line: 0,
-                                    column: 0,
-                                }),
-                                data_pos: Some(0),
-                            },
-                        )
-                    }
-                    _ => panic!("unexpected result: {result:?}"),
-                }
+                let err = <$num_type as IntNumberImpl>::parse_number(&mut reader).unwrap_err();
+                assert!(matches!(err.kind(), ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedNumber)));
+                assert_eq!(
+                    err.location(),
+                    &JsonReaderPosition {
+                        path: Some(vec![]),
+                        // Should not have advanced position
+                        line_pos: Some(LinePosition {
+                            line: 0,
+                            column: 0,
+                        }),
+                        data_pos: Some(0),
+                    },
+                );
             }
 
             fn assert_trailing_data_error(invalid_json: &str) {
-                let result = read(invalid_json);
-                match result {
-                    Err(ReaderError {
-                        kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingDataAfterNumber),
-                        location,
-                    }) => {
-                        assert_eq!(
-                            location,
-                            JsonReaderPosition {
-                                path: Some(vec![]),
-                                // Should not have advanced position
-                                line_pos: Some(LinePosition {
-                                    line: 0,
-                                    column: 0,
-                                }),
-                                data_pos: Some(0),
-                            },
-                        )
-                    }
-                    _ => panic!("unexpected result: {result:?}"),
-                }
+                let err = read(invalid_json).unwrap_err();
+                assert!(matches!(err.kind(), ReaderErrorKind::SyntaxError(SyntaxErrorKind::TrailingDataAfterNumber)));
+                assert_eq!(
+                    err.location(),
+                    &JsonReaderPosition {
+                        path: Some(vec![]),
+                        // Should not have advanced position
+                        line_pos: Some(LinePosition {
+                            line: 0,
+                            column: 0,
+                        }),
+                        data_pos: Some(0),
+                    },
+                );
             }
 
             // Invalid JSON numbers
@@ -2682,42 +2647,38 @@ mod tests {
 
         fn assert_unsupported_number(number_json: &str) {
             let mut json_reader = new_reader(number_json);
-            match json_reader.next_number_as_string() {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::UnsupportedNumberValue { number },
-                    location,
-                }) => {
+            let err = json_reader.next_number_as_string().unwrap_err();
+            match err.kind() {
+                ReaderErrorKind::UnsupportedNumberValue { number } => {
                     assert_eq!(number_json, number);
-                    assert_eq!(
-                        JsonReaderPosition {
-                            path: Some(Vec::new()),
-                            line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: Some(0),
-                        },
-                        location
-                    );
                 }
-                r => panic!("unexpected result: {r:?}"),
+                _ => panic!("unexpected error: {err:?}"),
             }
+            assert_eq!(
+                &JsonReaderPosition {
+                    path: Some(Vec::new()),
+                    line_pos: Some(LinePosition { line: 0, column: 0 }),
+                    data_pos: Some(0),
+                },
+                err.location()
+            );
 
             let mut json_reader = new_reader(number_json);
-            match json_reader.next_number::<f64>() {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::UnsupportedNumberValue { number },
-                    location,
-                }) => {
+            let err = json_reader.next_number::<f64>().unwrap_err();
+            match err.kind() {
+                ReaderErrorKind::UnsupportedNumberValue { number } => {
                     assert_eq!(number_json, number);
-                    assert_eq!(
-                        JsonReaderPosition {
-                            path: Some(Vec::new()),
-                            line_pos: Some(LinePosition { line: 0, column: 0 }),
-                            data_pos: Some(0),
-                        },
-                        location
-                    );
                 }
-                r => panic!("unexpected result: {r:?}"),
+                _ => panic!("unexpected error: {err:?}"),
             }
+            assert_eq!(
+                &JsonReaderPosition {
+                    path: Some(Vec::new()),
+                    line_pos: Some(LinePosition { line: 0, column: 0 }),
+                    data_pos: Some(0),
+                },
+                err.location()
+            );
         }
 
         assert_unsupported_number("1e100");
@@ -2905,16 +2866,11 @@ mod tests {
             bytes.extend(string_content);
             bytes.push(b'"');
             let mut json_reader = JsonStreamReader::new(bytes.as_slice());
-            match json_reader.next_string() {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::InvalidUtf8Data,
-                    location,
-                }) => {
-                    assert_eq!(Some(Vec::new()), location.path);
-                    assert_eq!(0, location.line_pos.unwrap().line);
-                }
-                result => panic!("unexpected result for '{string_content:?}': {result:?}"),
-            }
+            let err = json_reader.next_string().unwrap_err();
+            assert!(matches!(err.kind(), ReaderErrorKind::InvalidUtf8Data));
+            let location = err.location();
+            assert_eq!(Some(Vec::new()), location.path);
+            assert_eq!(0, location.line_pos.unwrap().line);
         }
 
         // High surrogate followed by low surrogate in (invalid) UTF-8 encoding
@@ -3889,27 +3845,25 @@ mod tests {
             expected_column: u64,
             expected_path: &JsonPath,
         ) {
-            match result {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::MaxNestingDepthExceeded { max_nesting_depth },
-                    location,
-                }) => {
-                    assert_eq!(expected_limit, max_nesting_depth);
-                    assert_eq!(
-                        JsonReaderPosition {
-                            path: Some(expected_path.to_vec()),
-                            line_pos: Some(LinePosition {
-                                line: 0,
-                                column: expected_column
-                            }),
-                            // Assume input is ASCII only on single line; treat column as byte pos
-                            data_pos: Some(expected_column),
-                        },
-                        location
-                    )
+            let err = result.unwrap_err();
+            match err.kind() {
+                ReaderErrorKind::MaxNestingDepthExceeded { max_nesting_depth } => {
+                    assert_eq!(expected_limit, *max_nesting_depth);
                 }
-                r => panic!("unexpected result: {r:?}"),
+                _ => panic!("unexpected error: {err:?}"),
             }
+            assert_eq!(
+                &JsonReaderPosition {
+                    path: Some(expected_path.to_vec()),
+                    line_pos: Some(LinePosition {
+                        line: 0,
+                        column: expected_column
+                    }),
+                    // Assume input is ASCII only on single line; treat column as byte pos
+                    data_pos: Some(expected_column),
+                },
+                err.location()
+            )
         }
 
         // Test default limit
@@ -3952,17 +3906,14 @@ mod tests {
 
         // No limit error should be returned on value type mismatch
         let mut json_reader = new_reader_with_limit("true", Some(0));
-        match json_reader.begin_array() {
-            Err(ReaderError {
-                kind:
-                    ReaderErrorKind::UnexpectedValueType {
-                        expected: ValueType::Array,
-                        actual: ValueType::Boolean,
-                    },
-                ..
-            }) => {}
-            r => panic!("unexpected result: {r:?}"),
-        }
+        let err = json_reader.begin_array().unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            ReaderErrorKind::UnexpectedValueType {
+                expected: ValueType::Array,
+                actual: ValueType::Boolean,
+            }
+        ));
         assert_eq!(true, json_reader.next_bool()?);
 
         // Mixed array and object
@@ -4576,28 +4527,26 @@ mod tests {
         expected_path: &JsonPath,
         expected_column: u64,
     ) {
-        match result {
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedValueType { expected, actual },
-                location,
-            }) => {
-                assert_eq!(expected_expected, expected);
-                assert_eq!(expected_actual, actual);
-                assert_eq!(
-                    JsonReaderPosition {
-                        path: Some(expected_path.to_vec()),
-                        line_pos: Some(LinePosition {
-                            line: 0,
-                            column: expected_column
-                        }),
-                        // Assume input is ASCII only on single line; treat column as byte pos
-                        data_pos: Some(expected_column),
-                    },
-                    location
-                );
+        let err = result.unwrap_err();
+        match err.kind() {
+            ReaderErrorKind::UnexpectedValueType { expected, actual } => {
+                assert_eq!(expected_expected, *expected);
+                assert_eq!(expected_actual, *actual);
             }
-            r => panic!("unexpected result: {r:?}"),
+            _ => panic!("unexpected error: {err:?}"),
         }
+        assert_eq!(
+            &JsonReaderPosition {
+                path: Some(expected_path.to_vec()),
+                line_pos: Some(LinePosition {
+                    line: 0,
+                    column: expected_column
+                }),
+                // Assume input is ASCII only on single line; treat column as byte pos
+                data_pos: Some(expected_column),
+            },
+            err.location()
+        );
     }
 
     fn assert_unexpected_structure_with_byte_pos<T: Debug>(
@@ -4607,26 +4556,22 @@ mod tests {
         expected_column: u64,
         expected_byte_pos: u64,
     ) {
-        match result {
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedStructure(kind),
-                location,
-            }) => {
-                assert_eq!(expected_kind, kind);
-                assert_eq!(
-                    JsonReaderPosition {
-                        path: Some(expected_path.to_vec()),
-                        line_pos: Some(LinePosition {
-                            line: 0,
-                            column: expected_column
-                        }),
-                        data_pos: Some(expected_byte_pos),
-                    },
-                    location
-                );
-            }
-            r => panic!("unexpected result: {r:?}"),
+        let err = result.unwrap_err();
+        match err.kind() {
+            ReaderErrorKind::UnexpectedStructure(kind) => assert_eq!(expected_kind, *kind),
+            _ => panic!("unexpected error: {err:?}"),
         }
+        assert_eq!(
+            &JsonReaderPosition {
+                path: Some(expected_path.to_vec()),
+                line_pos: Some(LinePosition {
+                    line: 0,
+                    column: expected_column
+                }),
+                data_pos: Some(expected_byte_pos),
+            },
+            err.location(),
+        );
     }
 
     fn assert_unexpected_structure<T: Debug>(
@@ -5319,22 +5264,16 @@ mod tests {
                 ..Default::default()
             },
         );
-        match &json_reader.peek() {
-            Err(ReaderError {
-                kind: ReaderErrorKind::InvalidUtf8Data,
-                location,
-            }) => {
-                assert_eq!(
-                    &JsonReaderPosition {
-                        path: Some(Vec::new()),
-                        line_pos: Some(LinePosition { line: 0, column: 2 }),
-                        data_pos: Some(2),
-                    },
-                    location
-                );
-            }
-            result => panic!("unexpected result: {result:?}"),
-        }
+        let err = &json_reader.peek().unwrap_err();
+        assert!(matches!(err.kind(), ReaderErrorKind::InvalidUtf8Data));
+        assert_eq!(
+            &JsonReaderPosition {
+                path: Some(Vec::new()),
+                line_pos: Some(LinePosition { line: 0, column: 2 }),
+                data_pos: Some(2),
+            },
+            err.location()
+        );
 
         Ok(())
     }
@@ -5439,23 +5378,22 @@ mod tests {
             expected_byte_pos: u64,
         ) {
             let mut json_reader = new_reader_with_comments(json);
-            match json_reader.peek() {
-                Err(ReaderError {
-                    kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
-                    location,
-                }) => assert_eq!(
-                    JsonReaderPosition {
-                        path: Some(Vec::new()),
-                        line_pos: Some(LinePosition {
-                            line: expected_line,
-                            column: expected_column
-                        }),
-                        data_pos: Some(expected_byte_pos),
-                    },
-                    location
-                ),
-                r => panic!("unexpected result: {r:?}"),
-            }
+            let err = json_reader.peek().unwrap_err();
+            assert!(matches!(
+                err.kind(),
+                ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument)
+            ));
+            assert_eq!(
+                &JsonReaderPosition {
+                    path: Some(Vec::new()),
+                    line_pos: Some(LinePosition {
+                        line: expected_line,
+                        column: expected_column
+                    }),
+                    data_pos: Some(expected_byte_pos),
+                },
+                err.location(),
+            )
         }
 
         assert_location("", 0, 0, 0);
@@ -5713,23 +5651,23 @@ mod tests {
         let position = json_reader.current_position(false);
         assert_eq!(expected_position, position);
 
-        match json_reader.peek() {
-            Err(ReaderError {
-                kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson),
-                location:
-                    JsonReaderPosition {
-                        // `None` because path tracking is disabled
-                        path: None,
-                        line_pos:
-                            Some(LinePosition {
-                                line: 0,
-                                column: 61,
-                            }),
-                        data_pos: Some(61),
-                    },
-            }) => {}
-            r => panic!("unexpected result: {r:?}"),
-        }
+        let err = json_reader.peek().unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson)
+        ));
+        assert_eq!(
+            &JsonReaderPosition {
+                // `None` because path tracking is disabled
+                path: None,
+                line_pos: Some(LinePosition {
+                    line: 0,
+                    column: 61,
+                }),
+                data_pos: Some(61),
+            },
+            err.location(),
+        );
 
         Ok(())
     }
@@ -5888,21 +5826,21 @@ mod tests {
             fn unexpected_value_type() {
                 let mut json_reader = new_reader("true");
                 match json_reader.deserialize_next::<u64>() {
-                    Err(DeserializerError::ReaderError(ReaderError {
-                        kind:
+                    Err(DeserializerError::ReaderError(err)) => {
+                        assert!(matches!(
+                            err.kind(),
                             ReaderErrorKind::UnexpectedValueType {
                                 expected: ValueType::Number,
                                 actual: ValueType::Boolean,
-                            },
-                        location,
-                    })) => {
+                            }
+                        ));
                         assert_eq!(
-                            JsonReaderPosition {
+                            &JsonReaderPosition {
                                 path: Some(Vec::new()),
                                 line_pos: Some(LinePosition { line: 0, column: 0 }),
                                 data_pos: Some(0),
                             },
-                            location
+                            err.location()
                         );
                     }
                     r => panic!("unexpected result: {r:?}"),
@@ -5961,7 +5899,7 @@ mod tests {
 
                 match json_reader.deserialize_next::<BadDeserialize>() {
                     Err(DeserializerError::Custom { message }) => {
-                        assert_eq!("custom error", message)
+                        assert_eq!("custom error", message);
                     }
                     r => panic!("unexpected result: {r:?}"),
                 }

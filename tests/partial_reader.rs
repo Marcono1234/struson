@@ -156,13 +156,13 @@ macro_rules! consume_expected_value {
             // Put back unexpected value
             $self.peeked_value = Some(p);
 
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedValueType {
+            Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedValueType {
                     expected: ValueType::$expected_type,
                     actual: actual_type,
                 },
-                location: $self.peeked_value_pos.clone().unwrap(),
-            })
+                $self.peeked_value_pos.clone().unwrap(),
+            ))
         }
     }};
 }
@@ -184,12 +184,12 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             let p = self.peeked_value.as_ref().unwrap();
             Ok(p.get_value_type())
         } else {
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedStructure(
+            Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedStructure(
                     UnexpectedStructureKind::FewerElementsThanExpected,
                 ),
-                location: self.current_position(true),
-            })
+                self.current_position(true),
+            ))
         }
     }
 
@@ -213,12 +213,12 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
 
         if self.has_next()? {
-            return Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedStructure(
+            return Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedStructure(
                     UnexpectedStructureKind::MoreElementsThanExpected,
                 ),
-                location: self.current_position(true),
-            });
+                self.current_position(true),
+            ));
         }
 
         if self.reached_eof {
@@ -252,12 +252,12 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
 
         if self.has_next()? {
-            return Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedStructure(
+            return Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedStructure(
                     UnexpectedStructureKind::MoreElementsThanExpected,
                 ),
-                location: self.current_position(true),
-            });
+                self.current_position(true),
+            ));
         }
 
         if self.reached_eof {
@@ -277,21 +277,21 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         } else if self.peeked_name.is_some() || self.peeked_value.is_some() {
             Ok(true)
         } else {
-            match self.has_next_impl() {
-                // JsonStreamReader currently reports not only `SyntaxErrorKind::IncompleteDocument`
-                // on unexpected EOF, but also other errors, such as `InvalidLiteral`
-                Err(ReaderError {
-                    kind: ReaderErrorKind::SyntaxError(_),
-                    ..
-                }) => {
-                    self.reached_eof = true;
-                    // Clear the peeked name, if any, to avoid accidentally consuming it despite the member
-                    // value being missing
-                    self.peeked_name.take();
-                    Ok(false)
-                }
+            let result = self.has_next_impl();
+            // JsonStreamReader currently reports not only `SyntaxErrorKind::IncompleteDocument`
+            // on unexpected EOF, but also other errors, such as `InvalidLiteral`
+            if result
+                .as_ref()
+                .is_err_and(|err| matches!(err.kind(), ReaderErrorKind::SyntaxError(_)))
+            {
+                self.reached_eof = true;
+                // Clear the peeked name, if any, to avoid accidentally consuming it despite the member
+                // value being missing
+                self.peeked_name.take();
+                Ok(false)
+            } else {
                 // Propagate any other errors, or success result
-                r => r,
+                result
             }
         }
     }
@@ -311,12 +311,12 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         if self.has_next()? {
             Ok(self.peeked_name.take().unwrap())
         } else {
-            Err(ReaderError {
-                kind: ReaderErrorKind::UnexpectedStructure(
+            Err(ReaderError::new(
+                ReaderErrorKind::UnexpectedStructure(
                     UnexpectedStructureKind::FewerElementsThanExpected,
                 ),
-                location: self.current_position(true),
-            })
+                self.current_position(true),
+            ))
         }
     }
 
@@ -478,10 +478,12 @@ fn test() {
         d, &mut outer
     ));
     match result {
-        Err(DeserializerError::ReaderError(ReaderError {
-            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
-            ..
-        })) => {}
+        Err(DeserializerError::ReaderError(err)) => {
+            assert!(matches!(
+                err.kind(),
+                ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument)
+            ));
+        }
         r => panic!("unexpected result: {r:?}"),
     }
 
@@ -564,72 +566,60 @@ fn test() {
 fn unexpected_value() -> Result<(), Box<dyn std::error::Error>> {
     let json = "true";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
-    match json_reader.next_number_as_str() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedValueType {
-                    expected: ValueType::Number,
-                    actual: ValueType::Boolean,
-                },
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 0 }),
-                    data_pos: Some(0)
-                },
-                location
-            );
+    let err = json_reader.next_number_as_str().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedValueType {
+            expected: ValueType::Number,
+            actual: ValueType::Boolean,
         }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 0 }),
+            data_pos: Some(0)
+        },
+        err.location()
+    );
 
     let json = "true";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
-    match json_reader.begin_array() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedValueType {
-                    expected: ValueType::Array,
-                    actual: ValueType::Boolean,
-                },
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 0 }),
-                    data_pos: Some(0)
-                },
-                location
-            );
+    let err = json_reader.begin_array().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedValueType {
+            expected: ValueType::Array,
+            actual: ValueType::Boolean,
         }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 0 }),
+            data_pos: Some(0)
+        },
+        err.location()
+    );
 
     let json = "[true]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
-    match json_reader.next_number_as_str() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedValueType {
-                    expected: ValueType::Number,
-                    actual: ValueType::Array,
-                },
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 0 }),
-                    data_pos: Some(0)
-                },
-                location
-            );
+    let err = json_reader.next_number_as_str().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedValueType {
+            expected: ValueType::Number,
+            actual: ValueType::Array,
         }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 0 }),
+            data_pos: Some(0)
+        },
+        err.location()
+    );
 
     Ok(())
 }
@@ -658,86 +648,70 @@ fn unexpected_structure() -> Result<(), Box<dyn std::error::Error>> {
     let json = "[]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
     json_reader.begin_array()?;
-    match json_reader.peek() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::FewerElementsThanExpected),
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 1 }),
-                    data_pos: Some(1)
-                },
-                location
-            );
-        }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    let err = json_reader.peek().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::FewerElementsThanExpected)
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 1 }),
+            data_pos: Some(1)
+        },
+        err.location()
+    );
 
     let json = "[true]";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
     json_reader.begin_array()?;
-    match json_reader.end_array() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::MoreElementsThanExpected),
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 1 }),
-                    data_pos: Some(1)
-                },
-                location
-            );
-        }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    let err = json_reader.end_array().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::MoreElementsThanExpected)
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 1 }),
+            data_pos: Some(1)
+        },
+        err.location()
+    );
 
     let json = "{}";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
     json_reader.begin_object()?;
-    match json_reader.next_name() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::FewerElementsThanExpected),
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 1 }),
-                    data_pos: Some(1)
-                },
-                location
-            );
-        }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    let err = json_reader.next_name().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::FewerElementsThanExpected)
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 1 }),
+            data_pos: Some(1)
+        },
+        err.location()
+    );
 
     let json = "{\"a\": true}";
     let mut json_reader = PartialJsonReader::new(JsonStreamReader::new(json.as_bytes()));
     json_reader.begin_object()?;
-    match json_reader.end_object() {
-        Err(ReaderError {
-            kind:
-                ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::MoreElementsThanExpected),
-            location,
-        }) => {
-            assert_eq!(
-                JsonReaderPosition {
-                    path: None,
-                    line_pos: Some(LinePosition { line: 0, column: 1 }),
-                    data_pos: Some(1)
-                },
-                location
-            );
-        }
-        r => panic!("unexpected result: {r:?}"),
-    }
+    let err = json_reader.end_object().unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ReaderErrorKind::UnexpectedStructure(UnexpectedStructureKind::MoreElementsThanExpected)
+    ));
+    assert_eq!(
+        &JsonReaderPosition {
+            path: None,
+            line_pos: Some(LinePosition { line: 0, column: 1 }),
+            data_pos: Some(1)
+        },
+        err.location()
+    );
 
     Ok(())
 }

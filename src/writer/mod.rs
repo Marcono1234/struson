@@ -931,7 +931,7 @@ mod tests {
         fn assert_non_finite<T: FloatingPointNumber + Display>(number: T) {
             match number.use_json_number(|_| panic!("Should have failed for: {number}")) {
                 Err(JsonNumberError::InvalidNumber { message }) => {
-                    assert_eq!(format!("non-finite number: {number}"), message)
+                    assert_eq!(format!("non-finite number: {number}"), message);
                 }
                 r => panic!("unexpected result for {number}: {r:?}"),
             }

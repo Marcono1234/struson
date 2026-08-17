@@ -1173,7 +1173,7 @@ mod tests {
         let mut serializer = JsonWriterSerializer::new(&mut json_writer);
         match serializing_function(&mut serializer) {
             Err(SerializerError::InvalidNumber { message }) => {
-                assert_eq!(expected_error_message, message)
+                assert_eq!(expected_error_message, message);
             }
             r => panic!("unexpected result: {r:?}"),
         }

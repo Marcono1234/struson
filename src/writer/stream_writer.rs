@@ -928,7 +928,7 @@ mod tests {
         fn assert_invalid_number(result: Result<(), JsonNumberError>, expected_message: &str) {
             match result {
                 Err(JsonNumberError::InvalidNumber { message }) => {
-                    assert_eq!(expected_message, message)
+                    assert_eq!(expected_message, message);
                 }
                 r => panic!("unexpected result: {r:?}"),
             }
@@ -1282,7 +1282,7 @@ mod tests {
                                 "Inner error is not Utf8Error"
                             ),
                             Some(message) => {
-                                assert_eq!(message, e.to_string(), "Custom message does not match")
+                                assert_eq!(message, e.to_string(), "Custom message does not match");
                             }
                         }
                     }

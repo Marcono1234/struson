@@ -281,7 +281,7 @@ fn write() -> Result<(), Box<dyn std::error::Error>> {
         match result {
             Err(JsonNumberError::InvalidNumber { message }) => {
                 if let Some(expected_message) = expected_message {
-                    assert_eq!(expected_message, message)
+                    assert_eq!(expected_message, message);
                 }
             }
             _ => panic!("unexpected result: {result:?}"),

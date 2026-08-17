@@ -1135,14 +1135,14 @@ fn read_string_with_reader<J: JsonReader, T>(
     // (The only automatic skipping in the other methods happens for cases where the user does
     // not inspect a value or member name at all.)
     if has_trailing_data(delegate)? {
-        let error = ReaderError {
-            kind: ReaderErrorKind::IoError(std::io::Error::other(
+        let error = ReaderError::new(
+            ReaderErrorKind::IoError(std::io::Error::other(
                 "string value was not completely consumed",
             )),
             // Not completely accurate because `has_trailing_data` advanced reader; but IO error
             // locations are generally only an estimation
-            location: json_reader.current_position(true),
-        };
+            json_reader.current_position(true),
+        );
 
         json_reader.error = Some(convert_original_reader_error(&error));
 
@@ -1487,14 +1487,14 @@ mod error_safe_reader {
 
     /// Creates a [`ReaderError`] for situations where the original error cannot be preserved
     pub(super) fn create_dummy_error(location: &JsonReaderPosition) -> StoredError {
-        StoredError(ReaderError {
-            kind: ReaderErrorKind::SyntaxError(
+        StoredError(ReaderError::new(
+            ReaderErrorKind::SyntaxError(
                 // This error kind does not suit that well, but the other kinds suit even worse
                 // Mainly have to return 'any' error; users should not rely on this safeguard in the first place
                 SyntaxErrorKind::IncompleteDocument,
             ),
-            location: location.clone(),
-        })
+            location.clone(),
+        ))
     }
 
     /// Creates a dummy [`ReaderError`] with unknown position
@@ -1503,7 +1503,7 @@ mod error_safe_reader {
     }
 
     pub(super) fn convert_original_reader_error(error: &ReaderError) -> StoredError {
-        StoredError(match &error.kind {
+        StoredError(match error.kind() {
             // Note: List all error types instead of using a 'catch-all' to explicitly decide for each the
             // correct handling, especially when future error types are being added
             ReaderErrorKind::SyntaxError(_) => error.rough_clone(),
@@ -1511,14 +1511,14 @@ mod error_safe_reader {
             ReaderErrorKind::UnsupportedNumberValue { .. } => error.rough_clone(),
             ReaderErrorKind::InvalidIntError(_) => error.rough_clone(),
             ReaderErrorKind::InvalidUtf8Data => error.rough_clone(),
-            ReaderErrorKind::IoError(io_error) => ReaderError {
-                kind: ReaderErrorKind::IoError(clone_original_io_error(io_error)),
-                location: error.location.clone(),
-            },
+            ReaderErrorKind::IoError(io_error) => ReaderError::new(
+                ReaderErrorKind::IoError(clone_original_io_error(io_error)),
+                error.location().clone(),
+            ),
             // For these repeating the error might be confusing, e.g. when a subsequent call performs a completely unrelated action,
             // therefore use a dummy error
-            ReaderErrorKind::UnexpectedValueType { .. } => create_dummy_error(&error.location).0,
-            ReaderErrorKind::UnexpectedStructure { .. } => create_dummy_error(&error.location).0,
+            ReaderErrorKind::UnexpectedValueType { .. } => create_dummy_error(error.location()).0,
+            ReaderErrorKind::UnexpectedStructure { .. } => create_dummy_error(error.location()).0,
         })
     }
 
@@ -1837,25 +1837,25 @@ mod error_safe_reader {
                     .and_then(|error| error.downcast_ref::<StringReadingError>())
                     // Try to reconstruct ReaderError, without losing information or redundantly wrapping error
                     .map(|error| match error {
-                        StringReadingError::SyntaxError { kind, location } => ReaderError {
-                            kind: ReaderErrorKind::SyntaxError(*kind),
-                            location: location.clone(),
-                        },
-                        StringReadingError::InvalidUtf8Data { location } => ReaderError {
-                            kind: ReaderErrorKind::InvalidUtf8Data,
-                            location: location.clone(),
-                        },
+                        StringReadingError::SyntaxError { kind, location } => {
+                            ReaderError::new(ReaderErrorKind::SyntaxError(*kind), location.clone())
+                        }
+                        StringReadingError::InvalidUtf8Data { location } => {
+                            ReaderError::new(ReaderErrorKind::InvalidUtf8Data, location.clone())
+                        }
                         StringReadingError::IoError(ReaderIoError(error, location)) => {
-                            ReaderError {
-                                kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
-                                location: location.clone(),
-                            }
+                            ReaderError::new(
+                                ReaderErrorKind::IoError(clone_original_io_error(error)),
+                                location.clone(),
+                            )
                         }
                     })
                     // For non-JsonStreamReader error wrap it in a generic IO error
-                    .unwrap_or_else(|| ReaderError {
-                        kind: ReaderErrorKind::IoError(clone_original_io_error(error)),
-                        location: JsonReaderPosition::unknown_position(),
+                    .unwrap_or_else(|| {
+                        ReaderError::new(
+                            ReaderErrorKind::IoError(clone_original_io_error(error)),
+                            JsonReaderPosition::unknown_position(),
+                        )
                     });
                 *self.reader_error = Some(StoredError(reader_error));
                 self.error = Some((error.kind(), error.to_string()));
@@ -2743,10 +2743,10 @@ mod tests {
             original_error: DeserializerError::Custom {
                 message: "custom error".to_owned(),
             },
-            recovery_error: Some(ReaderError {
-                kind: ReaderErrorKind::InvalidUtf8Data,
-                location: JsonReaderPosition::unknown_position(),
-            }),
+            recovery_error: Some(ReaderError::new(
+                ReaderErrorKind::InvalidUtf8Data,
+                JsonReaderPosition::unknown_position(),
+            )),
         };
         assert_eq!(
             error.to_string(),

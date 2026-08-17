@@ -744,33 +744,36 @@ impl ReaderErrorKind {
 #[derive(Error, Debug)]
 // TODO: Rename to `JsonReaderError`? current name might sound like this is only for errors from underlying `Read`
 pub struct ReaderError {
-    /// Error kind
-    pub kind: ReaderErrorKind,
-    /// Location within the JSON document
+    kind: ReaderErrorKind,
+    location: JsonReaderPosition,
+}
+impl ReaderError {
+    /// Creates a new error
+    pub fn new(kind: ReaderErrorKind, location: JsonReaderPosition) -> Self {
+        ReaderError { kind, location }
+    }
+
+    /// Gets the error kind
+    pub fn kind(&self) -> &ReaderErrorKind {
+        &self.kind
+    }
+
+    /// Gets the location within the JSON document
     ///
     /// For some error kinds, such as [`ReaderErrorKind::IoError`], the location is not completely accurate.
-    pub location: JsonReaderPosition,
-}
-
-impl Display for ReaderError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let location_prefix = match self.kind {
-            // Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
-            ReaderErrorKind::IoError(_) => "(roughly) ",
-            _ => "",
-        };
-        write!(f, "{} at {location_prefix}{}", self.kind, self.location)
+    pub fn location(&self) -> &JsonReaderPosition {
+        &self.location
     }
-}
 
-impl ReaderError {
+    /// Destructures this error into its inner data
+    pub fn into_inner(self) -> (ReaderErrorKind, JsonReaderPosition) {
+        (self.kind, self.location)
+    }
+
     /// Creates a clone of this Error, preserving as much information as possible
     #[cfg(feature = "simple-api")] // only needed by simple-api at the moment
     pub(crate) fn rough_clone(&self) -> Self {
-        Self {
-            kind: self.kind.rough_clone(),
-            location: self.location.clone(),
-        }
+        Self::new(self.kind().rough_clone(), self.location().clone())
     }
 
     /// Returns whether the error is IO related
@@ -782,13 +785,18 @@ impl ReaderError {
     /// the operation which caused this error. As mentioned in the [`JsonReader` documentation](JsonReader#error-handling),
     /// processing should be aborted in case of any error, regardless of type.
     pub fn is_io(&self) -> bool {
-        matches!(
-            self,
-            Self {
-                kind: ReaderErrorKind::IoError(..),
-                ..
-            }
-        )
+        matches!(self.kind(), ReaderErrorKind::IoError(..))
+    }
+}
+
+impl Display for ReaderError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let location_prefix = match self.kind() {
+            // Location for IO error is not completely accurate, see documentation of `ReaderErrorKind::IoError`
+            ReaderErrorKind::IoError(_) => "(roughly) ",
+            _ => "",
+        };
+        write!(f, "{} at {location_prefix}{}", self.kind(), self.location())
     }
 }
 
@@ -1414,9 +1422,8 @@ pub trait JsonReader {
         // overhead in case no error actually occurs
         let error_position = self.current_position(false);
         let number_result = self.next_number::<N>()?;
-        number_result.map_err(|e| ReaderError {
-            kind: ReaderErrorKind::InvalidIntError(*e.kind()),
-            location: error_position,
+        number_result.map_err(|e| {
+            ReaderError::new(ReaderErrorKind::InvalidIntError(*e.kind()), error_position)
         })
     }
 
@@ -1917,15 +1924,15 @@ pub trait JsonReader {
                     self.begin_array()?;
                     for i in 0..=*index {
                         if !self.has_next()? {
-                            return Err(ReaderError {
-                                kind: ReaderErrorKind::UnexpectedStructure(
+                            return Err(ReaderError::new(
+                                ReaderErrorKind::UnexpectedStructure(
                                     UnexpectedStructureKind::TooShortArray {
                                         expected_index: *index,
                                         actual_len: i,
                                     },
                                 ),
-                                location: self.current_position(true),
-                            });
+                                self.current_position(true),
+                            ));
                         }
 
                         // Last iteration only makes sure has_next() succeeds; don't have to skip value
@@ -1948,14 +1955,14 @@ pub trait JsonReader {
                     }
 
                     if !found_member {
-                        return Err(ReaderError {
-                            kind: ReaderErrorKind::UnexpectedStructure(
+                        return Err(ReaderError::new(
+                            ReaderErrorKind::UnexpectedStructure(
                                 UnexpectedStructureKind::MissingObjectMember {
                                     member_name: name.clone(),
                                 },
                             ),
-                            location: self.current_position(true),
-                        });
+                            self.current_position(true),
+                        ));
                     }
                 }
             }
@@ -2183,10 +2190,10 @@ pub trait JsonReader {
              */
             TransferError::ReaderError(match error.downcast::<StringReadingError>() {
                 Ok(reader_error) => reader_error.into(),
-                Err(io_error) => ReaderError {
-                    kind: ReaderErrorKind::IoError(io_error),
-                    location: json_reader.current_position(true),
-                },
+                Err(io_error) => ReaderError::new(
+                    ReaderErrorKind::IoError(io_error),
+                    json_reader.current_position(true),
+                ),
             })
         }
 
@@ -2416,6 +2423,26 @@ mod tests {
     use super::{json_path::*, *};
 
     #[test]
+    fn reader_error_into_inner() {
+        let original_location = JsonReaderPosition {
+            path: Some(json_path!["a", 1].to_vec()),
+            line_pos: Some(LinePosition { line: 0, column: 7 }),
+            data_pos: Some(7),
+        };
+        let error = ReaderError::new(
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson),
+            original_location.clone(),
+        );
+
+        let (kind, location) = error.into_inner();
+        assert!(matches!(
+            kind,
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson)
+        ));
+        assert_eq!(location, original_location);
+    }
+
+    #[test]
     #[cfg(feature = "simple-api")] // `rough_clone()` is only enabled for simple-api at the moment
     fn reader_error_rough_clone() {
         let original_location = JsonReaderPosition {
@@ -2424,20 +2451,17 @@ mod tests {
             data_pos: Some(7),
         };
 
-        let original = ReaderError {
-            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson),
-            location: original_location.clone(),
-        };
-        match original.rough_clone() {
-            ReaderError {
-                kind: ReaderErrorKind::SyntaxError(syntax_error_kind),
-                location,
-            } => {
-                assert_eq!(SyntaxErrorKind::MalformedJson, syntax_error_kind);
-                assert_eq!(original_location, location);
-            }
-            e => panic!("unexpected error: {e:?}"),
-        }
+        let original = ReaderError::new(
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson),
+            original_location.clone(),
+        );
+
+        let cloned = original.rough_clone();
+        assert!(matches!(
+            cloned.kind(),
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::MalformedJson)
+        ));
+        assert_eq!(cloned.location(), &original_location);
     }
 
     #[test]
@@ -2509,35 +2533,55 @@ mod tests {
 
     #[test]
     fn reader_error_is_io() {
-        let io_error = ReaderError {
-            kind: ReaderErrorKind::IoError(IoError::other("my error")),
-            location: JsonReaderPosition::unknown_position(),
-        };
+        let io_error = ReaderError::new(
+            ReaderErrorKind::IoError(IoError::other("my error")),
+            JsonReaderPosition::unknown_position(),
+        );
         assert!(io_error.is_io());
 
-        let syntax_error = ReaderError {
-            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
-            location: JsonReaderPosition::unknown_position(),
-        };
+        let syntax_error = ReaderError::new(
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
+            JsonReaderPosition::unknown_position(),
+        );
         assert!(!syntax_error.is_io());
     }
 
     #[test]
     fn transfer_error_is_io() {
-        let reader_io_error = TransferError::ReaderError(ReaderError {
-            kind: ReaderErrorKind::IoError(IoError::other("my error")),
-            location: JsonReaderPosition::unknown_position(),
-        });
+        let reader_io_error = TransferError::ReaderError(ReaderError::new(
+            ReaderErrorKind::IoError(IoError::other("my error")),
+            JsonReaderPosition::unknown_position(),
+        ));
         assert!(reader_io_error.is_io());
 
-        let reader_syntax_error = TransferError::ReaderError(ReaderError {
-            kind: ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
-            location: JsonReaderPosition::unknown_position(),
-        });
+        let reader_syntax_error = TransferError::ReaderError(ReaderError::new(
+            ReaderErrorKind::SyntaxError(SyntaxErrorKind::IncompleteDocument),
+            JsonReaderPosition::unknown_position(),
+        ));
         assert!(!reader_syntax_error.is_io());
 
         let writer_error = TransferError::WriterError(IoError::other("my error"));
         assert!(writer_error.is_io());
+    }
+
+    #[test]
+    fn reader_error_display() {
+        let location = JsonReaderPosition {
+            path: Some(json_path![0].to_vec()),
+            line_pos: Some(LinePosition { line: 2, column: 1 }),
+            data_pos: Some(12),
+        };
+        let error = ReaderError::new(ReaderErrorKind::InvalidUtf8Data, location.clone());
+        assert_eq!(
+            error.to_string(),
+            "invalid UTF-8 data at path '$[0]', line 2, column 1 (data pos 12)"
+        );
+
+        let error = ReaderError::new(ReaderErrorKind::IoError(IoError::other("custom")), location);
+        assert_eq!(
+            error.to_string(),
+            "IO error 'custom' at (roughly) path '$[0]', line 2, column 1 (data pos 12)"
+        );
     }
 
     #[test]
@@ -2795,19 +2839,20 @@ mod tests {
         assert_eq!(read_i64(&i64::MIN.to_string())?, i64::MIN);
         assert_eq!(read_i64(&i64::MAX.to_string())?, i64::MAX);
 
-        match read_i64("1.2") {
-            Err(ReaderError {
-                kind: ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit),
-                location:
-                    // dummy location used by custom reader
-                    JsonReaderPosition {
-                        path: None,
-                        line_pos: None,
-                        data_pos: None,
-                    },
-            }) => {}
-            result => panic!("unexpected result: {result:?}"),
-        }
+        let err = read_i64("1.2").unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            ReaderErrorKind::InvalidIntError(IntErrorKind::InvalidDigit)
+        ));
+        assert_eq!(
+            err.location(),
+            // dummy location used by custom reader
+            &JsonReaderPosition {
+                path: None,
+                line_pos: None,
+                data_pos: None,
+            }
+        );
 
         Ok(())
     }
