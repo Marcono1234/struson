@@ -116,13 +116,8 @@ impl<J: JsonReader + ?Sized> RecoverableJsonReader<'_, J> {
     }
 
     // Don't mark this as `#[cold]` because for recoverable reader errors are expected
-    fn error_location(&self) -> JsonReaderPosition {
-        self.delegate.current_position(true)
-    }
-
-    // Don't mark this as `#[cold]` because for recoverable reader errors are expected
     fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
-        Err(ReaderError::new(kind, self.error_location()))
+        Err(ReaderError::new(kind, self.delegate.current_position(true)))
     }
 
     /// Called before a JSON value of any type

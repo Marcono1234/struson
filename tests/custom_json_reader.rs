@@ -70,8 +70,8 @@ mod custom_reader {
             }
         }
 
-        fn create_error_location(&self) -> JsonReaderPosition {
-            self.current_position(true)
+        fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
+            Err(ReaderError::new(kind, self.current_position(true)))
         }
 
         fn begin_value(&mut self, expected: ValueType) -> Result<(), ReaderError> {
@@ -79,10 +79,7 @@ mod custom_reader {
             if actual == expected {
                 Ok(())
             } else {
-                Err(ReaderError::new(
-                    ReaderErrorKind::UnexpectedValueType { expected, actual },
-                    self.create_error_location(),
-                ))
+                self.error(ReaderErrorKind::UnexpectedValueType { expected, actual })
             }
         }
 
@@ -114,11 +111,8 @@ mod custom_reader {
                         if let Some(value) = iter.next() {
                             self.next_value = Some(value);
                         } else {
-                            return Err(ReaderError::new(
-                                ReaderErrorKind::UnexpectedStructure(
-                                    UnexpectedStructureKind::FewerElementsThanExpected,
-                                ),
-                                self.create_error_location(),
+                            return self.error(ReaderErrorKind::UnexpectedStructure(
+                                UnexpectedStructureKind::FewerElementsThanExpected,
                             ));
                         }
                     }
@@ -158,11 +152,8 @@ mod custom_reader {
             }
             if let Some(StackValue::Object(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError::new(
-                        ReaderErrorKind::UnexpectedStructure(
-                            UnexpectedStructureKind::MoreElementsThanExpected,
-                        ),
-                        self.create_error_location(),
+                    self.error(ReaderErrorKind::UnexpectedStructure(
+                        UnexpectedStructureKind::MoreElementsThanExpected,
                     ))
                 } else {
                     self.stack.pop();
@@ -194,11 +185,8 @@ mod custom_reader {
         fn end_array(&mut self) -> Result<(), ReaderError> {
             if let Some(StackValue::Array(iter)) = self.stack.last_mut() {
                 if iter.peek().is_some() {
-                    Err(ReaderError::new(
-                        ReaderErrorKind::UnexpectedStructure(
-                            UnexpectedStructureKind::MoreElementsThanExpected,
-                        ),
-                        self.create_error_location(),
+                    self.error(ReaderErrorKind::UnexpectedStructure(
+                        UnexpectedStructureKind::MoreElementsThanExpected,
                     ))
                 } else {
                     self.stack.pop();
@@ -242,11 +230,8 @@ mod custom_reader {
                             name = n.as_str();
                             self.next_value = Some(v);
                         } else {
-                            return Err(ReaderError::new(
-                                ReaderErrorKind::UnexpectedStructure(
-                                    UnexpectedStructureKind::FewerElementsThanExpected,
-                                ),
-                                self.create_error_location(),
+                            return self.error(ReaderErrorKind::UnexpectedStructure(
+                                UnexpectedStructureKind::FewerElementsThanExpected,
                             ));
                         }
                     }

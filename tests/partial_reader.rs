@@ -86,6 +86,10 @@ impl<J: JsonReader> PartialJsonReader<J> {
         self.delegate.current_position(include_path)
     }
 
+    fn error<T>(&self, kind: ReaderErrorKind) -> Result<T, ReaderError> {
+        Err(ReaderError::new(kind, self.current_position(true)))
+    }
+
     fn peek_value(&mut self) -> Result<ValueType, ReaderError> {
         let peeked = self.delegate.peek()?;
         self.peeked_value_pos = Some(self.provident_current_position());
@@ -184,11 +188,8 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
             let p = self.peeked_value.as_ref().unwrap();
             Ok(p.get_value_type())
         } else {
-            Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::FewerElementsThanExpected,
-                ),
-                self.current_position(true),
+            self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::FewerElementsThanExpected,
             ))
         }
     }
@@ -213,11 +214,8 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
 
         if self.has_next()? {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::MoreElementsThanExpected,
-                ),
-                self.current_position(true),
+            return self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::MoreElementsThanExpected,
             ));
         }
 
@@ -252,11 +250,8 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         }
 
         if self.has_next()? {
-            return Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::MoreElementsThanExpected,
-                ),
-                self.current_position(true),
+            return self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::MoreElementsThanExpected,
             ));
         }
 
@@ -311,11 +306,8 @@ impl<J: JsonReader> JsonReader for PartialJsonReader<J> {
         if self.has_next()? {
             Ok(self.peeked_name.take().unwrap())
         } else {
-            Err(ReaderError::new(
-                ReaderErrorKind::UnexpectedStructure(
-                    UnexpectedStructureKind::FewerElementsThanExpected,
-                ),
-                self.current_position(true),
+            self.error(ReaderErrorKind::UnexpectedStructure(
+                UnexpectedStructureKind::FewerElementsThanExpected,
             ))
         }
     }
