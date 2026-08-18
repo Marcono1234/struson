@@ -767,7 +767,7 @@ pub struct ReaderError(
      *
      * Arguably could instead have done `Result<..., Box<ReaderError>>` and kept the `pub` fields but that might
      * be a bit verbose and inconvenient.
-     * 
+     *
      * For benchmarks this does not seem to make a big / any difference?
      * But maybe has greater effect for more complex user code, especially if error is propagated up the call stack.
      */
