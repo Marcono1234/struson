@@ -330,6 +330,14 @@ impl Display for LinePosition {
 /// The position information can be used for troubleshooting malformed JSON or JSON data with an unexpected structure.
 /// Which position information is available depends on the implementation of the JSON reader and its configuration.
 #[derive(PartialEq, Eq, Clone, Debug)]
+/*
+ * Note: This struct currently takes quite some space on the stack (`size_of()` = ~64 bytes). When using it for
+ * error types maybe consider using Box either for the whole error or for the stored JsonReaderPosition.
+ * Could consider making the fields private and having a `Box<JsonReaderPositionImpl>` (similar to ReaderErrorImpl).
+ * However, not sure if this is worth it and whether it negatively affects other uses cases, because users might
+ * also call `JsonReader::current_position` in non-error situations (or in advance), and would then always pay for
+ * the heap allocation.
+ */
 pub struct JsonReaderPosition {
     /// JSON path of the position
     ///
@@ -740,35 +748,54 @@ impl ReaderErrorKind {
     }
 }
 
-/// Error which occurred while reading from a JSON reader
-#[derive(Error, Debug)]
-// TODO: Rename to `JsonReaderError`? current name might sound like this is only for errors from underlying `Read`
-pub struct ReaderError {
+#[derive(Debug)]
+struct ReaderErrorImpl {
     kind: ReaderErrorKind,
     location: JsonReaderPosition,
 }
+
+/// Error which occurred while reading from a JSON reader
+#[derive(Error, Debug)]
+// TODO: Rename to `JsonReaderError`? current name might sound like this is only for errors from underlying `Read`
+pub struct ReaderError(
+    /*
+     * Similar to serde_json box the inner implementation instead of having `pub` fields; this reduces the size on
+     * the stack to the size of Box, making the Ok path much cheaper for methods returning `Result<..., ReaderError>`
+     * See also
+     * - https://rust-lang.github.io/rust-clippy/master/#result_large_err
+     * - https://users.rust-lang.org/t/clippy-complains-my-error-type-is-too-big-what-is-the-best-solution/93410
+     *
+     * Arguably could instead have done `Result<..., Box<ReaderError>>` and kept the `pub` fields but that might
+     * be a bit verbose and inconvenient.
+     * 
+     * For benchmarks this does not seem to make a big / any difference?
+     * But maybe has greater effect for more complex user code, especially if error is propagated up the call stack.
+     */
+    Box<ReaderErrorImpl>,
+);
 impl ReaderError {
     /// Creates a new error
     #[cold]
     pub fn new(kind: ReaderErrorKind, location: JsonReaderPosition) -> Self {
-        ReaderError { kind, location }
+        ReaderError(Box::new(ReaderErrorImpl { kind, location }))
     }
 
     /// Gets the error kind
     pub fn kind(&self) -> &ReaderErrorKind {
-        &self.kind
+        &self.0.kind
     }
 
     /// Gets the location within the JSON document
     ///
     /// For some error kinds, such as [`ReaderErrorKind::IoError`], the location is not completely accurate.
     pub fn location(&self) -> &JsonReaderPosition {
-        &self.location
+        &self.0.location
     }
 
     /// Destructures this error into its inner data
     pub fn into_inner(self) -> (ReaderErrorKind, JsonReaderPosition) {
-        (self.kind, self.location)
+        let inner = *self.0;
+        (inner.kind, inner.location)
     }
 
     /// Creates a clone of this Error, preserving as much information as possible
@@ -1760,7 +1787,6 @@ pub trait JsonReader {
      * including the ReaderRecovery and the JsonReader reference it holds.
      */
     #[cfg(feature = "serde")]
-    #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
     fn deserialize_next_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
         &mut self,
     ) -> Result<

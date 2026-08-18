@@ -706,7 +706,6 @@ pub trait ValueReader<J: JsonReader> {
      * recovery would have to keep a reference to the underlying reader.
      */
     #[cfg(feature = "serde")]
-    #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
     fn read_deserialize_recoverable<'de, D: serde_core::de::Deserialize<'de>>(
         self,
     ) -> Result<RecoverySuccess<D>, UnrecoverableError>;
@@ -1758,7 +1757,6 @@ mod error_safe_reader {
         /// Helper method which delegates to [`Self::deserialize_next_recoverable`] and handles
         /// storing of errors and auto-recovery
         #[cfg(feature = "serde")]
-        #[allow(clippy::result_large_err)] // TODO: fix this; maybe by generally wrapping ReaderError in Box
         pub(super) fn read_deserialize_recoverable<'de, D: serde_core::Deserialize<'de>>(
             &mut self,
         ) -> Result<RecoverySuccess<D>, UnrecoverableError> {
