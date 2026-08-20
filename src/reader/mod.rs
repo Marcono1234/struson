@@ -15,6 +15,8 @@
 /// If you need more functionality, prefer a library which fully implements the JSONPath standard.
 ///
 /// The macro [`json_path!`](json_path::json_path) can be used to create a JSON path in a concise way.
+/// The function [`display_json_path`] can be used to create a display
+/// string for a JSON path.
 ///
 /// Consider for example the following code:
 /// ```
@@ -66,10 +68,31 @@ pub mod json_path {
     ///
     /// A JSON path as represented by this module are zero or more [`JsonPathPiece`] elements.
     /// The macro [`json_path!`] can be used to create a JSON path in a concise way.
-    /* TODO: Check if it is somehow possible to implement Display for this (and reuse code from format_abs_json_path then) */
+    ///
+    /// A display string of the path can be created using [`display_json_path`].
     pub type JsonPath = [JsonPathPiece];
 
-    pub(crate) fn format_abs_json_path(json_path: &JsonPath) -> String {
+    /// Creates a display string for a JSON path
+    ///
+    /// The string starts with a `$`, followed by `[<index>]` for [`JsonPathPiece::ArrayItem`]
+    /// pieces and `.<name>` for [`JsonPathPiece::ObjectMember`] pieces.
+    ///
+    /// **Important:** The string is only intended as human-readable representation of
+    /// the path, for example for error reporting purposes. It should not be stored or
+    /// parsed. It's format may change in the future.\
+    /// No escaping is performed for JSON object member names, meaning they could
+    /// lead to a malformed display string depending on the content of the name.
+    ///
+    /// # Examples
+    /// ```
+    /// # use struson::reader::json_path::*;
+    /// let path = json_path!["outer", 2, "inner"];
+    /// assert_eq!(
+    ///     display_json_path(&path),
+    ///     "$.outer[2].inner"
+    /// );
+    /// ```
+    pub fn display_json_path(json_path: &JsonPath) -> String {
         "$".to_string()
             + json_path
                 .iter()
@@ -133,17 +156,17 @@ pub mod json_path {
         use super::*;
 
         #[test]
-        fn test_format_abs_json_path() {
-            assert_eq!("$", format_abs_json_path(&Vec::new()));
+        fn test_display_json_path() {
+            assert_eq!("$", display_json_path(&Vec::new()));
 
-            assert_eq!("$[2]", format_abs_json_path(&[JsonPathPiece::ArrayItem(2)]));
+            assert_eq!("$[2]", display_json_path(&[JsonPathPiece::ArrayItem(2)]));
             assert_eq!(
                 "$[2][3]",
-                format_abs_json_path(&[JsonPathPiece::ArrayItem(2), JsonPathPiece::ArrayItem(3)])
+                display_json_path(&[JsonPathPiece::ArrayItem(2), JsonPathPiece::ArrayItem(3)])
             );
             assert_eq!(
                 "$[2].a",
-                format_abs_json_path(&[
+                display_json_path(&[
                     JsonPathPiece::ArrayItem(2),
                     JsonPathPiece::ObjectMember("a".to_owned())
                 ])
@@ -151,18 +174,18 @@ pub mod json_path {
 
             assert_eq!(
                 "$.a",
-                format_abs_json_path(&[JsonPathPiece::ObjectMember("a".to_owned())])
+                display_json_path(&[JsonPathPiece::ObjectMember("a".to_owned())])
             );
             assert_eq!(
                 "$.a.b",
-                format_abs_json_path(&[
+                display_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ObjectMember("b".to_owned())
                 ])
             );
             assert_eq!(
                 "$.a[2]",
-                format_abs_json_path(&[
+                display_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ArrayItem(2)
                 ])
@@ -212,7 +235,7 @@ use std::{
 
 use thiserror::Error;
 
-use self::json_path::{JsonPath, JsonPathPiece, format_abs_json_path};
+use self::json_path::{JsonPath, JsonPathPiece, display_json_path};
 use crate::writer::{JsonWriter, StringValueWriter, TransferredNumber};
 
 mod stream_reader;
@@ -329,6 +352,9 @@ impl Display for LinePosition {
 ///
 /// The position information can be used for troubleshooting malformed JSON or JSON data with an unexpected structure.
 /// Which position information is available depends on the implementation of the JSON reader and its configuration.
+///
+/// The reader position is [included in reader errors](ReaderError::location) or can be obtained manually
+/// with [`JsonReader::current_position`].
 #[derive(PartialEq, Eq, Clone, Debug)]
 /*
  * Note: This struct currently takes quite some space on the stack (`size_of()` = ~64 bytes). When using it for
@@ -417,11 +443,16 @@ impl JsonReaderPosition {
     }
 }
 
+/// Creates a display string for the position
+///
+/// The content of the string depends on the available information of the position
+/// (that is, which of its fields are `Some`). The `path` is formatted using
+/// [`display_json_path`].
 impl Display for JsonReaderPosition {
     // Create display string depending on which of the Option values are present
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(path) = &self.path {
-            write!(f, "path '{}'", format_abs_json_path(path))?;
+            write!(f, "path '{}'", display_json_path(path))?;
 
             if let Some(line_pos) = &self.line_pos {
                 write!(f, ", {line_pos}")?;
@@ -883,6 +914,9 @@ impl TransferError {
 ///     - [`seek_to`](Self::seek_to): Skipping values until a specified location is reached
 ///     - [`seek_back`](Self::seek_back): Skipping to the original nesting level where `seek_to` started
 ///     - [`skip_to_top_level`](Self::skip_to_top_level): Skipping the remaining elements of all enclosing JSON arrays and objects
+///  - Obtaining position (useful for custom error reporting)
+///     - [`current_position`](Self::current_position)
+///     - [`previous_json_path`](Self::previous_json_path)
 ///  - Other:
 ///     - [`transfer_to`](Self::transfer_to): Reading a JSON value and writing it to a given JSON writer
 ///     - [`consume_trailing_whitespace`](Self::consume_trailing_whitespace): Consuming trailing whitespace at the end of the JSON document
@@ -1446,11 +1480,11 @@ pub trait JsonReader {
     fn next_number_int<N: IntegerNumber>(&mut self) -> Result<N, ReaderError> {
         // call peek to position reader in front of value, needed for `current_position` call
         self.peek()?;
-        // obtain error location for easier troubleshooting; but don't include JSON path to reduce performance
-        // overhead in case no error actually occurs
-        let error_position = self.current_position(false);
+        let mut error_position = self.current_position(false);
         let number_result = self.next_number::<N>()?;
         number_result.map_err(|e| {
+            // Fetch the path only when it is actually needed for error reporting
+            error_position.path = self.previous_json_path();
             ReaderError::new(ReaderErrorKind::InvalidIntError(*e.kind()), error_position)
         })
     }
@@ -2409,14 +2443,16 @@ pub trait JsonReader {
     /// The position can be used to enhance custom errors when building a parser on top
     /// of this JSON reader. `include_path` determines whether the [JSON path](JsonReaderPosition::path)
     /// should be included, assuming the JSON reader implementation supports providing
-    /// this information (if it doesn't the path will be `None` regardless of `include_path`
-    /// value). Including the JSON path can make the position information more useful
-    /// for troubleshooting. However, if a caller frequently requests the position,
-    /// for example to have it providently in case subsequent parsing fails, then it
-    /// might improve performance to not include the path information.
+    /// this information and it is not [disabled in the `ReaderSettings`](ReaderSettings::track_path)
+    /// (otherwise the path will be `None` regardless of `include_path` value).
+    /// Including the JSON path can make the position information more useful for troubleshooting.
+    /// However, if a caller frequently requests the position, for example to have it providently
+    /// in case subsequent parsing fails, then it might improve performance to not include the
+    /// path information. In that case [`previous_json_path`](Self::previous_json_path) can be
+    /// used to fetch the path afterwards and supplement the position with it.
     ///
-    /// [Line](JsonReaderPosition::line_pos) and [data position](JsonReaderPosition::data_pos)
-    /// are only specified if [`has_next`](Self::has_next) or [`peek`](Self::peek) have just
+    /// The meaning of [line](JsonReaderPosition::line_pos) and [data position](JsonReaderPosition::data_pos)
+    /// is only specified if [`has_next`](Self::has_next) or [`peek`](Self::peek) have just
     /// been called, in which case their values point at the start of the next token. Otherwise
     /// their values can be anywhere between the previous token and the next token (if any).
     ///
@@ -2451,6 +2487,111 @@ pub trait JsonReader {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn current_position(&self, include_path: bool) -> JsonReaderPosition;
+
+    /// Gets the JSON path of the previous position in the JSON document
+    ///
+    /// - For JSON arrays the path points to the index of the previous item.
+    ///   If no item has been consumed yet it uses the index 0 (even if there are no items).
+    /// - For JSON objects the path points to the previous member, or to the current member if its
+    ///   name has already been consumed.
+    ///
+    /// Returns `None` if the JSON reader implementation does not track the path, or if path
+    /// tracking is [disabled in the `ReaderSettings`](ReaderSettings::track_path).
+    ///
+    /// This method is mainly intended for error reporting when additional constraints exist for
+    /// read JSON values, for example when reading a JSON string value and that value has to match
+    /// a certain pattern. For easier troubleshooting it can be beneficial to include the JSON path
+    /// of the malformed value, however fetching it always in advance with [`current_position`](Self::current_position)
+    /// will be expensive for the non-error case. Instead this method can be used to fetch the JSON
+    /// path afterwards once it is known that the value is invalid. It can also be combined with
+    /// `current_position` by first in advance fetching the position without path (which is usually
+    /// not as expensive) and then in the error case fetching the path and supplementing the position
+    /// data with it; see the examples below.
+    ///
+    /// When using this method to report that a JSON array or object as a whole is invalid, for
+    /// example when an array has too few items or an object is missing a member, consider first
+    /// closing the array or object with `end_array` respectively `end_object` or manually pop
+    /// the last path element to make sure the path points to the whole array / object and not to
+    /// its last element. Alternatively a [`ReaderErrorKind::UnexpectedStructure`] can be triggered
+    /// implicitly by calling [`peek`](Self::peek) or [`next_name`](Self::next_name) despite there
+    /// not being a next element.
+    ///
+    /// The function [`display_json_path`] can be used to create a display string for the JSON path.
+    ///
+    /// The default implementation delegates to [`current_position`](Self::current_position) and
+    /// adjusts the path, if present.
+    ///
+    /// # Examples
+    /// Let's assume an array of points encoded as JSON string in the format `x|y` should
+    /// be parsed:
+    ///
+    /// ```
+    /// # use struson::reader::*;
+    /// # use struson::reader::json_path::display_json_path;
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"["1|2", "3|2", "8"]"#.as_bytes()
+    /// );
+    /// json_reader.begin_array()?;
+    ///
+    /// while json_reader.has_next()? {
+    ///     let encoded_point = json_reader.next_str()?;
+    ///
+    /// #   #[expect(unused_variables)]
+    ///     if let Some((x, y)) = encoded_point.split_once('|') {
+    ///         // ...
+    ///     } else {
+    ///         // Drop the borrow on the `encoded_point` str
+    ///         let encoded_point = encoded_point.to_owned();
+    ///
+    ///         // Report the JSON path for easier troubleshooting
+    ///         let path = json_reader.previous_json_path()
+    ///             .map_or("<unknown path>".to_owned(), |path| display_json_path(&path));
+    ///         println!("Malformed point '{encoded_point}', at {path}");
+    ///     }
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// As mentioned above, this method can also be combined with [`current_position`](Self::current_position)
+    /// to provide more detailed location information. However, see the `current_position` documentation for
+    /// what to consider, especially remember to call `has_next()` or `peek()` to make sure `current_position`
+    /// reports the position right in front of the value.
+    /// ```
+    /// # use struson::reader::*;
+    /// let mut json_reader = JsonStreamReader::new(
+    ///     r#"["1|2", "3|2", "8"]"#.as_bytes()
+    /// );
+    /// json_reader.begin_array()?;
+    ///
+    /// while json_reader.has_next()? {
+    ///     // Don't include the JSON path (`false`), it will be fetched only if actually needed
+    ///     let mut pos = json_reader.current_position(false);
+    ///     let encoded_point = json_reader.next_str()?;
+    ///
+    /// #   #[expect(unused_variables)]
+    ///     if let Some((x, y)) = encoded_point.split_once('|') {
+    ///         // ...
+    ///     } else {
+    ///         // Drop the borrow on the `encoded_point` str
+    ///         let encoded_point = encoded_point.to_owned();
+    ///
+    ///         // Supplement the position with path information
+    ///         pos.path = json_reader.previous_json_path();
+    ///         println!("Malformed point '{encoded_point}', at {pos}");
+    ///     }
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn previous_json_path(&self) -> Option<Vec<JsonPathPiece>> {
+        self.current_position(true).path.map(|mut path| {
+            if let Some(JsonPathPiece::ArrayItem(index)) = path.last_mut()
+                && *index > 0
+            {
+                *index -= 1;
+            }
+            path
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2696,28 +2837,41 @@ mod tests {
         );
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum NumberReaderState {
+        Initial,
+        Peeked,
+        ObtainedPosition,
+        ReadNumber,
+        ObtainedPrevPath,
+    }
     struct NumberStringReader {
         number: String,
-        peeked: bool,
         expect_peeked: bool,
-        // Cell because it is set by `current_position` which only takes `&self` and not `&mut self`
-        obtained_location: Cell<bool>,
+        // Cell because it is updated by `current_position` which only takes `&self` and not `&mut self`
+        state: Cell<NumberReaderState>,
     }
     impl NumberStringReader {
         pub fn new(number: String, expect_peeked: bool) -> Self {
-            NumberStringReader {
+            Self {
                 number,
-                peeked: false,
                 expect_peeked,
-                obtained_location: Cell::new(false),
+                state: Cell::new(NumberReaderState::Initial),
+            }
+        }
+
+        fn update_state(&self, expected_current: NumberReaderState, new: NumberReaderState) {
+            let current = self.state.get();
+            if current == expected_current {
+                self.state.set(new);
+            } else {
+                panic!("unexpected state {current:?}, expected {expected_current:?}");
             }
         }
     }
     impl JsonReader for NumberStringReader {
         fn peek(&mut self) -> Result<ValueType, ReaderError> {
-            assert!(!self.peeked);
-            assert!(!self.obtained_location.get());
-            self.peeked = true;
+            self.update_state(NumberReaderState::Initial, NumberReaderState::Peeked);
             Ok(ValueType::Number)
         }
 
@@ -2765,11 +2919,13 @@ mod tests {
         }
 
         fn next_number_as_str(&mut self) -> Result<&str, ReaderError> {
-            if self.expect_peeked {
-                assert!(self.peeked);
-                // Should have obtained location before reading number and then manually parsing it
-                assert!(self.obtained_location.get());
-            }
+            let expected_state = if self.expect_peeked {
+                // Should have obtained position before reading number and then manually parsing it
+                NumberReaderState::ObtainedPosition
+            } else {
+                NumberReaderState::Initial
+            };
+            self.update_state(expected_state, NumberReaderState::ReadNumber);
             Ok(&self.number)
         }
 
@@ -2815,19 +2971,34 @@ mod tests {
             unreachable!()
         }
 
-        fn current_position(&self, _include_path: bool) -> JsonReaderPosition {
+        fn current_position(&self, include_path: bool) -> JsonReaderPosition {
             // Should have peeked before obtaining position, to make sure it points right before
             // value (and not at beginning of whitespace)
-            assert!(self.peeked);
-            assert!(!self.obtained_location.get());
-            self.obtained_location.set(true);
+            self.update_state(
+                NumberReaderState::Peeked,
+                NumberReaderState::ObtainedPosition,
+            );
+
+            // Should not request path in advance
+            assert!(!include_path);
 
             // dummy position for error creation
             JsonReaderPosition {
                 path: None,
                 line_pos: None,
-                data_pos: None,
+                data_pos: Some(123),
             }
+        }
+
+        // Override default implementation to make sure caller combines results from `current_position`
+        // and `previous_json_path`
+        fn previous_json_path(&self) -> Option<Vec<JsonPathPiece>> {
+            self.update_state(
+                NumberReaderState::ReadNumber,
+                NumberReaderState::ObtainedPrevPath,
+            );
+            // Dummy path for error creation
+            Some(json_path!["dummy"].to_vec())
         }
     }
 
@@ -2836,7 +3007,9 @@ mod tests {
     fn default_next_number() -> Result<(), Box<dyn Error>> {
         fn read_i64(json_number: &str) -> Result<i64, ParseIntError> {
             let mut reader = NumberStringReader::new(json_number.to_owned(), false);
-            reader.next_number().unwrap()
+            let result = reader.next_number().unwrap();
+            assert_eq!(reader.state.get(), NumberReaderState::ReadNumber);
+            result
         }
 
         assert_eq!(read_i64("-123")?, -123);
@@ -2864,7 +3037,14 @@ mod tests {
     fn default_next_number_int() -> Result<(), Box<dyn Error>> {
         fn read_i64(json_number: &str) -> Result<i64, ReaderError> {
             let mut reader = NumberStringReader::new(json_number.to_owned(), true);
-            reader.next_number_int()
+            let result = reader.next_number_int();
+            let expected_state = if result.is_err() {
+                NumberReaderState::ObtainedPrevPath
+            } else {
+                NumberReaderState::ReadNumber
+            };
+            assert_eq!(reader.state.get(), expected_state);
+            result
         }
 
         assert_eq!(read_i64("-123")?, -123);
@@ -2886,11 +3066,139 @@ mod tests {
             err.location(),
             // dummy location used by custom reader
             &JsonReaderPosition {
-                path: None,
+                path: Some(json_path!["dummy"].to_vec()),
                 line_pos: None,
-                data_pos: None,
+                data_pos: Some(123),
             }
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_previous_json_path() -> Result<(), Box<dyn Error>> {
+        let mut json_reader =
+            JsonStreamReader::new(r#"[1, {"a": 2, "b": [3, 4], "c": 5}, 6]"#.as_bytes());
+        // Call here does not make much sense, but verify that it does not panic
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![].to_vec())
+        );
+
+        json_reader.begin_array()?;
+        // Call here does not make much sense, but verify that it does not panic
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![0].to_vec())
+        );
+
+        assert_eq!(json_reader.next_number_as_str()?, "1");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // points to previous array item
+            Some(json_path![0].to_vec())
+        );
+
+        // `has_next()` call has no effect on path
+        assert!(json_reader.has_next()?);
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // still points to previous array item
+            Some(json_path![0].to_vec())
+        );
+
+        json_reader.begin_object()?;
+        // Call here does not make much sense, but verify that it does not panic
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "<?>"].to_vec())
+        );
+
+        assert_eq!(json_reader.next_name()?, "a");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "a"].to_vec())
+        );
+
+        assert_eq!(json_reader.next_number_as_str()?, "2");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "a"].to_vec())
+        );
+
+        // `has_next()` call has no effect on path
+        assert!(json_reader.has_next()?);
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // still points to previous object member
+            Some(json_path![1, "a"].to_vec())
+        );
+
+        assert_eq!(json_reader.next_name()?, "b");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "b"].to_vec())
+        );
+
+        json_reader.begin_array()?;
+        // Call here does not make much sense, but verify that it does not panic
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "b", 0].to_vec())
+        );
+
+        assert_eq!(json_reader.next_number_as_str()?, "3");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // points to previous array item
+            Some(json_path![1, "b", 0].to_vec())
+        );
+        assert_eq!(json_reader.next_number_as_str()?, "4");
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // points to previous array item
+            Some(json_path![1, "b", 1].to_vec())
+        );
+
+        json_reader.end_array()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "b"].to_vec())
+        );
+
+        // should also work with skipping
+        json_reader.skip_name()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "c"].to_vec())
+        );
+        json_reader.skip_value()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![1, "c"].to_vec())
+        );
+
+        json_reader.end_object()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            // points to previous array item
+            Some(json_path![1].to_vec())
+        );
+
+        // should also work with skipping
+        json_reader.skip_value()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![2].to_vec())
+        );
+
+        json_reader.end_array()?;
+        assert_eq!(
+            json_reader.previous_json_path(),
+            Some(json_path![].to_vec())
+        );
+
+        json_reader.consume_trailing_whitespace()?;
 
         Ok(())
     }
