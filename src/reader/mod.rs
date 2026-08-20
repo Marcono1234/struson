@@ -46,21 +46,21 @@ pub mod json_path {
     /// Creates a [`JsonPathPiece::ArrayItem`] with the number as index
     impl From<u32> for JsonPathPiece {
         fn from(v: u32) -> Self {
-            JsonPathPiece::ArrayItem(v)
+            Self::ArrayItem(v)
         }
     }
 
     /// Creates a [`JsonPathPiece::ObjectMember`] with the string as member name
     impl From<String> for JsonPathPiece {
         fn from(v: String) -> Self {
-            JsonPathPiece::ObjectMember(v)
+            Self::ObjectMember(v)
         }
     }
 
     /// Creates a [`JsonPathPiece::ObjectMember`] with the string as member name
     impl From<&str> for JsonPathPiece {
         fn from(v: &str) -> Self {
-            JsonPathPiece::ObjectMember(v.to_string())
+            Self::ObjectMember(v.to_string())
         }
     }
 
@@ -435,7 +435,7 @@ impl JsonReaderPosition {
     /// Creates an 'unknown' position, with all position information being [`None`]
     #[cfg(any(feature = "simple-api", test))] // only needed by simple-api and test code at the moment
     pub(crate) fn unknown_position() -> Self {
-        JsonReaderPosition {
+        Self {
             path: None,
             line_pos: None,
             data_pos: None,
@@ -808,7 +808,7 @@ impl ReaderError {
     /// Creates a new error
     #[cold]
     pub fn new(kind: ReaderErrorKind, location: JsonReaderPosition) -> Self {
-        ReaderError(Box::new(ReaderErrorImpl { kind, location }))
+        Self(Box::new(ReaderErrorImpl { kind, location }))
     }
 
     /// Gets the error kind

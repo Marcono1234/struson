@@ -525,7 +525,7 @@ impl<J: JsonWriter> SimpleJsonWriter<J> {
     /// );
     /// ```
     pub fn from_json_writer(json_writer: J) -> Self {
-        SimpleJsonWriter {
+        Self {
             json_writer: ErrorSafeJsonWriter {
                 delegate: json_writer,
                 error: None,
@@ -539,7 +539,7 @@ impl<W: Write> SimpleJsonWriter<JsonStreamWriter<W>> {
     /// The JSON data will be written UTF-8 encoded to the writer. Internally this creates a [`JsonStreamWriter`]
     /// which acts as delegate; see its documentation for more information about the writing behavior.
     pub fn new(writer: W) -> Self {
-        SimpleJsonWriter::from_json_writer(JsonStreamWriter::new(writer))
+        Self::from_json_writer(JsonStreamWriter::new(writer))
     }
 }
 

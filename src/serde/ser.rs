@@ -66,7 +66,7 @@ pub enum SerializerError {
 
 impl serde_core::ser::Error for SerializerError {
     fn custom<T: Display>(msg: T) -> Self {
-        SerializerError::Custom {
+        Self::Custom {
             message: msg.to_string(),
         }
     }

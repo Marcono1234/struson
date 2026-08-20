@@ -50,7 +50,7 @@ pub(crate) struct RecoverableJsonReader<'j, J: JsonReader + ?Sized> {
 
 impl<'j, J: JsonReader + ?Sized> RecoverableJsonReader<'j, J> {
     pub(crate) fn new(delegate: &'j mut J) -> Self {
-        RecoverableJsonReader {
+        Self {
             delegate,
             started_value: false,
             recovery_stack: Some(Vec::new()),

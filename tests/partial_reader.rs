@@ -64,7 +64,7 @@ struct PartialJsonReader<J: JsonReader> {
 impl<J: JsonReader> PartialJsonReader<J> {
     pub fn new(delegate: J) -> Self {
         let initial_pos = delegate.current_position(false);
-        PartialJsonReader {
+        Self {
             delegate,
             reached_eof: false,
             is_in_object: Vec::new(),

@@ -52,7 +52,7 @@ mod custom_reader {
     impl<'a> JsonValueReader<'a> {
         pub fn new(value: &'a Value) -> Self {
             let initial_nesting_capacity = 16;
-            JsonValueReader {
+            Self {
                 next_value: Some(value),
                 stack: Vec::with_capacity(initial_nesting_capacity),
                 expects_name: false,

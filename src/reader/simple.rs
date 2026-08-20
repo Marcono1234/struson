@@ -105,21 +105,21 @@ pub mod multi_json_path {
     /// Creates a [`MultiJsonPathPiece::ArrayItem`] with the number as index
     impl From<u32> for MultiJsonPathPiece {
         fn from(v: u32) -> Self {
-            MultiJsonPathPiece::ArrayItem(v)
+            Self::ArrayItem(v)
         }
     }
 
     /// Creates a [`MultiJsonPathPiece::ObjectMember`] with the string as member name
     impl From<String> for MultiJsonPathPiece {
         fn from(v: String) -> Self {
-            MultiJsonPathPiece::ObjectMember(v)
+            Self::ObjectMember(v)
         }
     }
 
     /// Creates a [`MultiJsonPathPiece::ObjectMember`] with the string as member name
     impl From<&str> for MultiJsonPathPiece {
         fn from(v: &str) -> Self {
-            MultiJsonPathPiece::ObjectMember(v.to_string())
+            Self::ObjectMember(v.to_string())
         }
     }
 
@@ -1575,7 +1575,7 @@ mod error_safe_reader {
     }
     impl<J: JsonReader> ErrorSafeJsonReader<J> {
         pub(super) fn new(delegate: J) -> Self {
-            ErrorSafeJsonReader {
+            Self {
                 delegate,
                 error: None,
             }
@@ -2032,7 +2032,7 @@ impl<J: JsonReader> SimpleJsonReader<J> {
     /// );
     /// ```
     pub fn from_json_reader(json_reader: J) -> Self {
-        SimpleJsonReader {
+        Self {
             json_reader: ErrorSafeJsonReader::new(json_reader),
             has_seeked: false,
         }
@@ -2103,7 +2103,7 @@ impl<R: Read> SimpleJsonReader<JsonStreamReader<R>> {
     /// Internally this creates a [`JsonStreamReader`] which acts as delegate; see its documentation for
     /// more information about the parsing behavior and security considerations.
     pub fn new(reader: R) -> Self {
-        SimpleJsonReader::from_json_reader(JsonStreamReader::new(reader))
+        Self::from_json_reader(JsonStreamReader::new(reader))
     }
 }
 

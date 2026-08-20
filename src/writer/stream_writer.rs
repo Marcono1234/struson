@@ -202,7 +202,7 @@ impl Default for WriterSettings {
     /// - [escape all control chars](Self::escape_all_control_chars): false (= only control characters `0x00` to `0x1F` are escaped)
     /// - [multiple top-level values](Self::multi_top_level_values): disallowed
     fn default() -> Self {
-        WriterSettings {
+        Self {
             allow_empty_document: false,
             pretty_print: false,
             escape_all_control_chars: false,
@@ -270,7 +270,7 @@ pub struct JsonStreamWriter<W: Write> {
 impl<W: Write> JsonStreamWriter<W> {
     /// Creates a JSON writer with [default settings](WriterSettings::default)
     pub fn new(writer: W) -> Self {
-        JsonStreamWriter::new_custom(writer, WriterSettings::default())
+        Self::new_custom(writer, WriterSettings::default())
     }
 
     /// Creates a JSON writer with custom settings
@@ -2143,7 +2143,7 @@ mod tests {
     }
     impl InterruptedWriter {
         pub fn new() -> Self {
-            InterruptedWriter {
+            Self {
                 buf: Vec::new(),
                 interrupted_count: 0,
             }

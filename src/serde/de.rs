@@ -72,7 +72,7 @@ impl DeserializerError {
 
 impl serde_core::de::Error for DeserializerError {
     fn custom<T: Display>(msg: T) -> Self {
-        DeserializerError::Custom {
+        Self::Custom {
             message: msg.to_string(),
         }
     }
@@ -82,7 +82,7 @@ impl serde_core::de::Error for DeserializerError {
 // convert it to `ReaderErrorKind::InvalidIntError`?
 impl From<ParseIntError> for DeserializerError {
     fn from(value: ParseIntError) -> Self {
-        DeserializerError::InvalidNumber {
+        Self::InvalidNumber {
             message: value.to_string(),
         }
     }
@@ -91,7 +91,7 @@ impl From<ParseIntError> for DeserializerError {
 //   JSON number string (?), so might be safe to call `unwrap()` / `expect(...)` on parse result?
 impl From<ParseFloatError> for DeserializerError {
     fn from(value: ParseFloatError) -> Self {
-        DeserializerError::InvalidNumber {
+        Self::InvalidNumber {
             message: value.to_string(),
         }
     }
@@ -1191,7 +1191,7 @@ mod tests {
     }
     impl TrackingVisitor {
         fn new(enum_variant_handling: EnumVariantHandling) -> Self {
-            TrackingVisitor {
+            Self {
                 visited: Vec::new(),
                 enum_variant_handling,
             }

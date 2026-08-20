@@ -43,7 +43,7 @@ mod custom_writer {
     }
     impl JsonValueWriter {
         pub fn new() -> Self {
-            JsonValueWriter {
+            Self {
                 stack: Vec::new(),
                 pending_name: None,
                 is_string_value_writer_active: false,

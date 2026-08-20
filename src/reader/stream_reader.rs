@@ -38,7 +38,7 @@ pub(crate) struct ReaderIoError(#[source] pub(crate) IoError, pub(crate) JsonRea
 
 impl From<ReaderIoError> for ReaderError {
     fn from(value: ReaderIoError) -> Self {
-        ReaderError::new(ReaderErrorKind::IoError(value.0), value.1)
+        Self::new(ReaderErrorKind::IoError(value.0), value.1)
     }
 }
 
@@ -60,10 +60,10 @@ impl From<StringReadingError> for ReaderError {
     fn from(e: StringReadingError) -> Self {
         match e {
             StringReadingError::SyntaxError { kind, location } => {
-                ReaderError::new(ReaderErrorKind::SyntaxError(kind), location)
+                Self::new(ReaderErrorKind::SyntaxError(kind), location)
             }
             StringReadingError::InvalidUtf8Data { location } => {
-                ReaderError::new(ReaderErrorKind::InvalidUtf8Data, location)
+                Self::new(ReaderErrorKind::InvalidUtf8Data, location)
             }
             StringReadingError::IoError(e) => e.into(),
         }
@@ -344,7 +344,7 @@ impl Default for ReaderSettings {
     ///
     /// These defaults are compliant with the JSON specification.
     fn default() -> Self {
-        ReaderSettings {
+        Self {
             allow_empty_document: false,
             allow_comments: false,
             allow_trailing_comma: false,
@@ -360,7 +360,7 @@ impl Default for ReaderSettings {
 impl<R: Read> JsonStreamReader<R> {
     /// Creates a JSON reader with [default settings](ReaderSettings::default)
     pub fn new(reader: R) -> Self {
-        JsonStreamReader::new_custom(reader, ReaderSettings::default())
+        Self::new_custom(reader, ReaderSettings::default())
     }
 
     /// Creates a JSON reader with custom settings
@@ -5690,7 +5690,7 @@ mod tests {
     }
     impl<'a> InterruptedReader<'a> {
         pub fn new(json: &'a str) -> Self {
-            InterruptedReader {
+            Self {
                 remaining_data: json.as_bytes(),
                 interrupted_count: 0,
             }
