@@ -374,6 +374,7 @@ impl<R: Read> JsonStreamReader<R> {
                 clippy::unbuffered_bytes,
                 reason = "user should use BufReader, if necessary"
             )]
+            // Note: Iterator from `Read::bytes()` retries on `ErrorKind::Interrupted`, as desired
             reader_iter: reader.bytes(),
             peeked_byte: None,
             string_value_buf: Some(String::with_capacity(INITIAL_STRING_VALUE_BUF_CAPACITY)),
@@ -447,7 +448,6 @@ impl<R: Read> JsonStreamReader<R> {
         if self.peeked_byte.is_some() {
             return Ok(self.peeked_byte);
         }
-        // Note: `next()` retries on `ErrorKind::Interrupted`, as desired
         match self.reader_iter.next().transpose() {
             Ok(byte) => {
                 // For EOF (`byte = None`) this assumes that users don't retry on error,
