@@ -2563,8 +2563,8 @@ pub trait JsonReader {
     ///
     /// When using this method to report that a JSON array or object as a whole is invalid, for
     /// example when an array has too few items or an object is missing a member, consider first
-    /// closing the array or object with `end_array` respectively `end_object` or manually pop
-    /// the last path element to make sure the path points to the whole array / object and not to
+    /// closing the array or object with `end_array` respectively `end_object` or manually remove
+    /// the last path piece to make sure the path points to the whole array / object and not to
     /// its last element. Alternatively a [`ReaderErrorKind::UnexpectedStructure`] can be triggered
     /// implicitly by calling [`peek`](Self::peek) or [`next_name`](Self::next_name) despite there
     /// not being a next element.
