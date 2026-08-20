@@ -74,14 +74,15 @@ pub mod json_path {
 
     /// Creates a display string for a JSON path
     ///
-    /// The string starts with a `$`, followed by `[<index>]` for [`JsonPathPiece::ArrayItem`]
-    /// pieces and `.<name>` for [`JsonPathPiece::ObjectMember`] pieces.
+    /// The string starts with a `$`, followed by
+    /// - `[<index>]` for [`JsonPathPiece::ArrayItem`] pieces
+    /// - `["<escaped-name>"]` for [`JsonPathPiece::ObjectMember`] pieces
     ///
-    /// **Important:** The string is only intended as human-readable representation of
+    /// **Note:** The string is mainly intended as human-readable representation of
     /// the path, for example for error reporting purposes. It should not be stored or
     /// parsed. It's format may change in the future.\
-    /// No escaping is performed for JSON object member names, meaning they could
-    /// lead to a malformed display string depending on the content of the name.
+    /// For convenience the format currently matches that of [JSONPath RFC 9535](https://www.rfc-editor.org/info/rfc9535/)
+    /// to allow using the path with external tools for troubleshooting.
     ///
     /// # Examples
     /// ```
@@ -89,16 +90,43 @@ pub mod json_path {
     /// let path = json_path!["outer", 2, "inner"];
     /// assert_eq!(
     ///     display_json_path(&path),
-    ///     "$.outer[2].inner"
+    ///     r#"$["outer"][2]["inner"]"#
     /// );
     /// ```
     pub fn display_json_path(json_path: &JsonPath) -> String {
+        fn escape_object_name(name: &str) -> String {
+            // Follows https://www.rfc-editor.org/info/rfc9535/#section-2.3.1 (for `"` quoted names)
+
+            // Note: Probably don't need to optimize this for performance; displaying JSON path is usually
+            // only done in the error case
+            name.chars()
+                .map(|c| match c {
+                    '"' => "\\\"".to_owned(),
+                    '\\' => "\\\\".to_owned(),
+                    // Control chars which have to be escaped
+                    '\u{0008}' => "\\b".to_owned(),
+                    '\u{000C}' => "\\f".to_owned(),
+                    '\n' => "\\n".to_owned(),
+                    '\r' => "\\r".to_owned(),
+                    '\t' => "\\t".to_owned(),
+                    // Control chars without dedicated escape sequence
+                    '\u{0000}'..'\u{0020}' => format!("\\u{:04X}", c as u16),
+                    // JSONPath also requires surrogate chars to be escaped; however Rust uses UTF-8 so
+                    // lone surrogate chars should not be possible
+                    // Emit all other chars as is
+                    _ => c.to_string(),
+                })
+                .collect::<String>()
+        }
+
         "$".to_string()
             + json_path
                 .iter()
                 .map(|p| match p {
                     JsonPathPiece::ArrayItem(index) => format!("[{index}]"),
-                    JsonPathPiece::ObjectMember(name) => format!(".{name}"),
+                    JsonPathPiece::ObjectMember(name) => {
+                        format!("[\"{}\"]", escape_object_name(name))
+                    }
                 })
                 .collect::<String>()
                 .as_str()
@@ -165,7 +193,7 @@ pub mod json_path {
                 display_json_path(&[JsonPathPiece::ArrayItem(2), JsonPathPiece::ArrayItem(3)])
             );
             assert_eq!(
-                "$[2].a",
+                r#"$[2]["a"]"#,
                 display_json_path(&[
                     JsonPathPiece::ArrayItem(2),
                     JsonPathPiece::ObjectMember("a".to_owned())
@@ -173,23 +201,48 @@ pub mod json_path {
             );
 
             assert_eq!(
-                "$.a",
+                r#"$["a"]"#,
                 display_json_path(&[JsonPathPiece::ObjectMember("a".to_owned())])
             );
             assert_eq!(
-                "$.a.b",
+                r#"$["a"]["b"]"#,
                 display_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ObjectMember("b".to_owned())
                 ])
             );
             assert_eq!(
-                "$.a[2]",
+                r#"$["a"][2]"#,
                 display_json_path(&[
                     JsonPathPiece::ObjectMember("a".to_owned()),
                     JsonPathPiece::ArrayItem(2)
                 ])
             );
+
+            let escaping_data = [
+                ("\u{0000}", "\\u0000"),
+                ("\u{0019}", "\\u0019"),
+                ("\u{0008}", "\\b"),
+                ("\u{000C}", "\\f"),
+                ("\n", "\\n"),
+                ("\r", "\\r"),
+                ("\t", "\\t"),
+                ("\"", "\\\""),
+                ("\\", "\\\\"),
+                // These need no escaping
+                ("", ""),
+                ("a", "a"),
+                (" ", " "), // space = U+0020
+                ("'", "'"),
+                ("/", "/"),
+                ("\u{10000}", "\u{10000}"),
+            ];
+            for escaping_entry in escaping_data {
+                assert_eq!(
+                    display_json_path(&[JsonPathPiece::ObjectMember(escaping_entry.0.to_owned()),]),
+                    format!("$[\"{}\"]", escaping_entry.1)
+                );
+            }
         }
 
         #[test]
@@ -2777,18 +2830,18 @@ mod tests {
             ((None, None, data_pos), "data pos 3"),
             ((None, line_pos, None), "line 1, column 2"),
             ((None, line_pos, data_pos), "line 1, column 2 (data pos 3)"),
-            ((path.clone(), None, None), "path '$[1].name'"),
+            ((path.clone(), None, None), r#"path '$[1]["name"]'"#),
             (
                 (path.clone(), None, data_pos),
-                "path '$[1].name', data pos 3",
+                r#"path '$[1]["name"]', data pos 3"#,
             ),
             (
                 (path.clone(), line_pos, None),
-                "path '$[1].name', line 1, column 2",
+                r#"path '$[1]["name"]', line 1, column 2"#,
             ),
             (
                 (path.clone(), line_pos, data_pos),
-                "path '$[1].name', line 1, column 2 (data pos 3)",
+                r#"path '$[1]["name"]', line 1, column 2 (data pos 3)"#,
             ),
         ];
 

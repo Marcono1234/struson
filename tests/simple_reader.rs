@@ -635,7 +635,7 @@ mod deserialize_recoverable {
                 match result {
                     Ok(RecoverySuccess::Recovered { original_error }) => {
                         assert_eq!(
-                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            "expected JSON value type Number but got Boolean at path '$[0][\"a\"][0]', line 0, column 8 (data pos 8)",
                             original_error.to_string()
                         );
                     }
@@ -665,7 +665,7 @@ mod deserialize_recoverable {
                 match result {
                     Ok(RecoverySuccess::Recovered { original_error }) => {
                         assert_eq!(
-                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            "expected JSON value type Number but got Boolean at path '$[0][\"a\"][0]', line 0, column 8 (data pos 8)",
                             original_error.to_string()
                         );
                     }
@@ -696,7 +696,7 @@ mod deserialize_recoverable {
             match result {
                 Err(UnrecoverableError { original_error, recovery_error: None }) => {
                     assert_eq!(
-                        "JSON syntax error UnknownEscapeSequence at path '$.<?>', line 0, column 4 (data pos 4)",
+                        "JSON syntax error UnknownEscapeSequence at path '$[\"<?>\"]', line 0, column 4 (data pos 4)",
                         original_error.to_string()
                     );
                 }
@@ -710,7 +710,7 @@ mod deserialize_recoverable {
         assert!(was_called);
         // Error should have been repeated
         assert_eq!(
-            "JSON syntax error UnknownEscapeSequence at path '$.<?>', line 0, column 4 (data pos 4)",
+            "JSON syntax error UnknownEscapeSequence at path '$[\"<?>\"]', line 0, column 4 (data pos 4)",
             result.unwrap_err().to_string()
         );
     }
@@ -1159,7 +1159,7 @@ mod read_seeked_multi {
             panic!("should not have been called");
         });
         assert_eq!(
-            "unexpected JSON structure MissingObjectMember(\"b\") at path '$.a', line 0, column 7 (data pos 7)",
+            "unexpected JSON structure MissingObjectMember(\"b\") at path '$[\"a\"]', line 0, column 7 (data pos 7)",
             result.unwrap_err().to_string()
         );
 
@@ -1441,7 +1441,7 @@ mod read_seeked_multi {
                 Ok(())
             });
         assert_eq!(
-            "unexpected JSON structure FewerElementsThanExpected at path '$[1].<?>', line 0, column 12 (data pos 12)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$[1][\"<?>\"]', line 0, column 12 (data pos 12)",
             result.unwrap_err().to_string()
         );
         // Should have already collected the first value
@@ -1453,7 +1453,7 @@ mod read_seeked_multi {
             panic!("should not have been called");
         });
         assert_eq!(
-            "unexpected JSON structure FewerElementsThanExpected at path '$.<?>', line 0, column 1 (data pos 1)",
+            "unexpected JSON structure FewerElementsThanExpected at path '$[\"<?>\"]', line 0, column 1 (data pos 1)",
             result.unwrap_err().to_string()
         );
 
@@ -1697,7 +1697,7 @@ mod read_seeked_multi {
                 Ok(())
             });
         assert_eq!(
-            "unexpected JSON structure MissingObjectMember(\"a\") at path '$[1].<?>', line 0, column 12 (data pos 12)",
+            "unexpected JSON structure MissingObjectMember(\"a\") at path '$[1][\"<?>\"]', line 0, column 12 (data pos 12)",
             result.unwrap_err().to_string()
         );
         // Should have already collected the first value
@@ -1799,7 +1799,7 @@ mod read_seeked_multi {
                 panic!("should not have been called");
             });
             assert_eq!(
-                "unexpected JSON structure FewerElementsThanExpected at path '$[0].<?>', line 0, column 2 (data pos 2)",
+                "unexpected JSON structure FewerElementsThanExpected at path '$[0][\"<?>\"]', line 0, column 2 (data pos 2)",
                 result.unwrap_err().to_string()
             );
             call_count += 1;
@@ -1808,7 +1808,7 @@ mod read_seeked_multi {
         assert_eq!(1, call_count);
         assert_eq!(
             // Created a dummy `IncompleteDocument` error
-            "JSON syntax error IncompleteDocument at path '$[0].<?>', line 0, column 2 (data pos 2)",
+            "JSON syntax error IncompleteDocument at path '$[0][\"<?>\"]', line 0, column 2 (data pos 2)",
             result.unwrap_err().to_string()
         );
 
@@ -2084,7 +2084,7 @@ fn discarded_error_handling() {
     assert_eq!(1, call_count);
     assert_eq!(
         // Created a dummy `IncompleteDocument` error
-        "JSON syntax error IncompleteDocument at path '$.a', line 0, column 6 (data pos 6)",
+        "JSON syntax error IncompleteDocument at path '$[\"a\"]', line 0, column 6 (data pos 6)",
         result.unwrap_err().to_string()
     );
 
@@ -2176,7 +2176,7 @@ fn discarded_error_handling() {
     let result = json_reader.read_object_borrowed_names(|mut member_reader| {
         let result = member_reader.read_name();
         assert_eq!(
-            "IO error 'custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
+            "IO error 'custom-message' at (roughly) path '$[\"<?>\"]', line 0, column 6 (data pos 6)",
             result.unwrap_err().to_string()
         );
         member_reader.read_bool().unwrap_err();
@@ -2186,7 +2186,7 @@ fn discarded_error_handling() {
     assert_eq!(1, call_count);
     assert_eq!(
         format!(
-            "IO error 'previous error '{}': custom-message' at (roughly) path '$.<?>', line 0, column 6 (data pos 6)",
+            "IO error 'previous error '{}': custom-message' at (roughly) path '$[\"<?>\"]', line 0, column 6 (data pos 6)",
             ErrorKind::UnexpectedEof
         ),
         result.unwrap_err().to_string()

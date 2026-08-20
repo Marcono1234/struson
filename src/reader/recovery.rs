@@ -611,7 +611,7 @@ mod tests {
         let result = json_reader.seek_to(&json_path);
         assert_eq!(
             result.unwrap_err().to_string(),
-            "unexpected JSON structure MissingObjectMember(\"b\") at path '$[1].a', line 0, column 11 (data pos 11)"
+            "unexpected JSON structure MissingObjectMember(\"b\") at path '$[1][\"a\"]', line 0, column 11 (data pos 11)"
         );
 
         // Verify that error is recoverable

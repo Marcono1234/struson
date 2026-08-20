@@ -5976,7 +5976,7 @@ mod tests {
                 match json_reader.deserialize_next_recoverable::<HashMap<String, Vec<u32>>>() {
                     Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
                         assert_eq!(
-                            "expected JSON value type Number but got Boolean at path '$[0].a[0]', line 0, column 8 (data pos 8)",
+                            "expected JSON value type Number but got Boolean at path '$[0][\"a\"][0]', line 0, column 8 (data pos 8)",
                             reader_error.to_string()
                         );
 
@@ -6009,7 +6009,7 @@ mod tests {
                 match json_reader.deserialize_next_recoverable::<CustomEnum>() {
                     Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
                         assert_eq!(
-                            "unexpected JSON structure FewerElementsThanExpected at path '$[0].<?>', line 0, column 2 (data pos 2)",
+                            "unexpected JSON structure FewerElementsThanExpected at path '$[0][\"<?>\"]', line 0, column 2 (data pos 2)",
                             reader_error.to_string()
                         );
 
@@ -6030,7 +6030,7 @@ mod tests {
                 match json_reader.deserialize_next_recoverable::<CustomEnum>() {
                     Err((DeserializerError::ReaderError(reader_error), Some(recovery))) => {
                         assert_eq!(
-                            "unexpected JSON structure MoreElementsThanExpected at path '$[0].A', line 0, column 10 (data pos 10)",
+                            "unexpected JSON structure MoreElementsThanExpected at path '$[0][\"A\"]', line 0, column 10 (data pos 10)",
                             reader_error.to_string()
                         );
 
