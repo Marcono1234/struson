@@ -376,7 +376,7 @@ impl<R: JsonReader + ?Sized> JsonReaderDeserializer<'_, R> {
 ///
 /// // Continue using `json_reader` ...
 /// # assert_eq!(
-/// #     MyStruct { text: "some text".to_string(), number: 5 },
+/// #     MyStruct { text: "some text".to_owned(), number: 5 },
 /// #     value
 /// # );
 /// # Ok::<(), Box<dyn std::error::Error>>(())

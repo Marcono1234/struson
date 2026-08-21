@@ -60,7 +60,7 @@ pub mod json_path {
     /// Creates a [`JsonPathPiece::ObjectMember`] with the string as member name
     impl From<&str> for JsonPathPiece {
         fn from(v: &str) -> Self {
-            Self::ObjectMember(v.to_string())
+            Self::ObjectMember(v.to_owned())
         }
     }
 
@@ -119,7 +119,7 @@ pub mod json_path {
                 .collect::<String>()
         }
 
-        "$".to_string()
+        "$".to_owned()
             + json_path
                 .iter()
                 .map(|p| match p {

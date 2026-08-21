@@ -119,7 +119,7 @@ pub mod multi_json_path {
     /// Creates a [`MultiJsonPathPiece::ObjectMember`] with the string as member name
     impl From<&str> for MultiJsonPathPiece {
         fn from(v: &str) -> Self {
-            Self::ObjectMember(v.to_string())
+            Self::ObjectMember(v.to_owned())
         }
     }
 
