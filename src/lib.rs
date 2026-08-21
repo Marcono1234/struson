@@ -1,6 +1,5 @@
 #![warn(missing_docs)]
 // Enable 'unused' warnings for doc tests (are disabled by default)
-#![doc(test(no_crate_inject))]
 #![doc(test(attr(warn(unused))))]
 // Fail on warnings in doc tests
 #![doc(test(attr(deny(warnings))))]
