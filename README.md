@@ -63,6 +63,7 @@ Two variants of the API are provided:
 
 See [`SimpleJsonReader`](https://docs.rs/struson/latest/struson/reader/simple/struct.SimpleJsonReader.html).
 
+<!-- markdown-doctest-names: simple-api -->
 ```rust
 use struson::reader::simple::*;
 
@@ -82,6 +83,7 @@ For reading nested values, the methods [`read_seeked`](https://docs.rs/struson/l
 and [`read_seeked_multi`](https://docs.rs/struson/latest/struson/reader/simple/trait.ValueReader.html#tymethod.read_seeked_multi)
 can be used:
 
+<!-- markdown-doctest-names: simple-api -->
 ```rust
 use struson::reader::simple::*;
 use struson::reader::simple::multi_json_path::multi_json_path;
@@ -111,6 +113,7 @@ assert_eq!(ages, vec![32, 41]);
 
 See [`SimpleJsonWriter`](https://docs.rs/struson/latest/struson/writer/simple/struct.SimpleJsonWriter.html).
 
+<!-- markdown-doctest-names: simple-api -->
 ```rust
 use struson::writer::simple::*;
 

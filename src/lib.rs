@@ -196,3 +196,23 @@ pub mod serde;
 
 mod json_number;
 mod utf8;
+
+#[cfg(doctest)]
+markdown_doctest::md_doctest!(
+    "../README.md",
+    transforms = {
+        // Feature-gate code blocks with name "simple-api" to support running `cargo test` (without `--all-features`)
+        "simple-api": {
+            ^ => [
+                "#[cfg(feature = \"simple-api\")]",
+                "{",
+            ],
+            $ => "}",
+        },
+        *: {
+            // Return `Ok` to allow using `?` within the code blocks
+            $ => "Ok::<(), Box<dyn std::error::Error>>(())",
+        },
+    },
+    // debug,  // Uncomment this to create debug file with transformed Markdown code blocks
+);
