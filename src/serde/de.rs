@@ -1884,112 +1884,116 @@ mod tests {
         );
     }
 
-    #[duplicate::duplicate_item(
-        method visited_type;
-        [deserialize_char] [Str];
-        [deserialize_str] [Str];
-        [deserialize_string] [String];
-        [deserialize_identifier] [Str];
-    )]
-    #[test]
-    fn method() {
-        assert_deserialized_cmp!("\"\"", method, [Visited::visited_type("".to_owned())]);
-        assert_deserialized_cmp!("\"a\"", method, [Visited::visited_type("a".to_owned())]);
-        assert_deserialized_cmp!(
-            "\"\\u0000\"",
-            method,
-            [Visited::visited_type("\0".to_owned())]
-        );
-        assert_deserialized_cmp!(
-            "\"\u{10FFFF}\"",
-            method,
-            [Visited::visited_type("\u{10FFFF}".to_owned())]
-        );
+    macro_rules! test_deserialize_str {
+        ($method:ident, $visited_type:ident) => {
+            #[test]
+            fn $method() {
+                assert_deserialized_cmp!("\"\"", $method, [Visited::$visited_type("".to_owned())]);
+                assert_deserialized_cmp!("\"a\"", $method, [Visited::$visited_type("a".to_owned())]);
+                assert_deserialized_cmp!(
+                    "\"\\u0000\"",
+                    $method,
+                    [Visited::$visited_type("\0".to_owned())]
+                );
+                assert_deserialized_cmp!(
+                    "\"\u{10FFFF}\"",
+                    $method,
+                    [Visited::$visited_type("\u{10FFFF}".to_owned())]
+                );
 
-        assert_deserialize_reader_error!(
-            "true",
-            method,
-            ReaderErrorKind::UnexpectedValueType {
-                expected: ValueType::String,
-                actual: ValueType::Boolean
-            } => {}
-        );
-    }
-
-    #[duplicate::duplicate_item(
-        method visited_type;
-        [deserialize_bytes] [Bytes];
-        [deserialize_byte_buf] [ByteBuf];
-    )]
-    #[test]
-    fn method() {
-        assert_deserialized_cmp!("\"\"", method, [Visited::visited_type(vec![])]);
-        assert_deserialized_cmp!(
-            "\"a\"",
-            method,
-            [Visited::visited_type("a".as_bytes().to_owned())]
-        );
-        assert_deserialized_cmp!(
-            "\"\\u0000\"",
-            method,
-            [Visited::visited_type("\0".as_bytes().to_owned())]
-        );
-        assert_deserialized_cmp!(
-            "\"\u{10FFFF}\"",
-            method,
-            [Visited::visited_type("\u{10FFFF}".as_bytes().to_owned())]
-        );
-
-        assert_deserialized_cmp!(
-            "[1, 2]",
-            method,
-            [
-                Visited::SeqStart,
-                Visited::U64(1),
-                Visited::U64(2),
-                Visited::SeqEnd
-            ]
-        );
-        // This just documents the current behavior; validation that array items are numbers might be added later
-        assert_deserialized_cmp!(
-            "[true]",
-            method,
-            [Visited::SeqStart, Visited::Bool(true), Visited::SeqEnd]
-        );
-
-        // Unlike serde_json malformed UTF-8 strings are not supported
-        assert_deserialize_reader_error!(
-            "\"\\uD800\"",
-            method,
-            ReaderErrorKind::SyntaxError(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence) => {}
-        );
-        let mut json_reader = JsonStreamReader::new(b"\"\x80\"" as &[u8]); // malformed single byte
-        let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
-        let visitor = &mut TrackingVisitor::new(EnumVariantHandling::Unit);
-        let result = deserializer.method(visitor);
-        match result {
-            Err(DeserializerError::ReaderError(err)) => {
-                assert!(matches!(err.kind(), ReaderErrorKind::InvalidUtf8Data));
-                assert_eq!(
-                    &JsonReaderPosition {
-                        path: Some(Vec::new()),
-                        line_pos: Some(LinePosition { line: 0, column: 1 }),
-                        data_pos: Some(1),
-                    },
-                    err.location()
+                assert_deserialize_reader_error!(
+                    "true",
+                    $method,
+                    ReaderErrorKind::UnexpectedValueType {
+                        expected: ValueType::String,
+                        actual: ValueType::Boolean
+                    } => {}
                 );
             }
-            r => panic!("unexpected result: {r:?}"),
-        }
-
-        assert_deserialize_error!(
-            "true",
-            method,
-            DeserializerError::Custom { message } => {
-                assert_eq!("invalid type: bool, expected custom-test-value", message);
-            }
-        );
+        };
     }
+
+    test_deserialize_str!(deserialize_char, Str);
+    test_deserialize_str!(deserialize_str, Str);
+    test_deserialize_str!(deserialize_string, String);
+    test_deserialize_str!(deserialize_identifier, Str);
+
+    macro_rules! test_deserialize_bytes {
+        ($method:ident, $visited_type:ident) => {
+            #[test]
+            fn $method() {
+                assert_deserialized_cmp!("\"\"", $method, [Visited::$visited_type(vec![])]);
+                assert_deserialized_cmp!(
+                    "\"a\"",
+                    $method,
+                    [Visited::$visited_type("a".as_bytes().to_owned())]
+                );
+                assert_deserialized_cmp!(
+                    "\"\\u0000\"",
+                    $method,
+                    [Visited::$visited_type("\0".as_bytes().to_owned())]
+                );
+                assert_deserialized_cmp!(
+                    "\"\u{10FFFF}\"",
+                    $method,
+                    [Visited::$visited_type("\u{10FFFF}".as_bytes().to_owned())]
+                );
+
+                assert_deserialized_cmp!(
+                    "[1, 2]",
+                    $method,
+                    [
+                        Visited::SeqStart,
+                        Visited::U64(1),
+                        Visited::U64(2),
+                        Visited::SeqEnd
+                    ]
+                );
+                // This just documents the current behavior; validation that array items are numbers might be added later
+                assert_deserialized_cmp!(
+                    "[true]",
+                    $method,
+                    [Visited::SeqStart, Visited::Bool(true), Visited::SeqEnd]
+                );
+
+                // Unlike serde_json malformed UTF-8 strings are not supported
+                assert_deserialize_reader_error!(
+                    "\"\\uD800\"",
+                    $method,
+                    ReaderErrorKind::SyntaxError(SyntaxErrorKind::UnpairedSurrogatePairEscapeSequence) => {}
+                );
+                let mut json_reader = JsonStreamReader::new(b"\"\x80\"" as &[u8]); // malformed single byte
+                let mut deserializer = JsonReaderDeserializer::new(&mut json_reader);
+                let visitor = &mut TrackingVisitor::new(EnumVariantHandling::Unit);
+                let result = deserializer.$method(visitor);
+                match result {
+                    Err(DeserializerError::ReaderError(err)) => {
+                        assert!(matches!(err.kind(), ReaderErrorKind::InvalidUtf8Data));
+                        assert_eq!(
+                            &JsonReaderPosition {
+                                path: Some(Vec::new()),
+                                line_pos: Some(LinePosition { line: 0, column: 1 }),
+                                data_pos: Some(1),
+                            },
+                            err.location()
+                        );
+                    }
+                    r => panic!("unexpected result: {r:?}"),
+                }
+
+                assert_deserialize_error!(
+                    "true",
+                    $method,
+                    DeserializerError::Custom { message } => {
+                        assert_eq!("invalid type: bool, expected custom-test-value", message);
+                    }
+                );
+            }
+        };
+    }
+
+    test_deserialize_bytes!(deserialize_bytes, Bytes);
+    test_deserialize_bytes!(deserialize_byte_buf, ByteBuf);
 
     #[test]
     fn deserialize_option() {
@@ -2520,15 +2524,17 @@ mod tests {
                 ]
             );
 
-            // These all fall back to `visit_str`
-            duplicate::duplicate! {
-                [
-                    method;
-                    [deserialize_seq];
-                    [deserialize_map];
-                ]
-                assert_deserialized_key_success!("abc", |d, v| {d.method(v)}, [Visited::Str("abc".to_owned())]);
-            }
+            // These fall back to `visit_str`
+            assert_deserialized_key_success!(
+                "abc",
+                |d, v| { d.deserialize_seq(v) },
+                [Visited::Str("abc".to_owned())]
+            );
+            assert_deserialized_key_success!(
+                "abc",
+                |d, v| { d.deserialize_map(v) },
+                [Visited::Str("abc".to_owned())]
+            );
 
             // Currently `deserialize_ignored_any` calls `visit_str`; this matches serde_json's behavior,
             // but maybe `visit_none` would make more sense (and be consistent with JsonReaderDeserializer)

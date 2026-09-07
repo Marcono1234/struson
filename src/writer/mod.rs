@@ -5,7 +5,6 @@
 
 use std::{fmt::Debug, io::Write};
 
-use duplicate::duplicate_item;
 use thiserror::Error;
 
 use crate::json_number::is_valid_json_number;
@@ -745,14 +744,8 @@ pub trait FloatingPointNumber: private::Sealed {
 }
 
 mod private {
-    use super::*;
-
     // Sealed trait, see https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
     pub trait Sealed {}
-
-    // Use `duplicate` crate to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
-    #[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize]; [f32]; [f64])]
-    impl Sealed for type_template {}
 }
 
 /// Error which occurred while writing a JSON number
@@ -769,75 +762,102 @@ pub enum JsonNumberError {
     IoError(#[from] IoError),
 }
 
-// Use `duplicate` crate to avoid repeating code for all supported types, see https://stackoverflow.com/a/61467564
-#[duplicate_item(type_template; [u8]; [i8]; [u16]; [i16]; [u32]; [i32]; [u64]; [i64]; [u128]; [i128]; [usize]; [isize])]
-impl FiniteNumber for type_template {
-    #[inline(always)]
-    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
-        &self,
-        consumer: C,
-    ) -> Result<(), IoError> {
-        // TODO: Use https://docs.rs/itoa for better performance? (used also by serde_json)
-        //   see https://github.com/Marcono1234/struson/issues/2
-        let string = self.to_string();
-        debug_assert!(
-            is_valid_json_number(&string),
-            "Unexpected: Not a valid JSON number: {string}"
-        );
-        consumer(&string)
-    }
+macro_rules! impl_finite_number {
+    // Note: Don't use repetition operator here; while that makes usage of the macro less verbose, it makes
+    // troubleshooting more cumbersome because macro can then only be expanded for all types, not individual ones
+    ($type:ty) => {
+        impl FiniteNumber for $type {
+            #[inline(always)]
+            fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
+                &self,
+                consumer: C,
+            ) -> Result<(), IoError> {
+                // TODO: Use https://docs.rs/itoa for better performance? (used also by serde_json)
+                //   see https://github.com/Marcono1234/struson/issues/2
+                let string = self.to_string();
+                debug_assert!(
+                    is_valid_json_number(&string),
+                    "Unexpected: Not a valid JSON number: {string}"
+                );
+                consumer(&string)
+            }
 
-    fn as_u64(&self) -> Option<u64> {
-        // TODO: Should this only use `into()` and for all unsupported types (e.g. signed or u128, ...) always return None?
-        #[allow(
-            clippy::useless_conversion,
-            clippy::unnecessary_fallible_conversions,
-            reason = "for u64 -> u64"
-        )]
-        (*self).try_into().ok()
-    }
+            fn as_u64(&self) -> Option<u64> {
+                // TODO: Should this only use `into()` and for all unsupported types (e.g. signed or u128, ...) always return None?
+                #[allow(
+                    clippy::useless_conversion,
+                    clippy::unnecessary_fallible_conversions,
+                    reason = "for u64 -> u64"
+                )]
+                (*self).try_into().ok()
+            }
 
-    fn as_i64(&self) -> Option<i64> {
-        // TODO: Should this only use `into()` and for all unsupported types (u64, u128, i128, usize and isize) always return None?
-        #[allow(
-            clippy::useless_conversion,
-            clippy::unnecessary_fallible_conversions,
-            reason = "for i64 -> i64"
-        )]
-        (*self).try_into().ok()
-    }
-}
-
-#[duplicate_item(type_template; [f32]; [f64])]
-impl FloatingPointNumber for type_template {
-    #[inline(always)]
-    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
-        &self,
-        consumer: C,
-    ) -> Result<(), JsonNumberError> {
-        if self.is_finite() {
-            // TODO: Use https://docs.rs/ryu or https://docs.rs/zmij for better performance? (used also by serde_json)
-            //   see https://github.com/Marcono1234/struson/issues/2
-            //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
-            let string = self.to_string();
-            debug_assert!(
-                is_valid_json_number(&string),
-                "Unexpected: Not a valid JSON number: {string}"
-            );
-            consumer(&string)?;
-            Ok(())
-        } else {
-            Err(JsonNumberError::InvalidNumber {
-                message: format!("non-finite number: {self}"),
-            })
+            fn as_i64(&self) -> Option<i64> {
+                // TODO: Should this only use `into()` and for all unsupported types (u64, u128, i128, usize and isize) always return None?
+                #[allow(
+                    clippy::useless_conversion,
+                    clippy::unnecessary_fallible_conversions,
+                    reason = "for i64 -> i64"
+                )]
+                (*self).try_into().ok()
+            }
         }
-    }
 
-    fn as_f64(&self) -> Option<f64> {
-        #[allow(clippy::useless_conversion, reason = "for f64 -> f64")]
-        Some((*self).into())
-    }
+        impl private::Sealed for $type {}
+    };
 }
+
+impl_finite_number!(u8);
+impl_finite_number!(i8);
+impl_finite_number!(u16);
+impl_finite_number!(i16);
+impl_finite_number!(u32);
+impl_finite_number!(i32);
+impl_finite_number!(u64);
+impl_finite_number!(i64);
+impl_finite_number!(u128);
+impl_finite_number!(i128);
+impl_finite_number!(usize);
+impl_finite_number!(isize);
+
+macro_rules! impl_floating_point_number {
+    ($type:ty) => {
+        impl FloatingPointNumber for $type {
+            #[inline(always)]
+            fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
+                &self,
+                consumer: C,
+            ) -> Result<(), JsonNumberError> {
+                if self.is_finite() {
+                    // TODO: Use https://docs.rs/ryu or https://docs.rs/zmij for better performance? (used also by serde_json)
+                    //   see https://github.com/Marcono1234/struson/issues/2
+                    //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
+                    let string = self.to_string();
+                    debug_assert!(
+                        is_valid_json_number(&string),
+                        "Unexpected: Not a valid JSON number: {string}"
+                    );
+                    consumer(&string)?;
+                    Ok(())
+                } else {
+                    Err(JsonNumberError::InvalidNumber {
+                        message: format!("non-finite number: {self}"),
+                    })
+                }
+            }
+
+            fn as_f64(&self) -> Option<f64> {
+                #[allow(clippy::useless_conversion, reason = "for f64 -> f64")]
+                Some((*self).into())
+            }
+        }
+
+        impl private::Sealed for $type {}
+    };
+}
+
+impl_floating_point_number!(f32);
+impl_floating_point_number!(f64);
 
 /// Internal number struct which is used by [`JsonReader::transfer_to`] to avoid
 /// redundant JSON number string validation by `JsonWriter`

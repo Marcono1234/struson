@@ -2027,71 +2027,73 @@ mod tests {
         Ok(())
     }
 
-    #[duplicate::duplicate_item(
-        method;
-        [finish_document];
-        [finish_document_no_flush];
-    )]
-    // Nest tests in module named after the tested method
-    mod method {
-        use super::*;
+    macro_rules! test_finish_document {
+        ($method:ident) => {
+            // Nest tests in module named after the tested method
+            mod $method {
+                use super::*;
 
-        /// Verify that `finish_document` returns the wrapped writer.
-        #[test]
-        fn result() -> TestResult {
-            let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
-            json_writer.string_value("text")?;
-            let written_bytes = json_writer.method()?;
-            assert_eq!("\"text\"", String::from_utf8(written_bytes)?);
+                /// Verify that `finish_document` returns the wrapped writer.
+                #[test]
+                fn result() -> TestResult {
+                    let mut json_writer = JsonStreamWriter::new(Vec::<u8>::new());
+                    json_writer.string_value("text")?;
+                    let written_bytes = json_writer.$method()?;
+                    assert_eq!("\"text\"", String::from_utf8(written_bytes)?);
 
-            Ok(())
-        }
+                    Ok(())
+                }
 
-        #[test]
-        #[should_panic(
-            expected = "Incorrect writer usage: Cannot finish document when no value has been written yet and empty documents are not enabled in the settings"
-        )]
-        fn empty_document() {
-            let mut writer = Vec::<u8>::new();
-            let json_writer = JsonStreamWriter::new(&mut writer);
+                #[test]
+                #[should_panic(
+                    expected = "Incorrect writer usage: Cannot finish document when no value has been written yet and empty documents are not enabled in the settings"
+                )]
+                fn empty_document() {
+                    let mut writer = Vec::<u8>::new();
+                    let json_writer = JsonStreamWriter::new(&mut writer);
 
-            let _ = json_writer.method();
-        }
+                    let _ = json_writer.$method();
+                }
 
-        #[test]
-        fn empty_document_allowed() -> TestResult {
-            fn new_writer() -> JsonStreamWriter<Vec<u8>> {
-                JsonStreamWriter::new_custom(
-                    Vec::new(),
-                    WriterSettings {
-                        allow_empty_document: true,
-                        ..Default::default()
-                    },
-                )
+                #[test]
+                fn empty_document_allowed() -> TestResult {
+                    fn new_writer() -> JsonStreamWriter<Vec<u8>> {
+                        JsonStreamWriter::new_custom(
+                            Vec::new(),
+                            WriterSettings {
+                                allow_empty_document: true,
+                                ..Default::default()
+                            },
+                        )
+                    }
+
+                    let json_writer = new_writer();
+                    assert_eq!(json_writer.$method()?, "".as_bytes());
+
+                    let mut json_writer = new_writer();
+                    json_writer.bool_value(true)?;
+                    assert_eq!(json_writer.$method()?, "true".as_bytes());
+
+                    Ok(())
+                }
+
+                #[test]
+                #[should_panic(
+                    expected = "Incorrect writer usage: Cannot finish document when top-level value is not finished"
+                )]
+                fn incomplete_document() {
+                    let mut writer = Vec::<u8>::new();
+                    let mut json_writer = JsonStreamWriter::new(&mut writer);
+                    json_writer.begin_array().unwrap();
+
+                    let _ = json_writer.$method();
+                }
             }
-
-            let json_writer = new_writer();
-            assert_eq!(json_writer.method()?, "".as_bytes());
-
-            let mut json_writer = new_writer();
-            json_writer.bool_value(true)?;
-            assert_eq!(json_writer.method()?, "true".as_bytes());
-
-            Ok(())
-        }
-
-        #[test]
-        #[should_panic(
-            expected = "Incorrect writer usage: Cannot finish document when top-level value is not finished"
-        )]
-        fn incomplete_document() {
-            let mut writer = Vec::<u8>::new();
-            let mut json_writer = JsonStreamWriter::new(&mut writer);
-            json_writer.begin_array().unwrap();
-
-            let _ = json_writer.method();
-        }
+        };
     }
+
+    test_finish_document!(finish_document);
+    test_finish_document!(finish_document_no_flush);
 
     #[test]
     fn finish_document_flush() -> TestResult {

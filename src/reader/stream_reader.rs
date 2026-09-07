@@ -1545,76 +1545,89 @@ trait SignedIntNumberImpl: IntegerNumber + Neg<Output = Self> {
     }
 }
 
-duplicate::duplicate! {
-    [
-        unsigned_type signed_type;
-        [u8] [i8];
-        [u16] [i16];
-        [u32] [i32];
-        [u64] [i64];
-        [u128] [i128];
-        [usize] [isize];
-        // when extending this for more types, adjust the tests below as well
-    ]
+macro_rules! impl_parse_int_types {
+    // Note: Don't use repetition operator here; while that makes usage of the macro less verbose, it makes
+    // troubleshooting more cumbersome because macro can then only be expanded for all types, not individual ones
+    ($unsigned_type:ty, $signed_type:ty) => {
+        impl UnsignedIntNumberImpl for $unsigned_type {
+            #[inline(always)]
+            fn max() -> Self {
+                // Sanity check to ensure this trait is implemented for unsigned types only
+                const {
+                    debug_assert!(Self::MIN == 0);
+                }
 
-    impl UnsignedIntNumberImpl for unsigned_type {
-        #[inline(always)]
-        fn max() -> Self {
-            // Sanity check to ensure this trait is implemented for unsigned types only
-            const { debug_assert!(Self::MIN == 0); }
+                Self::MAX
+            }
 
-            Self::MAX
+            #[inline(always)]
+            fn from_u8(value: u8) -> Self {
+                #[allow(clippy::useless_conversion, reason = "for u8 -> u8")]
+                value.into()
+            }
         }
-
-        #[inline(always)]
-        fn from_u8(value: u8) -> Self {
-            #[allow(clippy::useless_conversion, reason = "for u8 -> u8")]
-            value.into()
+        impl IntNumberImpl for $unsigned_type {
+            fn parse_number<R: Read>(
+                json_reader: &mut JsonStreamReader<R>,
+            ) -> Result<Self, ReaderError>
+            where
+                Self: Sized,
+            {
+                Self::parse_number_unsigned(json_reader, false)
+            }
         }
-    }
-    impl IntNumberImpl for unsigned_type {
-        fn parse_number<R: Read>(json_reader: &mut JsonStreamReader<R>) -> Result<Self, ReaderError> where Self: Sized {
-            Self::parse_number_unsigned(json_reader, false)
+        impl IntegerNumber for $unsigned_type {}
+
+        impl SignedIntNumberImpl for $signed_type {
+            type Unsigned = $unsigned_type;
+
+            #[inline(always)]
+            fn min() -> Self {
+                // Sanity check to ensure this trait is implemented for the correct types
+                const {
+                    debug_assert!(Self::MIN < 0 && Self::Unsigned::MIN == 0);
+                }
+                Self::MIN
+            }
+
+            #[inline(always)]
+            fn min_abs() -> Self::Unsigned {
+                Self::MIN.abs_diff(0)
+            }
+
+            #[inline(always)]
+            fn max_as_unsigned() -> Self::Unsigned {
+                debug_assert!(Self::Unsigned::MAX > Self::MAX.try_into().unwrap());
+                Self::MAX as Self::Unsigned
+            }
+
+            #[inline(always)]
+            fn from_unsigned(value: Self::Unsigned) -> Self {
+                debug_assert!(value <= Self::MAX.try_into().unwrap());
+                value as Self
+            }
         }
-    }
-    impl IntegerNumber for unsigned_type {}
-
-
-    impl SignedIntNumberImpl for signed_type {
-        type Unsigned = unsigned_type;
-
-        #[inline(always)]
-        fn min() -> Self {
-            // Sanity check to ensure this trait is implemented for the correct types
-            const { debug_assert!(Self::MIN < 0 && Self::Unsigned::MIN == 0); }
-            Self::MIN
+        impl IntNumberImpl for $signed_type {
+            fn parse_number<R: Read>(
+                json_reader: &mut JsonStreamReader<R>,
+            ) -> Result<Self, ReaderError>
+            where
+                Self: Sized,
+            {
+                Self::parse_number_signed(json_reader)
+            }
         }
-
-        #[inline(always)]
-        fn min_abs() -> Self::Unsigned {
-            Self::MIN.abs_diff(0)
-        }
-
-        #[inline(always)]
-        fn max_as_unsigned() -> Self::Unsigned {
-            debug_assert!(Self::Unsigned::MAX > Self::MAX.try_into().unwrap());
-            Self::MAX as Self::Unsigned
-        }
-
-        #[inline(always)]
-        fn from_unsigned(value: Self::Unsigned) -> Self {
-            debug_assert!(value <= Self::MAX.try_into().unwrap());
-            value as Self
-        }
-    }
-    impl IntNumberImpl for signed_type {
-        fn parse_number<R: Read>(json_reader: &mut JsonStreamReader<R>) -> Result<Self, ReaderError> where Self: Sized {
-            Self::parse_number_signed(json_reader)
-        }
-    }
-    impl IntegerNumber for signed_type {}
-
+        impl IntegerNumber for $signed_type {}
+    };
 }
+
+impl_parse_int_types!(u8, i8);
+impl_parse_int_types!(u16, i16);
+impl_parse_int_types!(u32, i32);
+impl_parse_int_types!(u64, i64);
+impl_parse_int_types!(u128, i128);
+impl_parse_int_types!(usize, isize);
+// when extending this for more types, adjust the tests below as well
 
 struct CollectingNumberBytesCollector {
     buf: Vec<u8>,
@@ -2256,59 +2269,63 @@ mod tests {
         Ok(())
     }
 
-    #[duplicate::duplicate_item(
-        method;
-        [next_number_as_str];
-        [next_number_as_string];
-    )]
-    #[test]
-    fn method() -> TestResult {
-        let mut json_reader =
-            new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
+    macro_rules! test_number_str {
+        ($method:ident) => {
+            #[test]
+            fn $method() -> TestResult {
+                let mut json_reader =
+                    new_reader("[0, -0, -1, -9, 123, 56.0030, -0.1, 1.01e+03, -4.50E-40]");
 
-        json_reader.begin_array()?;
+                json_reader.begin_array()?;
 
-        [
-            "0",
-            "-0",
-            "-1",
-            "-9",
-            "123",
-            "56.0030",
-            "-0.1",
-            "1.01e+03",
-            "-4.50E-40",
-        ]
-        .assert_all(|expected| {
-            assert_eq!(*expected, json_reader.method()?);
-            Ok(())
-        });
+                [
+                    "0",
+                    "-0",
+                    "-1",
+                    "-9",
+                    "123",
+                    "56.0030",
+                    "-0.1",
+                    "1.01e+03",
+                    "-4.50E-40",
+                ]
+                .assert_all(|expected| {
+                    assert_eq!(*expected, json_reader.$method()?);
+                    Ok(())
+                });
 
-        json_reader.end_array()?;
-        json_reader.consume_trailing_whitespace()?;
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
 
-        let large_number = "123".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
-        let json = format!("[1, {large_number}, {large_number}, 2, {large_number}, 3]");
-        let mut json_reader = JsonStreamReader::new_custom(
-            json.as_bytes(),
-            ReaderSettings {
-                restrict_number_values: false,
-                ..Default::default()
-            },
-        );
+                let large_number = "123".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
+                let json = format!("[1, {large_number}, {large_number}, 2, {large_number}, 3]");
+                let mut json_reader = JsonStreamReader::new_custom(
+                    json.as_bytes(),
+                    ReaderSettings {
+                        restrict_number_values: false,
+                        ..Default::default()
+                    },
+                );
 
-        json_reader.begin_array()?;
+                json_reader.begin_array()?;
 
-        ["1", &large_number, &large_number, "2", &large_number, "3"].assert_all(|expected| {
-            assert_eq!(*expected, json_reader.method()?);
-            Ok(())
-        });
+                ["1", &large_number, &large_number, "2", &large_number, "3"].assert_all(
+                    |expected| {
+                        assert_eq!(*expected, json_reader.$method()?);
+                        Ok(())
+                    },
+                );
 
-        json_reader.end_array()?;
-        json_reader.consume_trailing_whitespace()?;
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
 
-        Ok(())
+                Ok(())
+            }
+        };
     }
+
+    test_number_str!(next_number_as_str);
+    test_number_str!(next_number_as_string);
 
     #[test]
     fn numbers() -> TestResult {
@@ -2732,54 +2749,56 @@ mod tests {
         Ok(())
     }
 
-    #[duplicate::duplicate_item(
-        method;
-        [next_str];
-        [next_string];
-    )]
-    #[test]
-    fn method() -> TestResult {
-        fn pair(json_string: &str, expected_value: &str) -> (String, String) {
-            (json_string.to_owned(), expected_value.to_owned())
-        }
+    macro_rules! test_string_value {
+        ($method:ident) => {
+            #[test]
+            fn $method() -> TestResult {
+                fn pair(json_string: &str, expected_value: &str) -> (String, String) {
+                    (json_string.to_owned(), expected_value.to_owned())
+                }
 
-        let test_data = [
-            pair("", ""),
-            pair("a", "a"),
-            pair("\\n", "\n"),
-            pair("\\na", "\na"),
-            pair("\\n\\na", "\n\na"),
-            pair("a\\n", "a\n"),
-            pair("a\\na\\n\\na", "a\na\n\na"),
-            pair("a\u{10FFFF}", "a\u{10FFFF}"),
-        ];
-        for (json_string, expected_value) in test_data {
-            let json_value = format!("\"{json_string}\"");
-            let mut json_reader = new_reader(&json_value);
-            assert_eq!(expected_value, json_reader.method()?);
-            json_reader.consume_trailing_whitespace()?;
-        }
+                let test_data = [
+                    pair("", ""),
+                    pair("a", "a"),
+                    pair("\\n", "\n"),
+                    pair("\\na", "\na"),
+                    pair("\\n\\na", "\n\na"),
+                    pair("a\\n", "a\n"),
+                    pair("a\\na\\n\\na", "a\na\n\na"),
+                    pair("a\u{10FFFF}", "a\u{10FFFF}"),
+                ];
+                for (json_string, expected_value) in test_data {
+                    let json_value = format!("\"{json_string}\"");
+                    let mut json_reader = new_reader(&json_value);
+                    assert_eq!(expected_value, json_reader.$method()?);
+                    json_reader.consume_trailing_whitespace()?;
+                }
 
-        // Also test reading array of multiple string values, including large ones
-        let large_json_string = "abc".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
-        let json_value = format!(
-            "[\"a\", \"{large_json_string}\", \"\\n\", \"{large_json_string}\", \"a\", \"\\n\"]"
-        );
-        let mut json_reader = new_reader(&json_value);
-        json_reader.begin_array()?;
+                // Also test reading array of multiple string values, including large ones
+                let large_json_string = "abc".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
+                let json_value = format!(
+                    "[\"a\", \"{large_json_string}\", \"\\n\", \"{large_json_string}\", \"a\", \"\\n\"]"
+                );
+                let mut json_reader = new_reader(&json_value);
+                json_reader.begin_array()?;
 
-        assert_eq!("a", json_reader.method()?);
-        assert_eq!(large_json_string, json_reader.method()?);
-        assert_eq!("\n", json_reader.method()?);
-        assert_eq!(large_json_string, json_reader.method()?);
-        assert_eq!("a", json_reader.method()?);
-        assert_eq!("\n", json_reader.method()?);
+                assert_eq!("a", json_reader.$method()?);
+                assert_eq!(large_json_string, json_reader.$method()?);
+                assert_eq!("\n", json_reader.$method()?);
+                assert_eq!(large_json_string, json_reader.$method()?);
+                assert_eq!("a", json_reader.$method()?);
+                assert_eq!("\n", json_reader.$method()?);
 
-        json_reader.end_array()?;
-        json_reader.consume_trailing_whitespace()?;
+                json_reader.end_array()?;
+                json_reader.consume_trailing_whitespace()?;
 
-        Ok(())
+                Ok(())
+            }
+        };
     }
+
+    test_string_value!(next_str);
+    test_string_value!(next_string);
 
     #[test]
     fn strings() -> TestResult {
@@ -3447,82 +3466,84 @@ mod tests {
         Ok(())
     }
 
-    #[duplicate::duplicate_item(
-        method;
-        [next_name];
-        [next_name_owned];
-    )]
-    #[test]
-    fn method() -> TestResult {
-        fn pair(json_name: &str, expected_name: &str) -> (String, String) {
-            (json_name.to_owned(), expected_name.to_owned())
-        }
+    macro_rules! test_name {
+        ($method:ident) => {
+            #[test]
+            fn $method() -> TestResult {
+                fn pair(json_name: &str, expected_name: &str) -> (String, String) {
+                    (json_name.to_owned(), expected_name.to_owned())
+                }
 
-        let test_data = [
-            pair("", ""),
-            pair("a", "a"),
-            pair("\\n", "\n"),
-            pair("\\na", "\na"),
-            pair("a\\n", "a\n"),
-            pair("a\\na\\n\\na", "a\na\n\na"),
-            pair("a\u{10FFFF}", "a\u{10FFFF}"),
-        ];
-        for (json_name, expected_name) in test_data {
-            let json_value = "{\"".to_owned() + &json_name + "\": 1}";
-            let mut json_reader = new_reader(&json_value);
+                let test_data = [
+                    pair("", ""),
+                    pair("a", "a"),
+                    pair("\\n", "\n"),
+                    pair("\\na", "\na"),
+                    pair("a\\n", "a\n"),
+                    pair("a\\na\\n\\na", "a\na\n\na"),
+                    pair("a\u{10FFFF}", "a\u{10FFFF}"),
+                ];
+                for (json_name, expected_name) in test_data {
+                    let json_value = "{\"".to_owned() + &json_name + "\": 1}";
+                    let mut json_reader = new_reader(&json_value);
 
-            json_reader.begin_object()?;
-            assert_eq!(expected_name, json_reader.method()?);
-            assert_eq!("1", json_reader.next_number_as_string()?);
-            json_reader.end_object()?;
+                    json_reader.begin_object()?;
+                    assert_eq!(expected_name, json_reader.$method()?);
+                    assert_eq!("1", json_reader.next_number_as_string()?);
+                    json_reader.end_object()?;
 
-            json_reader.consume_trailing_whitespace()?;
-        }
+                    json_reader.consume_trailing_whitespace()?;
+                }
 
-        // Also test reading objects with multiple names, including large ones
-        let large_name = "abc".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
-        let json = "{\"a\": 1, \"".to_owned()
-            + &large_name
-            + "\": 2, \"\\n\": 3, \"b\": 4, \""
-            + &large_name
-            + "\": {\"c\": {\"\\n\": 5}}}";
+                // Also test reading objects with multiple names, including large ones
+                let large_name = "abc".repeat(INITIAL_STRING_VALUE_BUF_CAPACITY * 10);
+                let json = "{\"a\": 1, \"".to_owned()
+                    + &large_name
+                    + "\": 2, \"\\n\": 3, \"b\": 4, \""
+                    + &large_name
+                    + "\": {\"c\": {\"\\n\": 5}}}";
 
-        let mut json_reader = new_reader(&json);
+                let mut json_reader = new_reader(&json);
 
-        json_reader.begin_object()?;
-        assert_eq!("a", json_reader.method()?);
-        assert_eq!("1", json_reader.next_number_as_string()?);
+                json_reader.begin_object()?;
+                assert_eq!("a", json_reader.$method()?);
+                assert_eq!("1", json_reader.next_number_as_string()?);
 
-        assert_eq!(large_name, json_reader.method()?);
-        assert_eq!("2", json_reader.next_number_as_string()?);
+                assert_eq!(large_name, json_reader.$method()?);
+                assert_eq!("2", json_reader.next_number_as_string()?);
 
-        assert_eq!("\n", json_reader.method()?);
-        assert_eq!("3", json_reader.next_number_as_string()?);
+                assert_eq!("\n", json_reader.$method()?);
+                assert_eq!("3", json_reader.next_number_as_string()?);
 
-        assert_eq!("b", json_reader.method()?);
-        assert_eq!("4", json_reader.next_number_as_string()?);
+                assert_eq!("b", json_reader.$method()?);
+                assert_eq!("4", json_reader.next_number_as_string()?);
 
-        assert_eq!(large_name, json_reader.method()?);
-        json_reader.begin_object()?;
-        assert_eq!("c", json_reader.method()?);
-        json_reader.begin_object()?;
-        assert_eq!("\n", json_reader.method()?);
-        assert_eq!("5", json_reader.next_number_as_string()?);
-        let expected_path = vec![
-            JsonPathPiece::ObjectMember(large_name),
-            JsonPathPiece::ObjectMember("c".to_owned()),
-            JsonPathPiece::ObjectMember("\n".to_owned()),
-        ];
-        assert_eq!(Some(expected_path), json_reader.json_path);
-        json_reader.end_object()?;
-        json_reader.end_object()?;
+                assert_eq!(large_name, json_reader.$method()?);
+                json_reader.begin_object()?;
+                assert_eq!("c", json_reader.$method()?);
+                json_reader.begin_object()?;
+                assert_eq!("\n", json_reader.$method()?);
+                assert_eq!("5", json_reader.next_number_as_string()?);
+                let expected_path = vec![
+                    JsonPathPiece::ObjectMember(large_name),
+                    JsonPathPiece::ObjectMember("c".to_owned()),
+                    JsonPathPiece::ObjectMember("\n".to_owned()),
+                ];
+                assert_eq!(Some(expected_path), json_reader.json_path);
+                json_reader.end_object()?;
+                json_reader.end_object()?;
 
-        json_reader.end_object()?;
+                json_reader.end_object()?;
 
-        json_reader.consume_trailing_whitespace()?;
+                json_reader.consume_trailing_whitespace()?;
 
-        Ok(())
+                Ok(())
+            }
+        };
     }
+
+    test_name!(next_name);
+    test_name!(next_name_owned);
 
     #[test]
     fn object_member_names() -> TestResult {
