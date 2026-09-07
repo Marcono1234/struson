@@ -672,6 +672,10 @@ pub trait StringValueWriter: Write {
  * Note: Might be more convenient to define `TryInto<u64>`, ... as supertraits here instead
  * of defining custom methods `as_u64(&self)`, ...; however TryInto consumes `self`, which
  * then makes for the user conversion with fallback more difficult (e.g. first try u64, then i64, ...)
+ *
+ * Note: Don't make `Display` a supertrait; otherwise users might use `to_string` instead of
+ * `use_json_number`, even though it might be less efficient and makes no guarantee that the
+ * result is a valid JSON number.
  */
 pub trait FiniteNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
@@ -710,7 +714,12 @@ pub trait FiniteNumber: private::Sealed + Debug {
 /// Implementing this trait for custom number types is not possible. Use the
 /// method [`JsonWriter::number_value_from_string`] to write them to the JSON
 /// document.
-pub trait FloatingPointNumber: private::Sealed {
+/*
+ * Note: Don't make `Display` a supertrait; otherwise users might use `to_string` instead of
+ * `use_json_number`, even though it might be less efficient and makes no guarantee that the
+ * result is a valid JSON number.
+ */
+pub trait FloatingPointNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
     /// The JSON number string is passed to the given `consumer`.
