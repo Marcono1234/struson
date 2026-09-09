@@ -355,7 +355,15 @@ pub trait JsonWriter {
     ///
     /// This method is mainly intended for custom number implementations or situations
     /// where the exact format of the JSON number is important. In all other cases either
-    /// [`number_value`](Self::number_value) or [`fp_number_value`](Self::fp_number_value) should be used.
+    /// [`number_value`](Self::number_value) or [`fp_number_value`](Self::fp_number_value)
+    /// should be used. If all numbers should be formatted in a certain way, prefer [specifying
+    /// a custom number formatter in the `WriterSettings`](WriterSettings::number_formatter),
+    /// this is simpler and most likely also more efficient because it avoids redundant JSON number
+    /// string validation.
+    ///
+    /// By default the format of the JSON number is preserved, unless a custom number formatter is
+    /// [specified in the `WriterSettings`](WriterSettings::number_formatter) and its [`NumberFormatter::format_number_str`]
+    /// re-formats the number.
     ///
     /// # Examples
     /// ```
@@ -374,7 +382,7 @@ pub trait JsonWriter {
     ///
     /// # Errors
     /// Returns a [`JsonNumberError::InvalidNumber`] when the provided string is not a valid
-    /// JSON number. Non-finite floating point numbers such as `NaN` or `Infinity` are not
+    /// JSON number. Non-finite floating point numbers such as NaN or Infinity are not
     /// allowed by JSON and have to be written as JSON string value with [`string_value`](Self::string_value).
     ///
     /// # Panics
@@ -396,6 +404,9 @@ pub trait JsonWriter {
     /// This method supports all standard primitive integral number types, such as `u32`.
     /// To write a floating point number use [`fp_number_value`](Self::fp_number_value), to write a number in a
     /// specific format use [`number_value_from_string`](Self::number_value_from_string).
+    ///
+    /// The number is converted to a JSON number string using the number formatter
+    /// [specified in the `WriterSettings`](WriterSettings::number_formatter).
     ///
     /// # Examples
     /// ```
@@ -425,7 +436,8 @@ pub trait JsonWriter {
     /// To write an integral number value use [`number_value`](Self::number_value), to write a number in a
     /// specific format use [`number_value_from_string`](Self::number_value_from_string).
     ///
-    /// The number is converted to a JSON number by calling `to_string` on it.
+    /// The number is converted to a JSON number string using the number formatter
+    /// [specified in the `WriterSettings`](WriterSettings::number_formatter).
     ///
     /// # Examples
     /// ```
@@ -444,7 +456,7 @@ pub trait JsonWriter {
     ///
     /// # Errors
     /// Returns a [`JsonNumberError::InvalidNumber`] when the provided number is non-finite.
-    /// Non-finite floating point numbers such as `NaN` or `Infinity` are not
+    /// Non-finite floating point numbers such as NaN or Infinity are not
     /// allowed by JSON and have to be written as JSON string value with [`string_value`](Self::string_value).
     ///
     /// # Panics
@@ -457,6 +469,23 @@ pub trait JsonWriter {
      * TODO: Maybe also support writing in scientific notation? e.g. `4.1e20`, see also https://doc.rust-lang.org/std/fmt/trait.LowerExp.html
      */
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError>;
+
+    /// Gets the number formatter used by this JSON writer
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/184).
+    ///
+    /// ----
+    ///
+    /// The default implementation returns [`DefaultNumberFormatter`]. JSON writer implementations
+    /// which store JSON numbers as is without any formatting may want to provide a number formatter
+    /// to callers nonetheless, because callers might for example want to write numbers as object
+    /// member names and in that case need to format numbers as strings.
+    fn number_formatter(&self) -> &impl NumberFormatter {
+        &DefaultNumberFormatter
+    }
 
     /// Serializes a Serde [`Serialize`](serde_core::ser::Serialize) as next value
     ///
@@ -680,15 +709,32 @@ pub trait StringValueWriter: Write {
 pub trait FiniteNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
-    /// The JSON number string is passed to the given `consumer`.
+    /// The JSON number string is passed to the given `consumer`. The number is formatted
+    /// using [`DefaultNumberFormatter`]; use the [`format`](Self::format) method to specify
+    /// a custom formatter.
     ///
     /// Note that even though the string represents a finite JSON number, parsing it
-    /// as for example `f64` could lead to a non-finite result such as Infinity for
-    /// large numbers.
+    /// again as for example `f64` could lead to Infinity for large numbers.
+    /* TODO: Deprecate in favor of `format`, or rename this method to `format_default`? */
+    #[inline(always)]
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
-    ) -> Result<(), IoError>;
+    ) -> Result<(), IoError> {
+        self.format(&DefaultNumberFormatter, consumer)
+    }
+
+    /// Formats this number as JSON number string using the given formatter
+    ///
+    /// The JSON number string is passed to the given `consumer`.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// again as for example `f64` could lead to Infinity for large numbers.
+    fn format<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        formatter: &impl NumberFormatter,
+        consumer: C,
+    ) -> Result<T, IoError>;
 
     /// Gets this number as `u64`
     ///
@@ -722,17 +768,38 @@ pub trait FiniteNumber: private::Sealed + Debug {
 pub trait FloatingPointNumber: private::Sealed + Debug {
     /// Converts this number to a JSON number string
     ///
-    /// The JSON number string is passed to the given `consumer`.
+    /// The JSON number string is passed to the given `consumer`. The number is formatted
+    /// using [`DefaultNumberFormatter`]; use the [`format`](Self::format) method to specify
+    /// a custom formatter.
+    ///
     /// Returns an error if this number is not a valid JSON number, for example
     /// because it is NaN or Infinity.
     ///
     /// Note that even though the string represents a finite JSON number, parsing it
-    /// as for example `f64` could lead to a non-finite result such as Infinity for
-    /// large numbers.
+    /// again as for example `f64` could lead to Infinity for large numbers.
+    /* TODO: Deprecate in favor of `format`, or rename this method to `format_default`? */
+    #[inline(always)]
     fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
         &self,
         consumer: C,
-    ) -> Result<(), JsonNumberError>;
+    ) -> Result<(), JsonNumberError> {
+        self.format(&DefaultNumberFormatter, consumer)
+    }
+
+    /// Formats this number as JSON number string using the given formatter
+    ///
+    /// The JSON number string is passed to the given `consumer`.
+    ///
+    /// Returns an error if this number is not a valid JSON number, for example
+    /// because it is NaN or Infinity.
+    ///
+    /// Note that even though the string represents a finite JSON number, parsing it
+    /// again as for example `f64` could lead to Infinity for large numbers.
+    fn format<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        formatter: &impl NumberFormatter,
+        consumer: C,
+    ) -> Result<T, JsonNumberError>;
 
     /// Gets this number as `f64`
     ///
@@ -774,21 +841,22 @@ pub enum JsonNumberError {
 macro_rules! impl_finite_number {
     // Note: Don't use repetition operator here; while that makes usage of the macro less verbose, it makes
     // troubleshooting more cumbersome because macro can then only be expanded for all types, not individual ones
-    ($type:ty) => {
+    ($type:ty, $format_method:ident) => {
         impl FiniteNumber for $type {
             #[inline(always)]
-            fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
+            fn format<T, C: FnOnce(&str) -> Result<T, IoError>>(
                 &self,
+                formatter: &impl NumberFormatter,
                 consumer: C,
-            ) -> Result<(), IoError> {
-                // TODO: Use https://docs.rs/itoa for better performance? (used also by serde_json)
-                //   see https://github.com/Marcono1234/struson/issues/2
-                let string = self.to_string();
-                debug_assert!(
-                    is_valid_json_number(&string),
-                    "Unexpected: Not a valid JSON number: {string}"
-                );
-                consumer(&string)
+            ) -> Result<T, IoError> {
+                formatter.$format_method(*self, |number_str| {
+                    // Formatter is expected to produce only valid JSON numbers
+                    debug_assert!(
+                        is_valid_json_number(number_str),
+                        "not a valid JSON number: {number_str}"
+                    );
+                    consumer(number_str)
+                })
             }
 
             fn as_u64(&self) -> Option<u64> {
@@ -816,38 +884,37 @@ macro_rules! impl_finite_number {
     };
 }
 
-impl_finite_number!(u8);
-impl_finite_number!(i8);
-impl_finite_number!(u16);
-impl_finite_number!(i16);
-impl_finite_number!(u32);
-impl_finite_number!(i32);
-impl_finite_number!(u64);
-impl_finite_number!(i64);
-impl_finite_number!(u128);
-impl_finite_number!(i128);
-impl_finite_number!(usize);
-impl_finite_number!(isize);
+impl_finite_number!(u8, format_u8);
+impl_finite_number!(i8, format_i8);
+impl_finite_number!(u16, format_u16);
+impl_finite_number!(i16, format_i16);
+impl_finite_number!(u32, format_u32);
+impl_finite_number!(i32, format_i32);
+impl_finite_number!(u64, format_u64);
+impl_finite_number!(i64, format_i64);
+impl_finite_number!(u128, format_u128);
+impl_finite_number!(i128, format_i128);
+impl_finite_number!(usize, format_usize);
+impl_finite_number!(isize, format_isize);
 
 macro_rules! impl_floating_point_number {
-    ($type:ty) => {
+    ($type:ty, $format_method:ident) => {
         impl FloatingPointNumber for $type {
             #[inline(always)]
-            fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
+            fn format<T, C: FnOnce(&str) -> Result<T, IoError>>(
                 &self,
+                formatter: &impl NumberFormatter,
                 consumer: C,
-            ) -> Result<(), JsonNumberError> {
+            ) -> Result<T, JsonNumberError> {
                 if self.is_finite() {
-                    // TODO: Use https://docs.rs/ryu or https://docs.rs/zmij for better performance? (used also by serde_json)
-                    //   see https://github.com/Marcono1234/struson/issues/2
-                    //   Have to adjust `fp_number_value` documentation then, currently mentions usage of `to_string`
-                    let string = self.to_string();
-                    debug_assert!(
-                        is_valid_json_number(&string),
-                        "Unexpected: Not a valid JSON number: {string}"
-                    );
-                    consumer(&string)?;
-                    Ok(())
+                    Ok(formatter.$format_method(*self, |number_str| {
+                        // Formatter is expected to produce only valid JSON numbers
+                        debug_assert!(
+                            is_valid_json_number(number_str),
+                            "not a valid JSON number: {number_str}"
+                        );
+                        consumer(number_str)
+                    })?)
                 } else {
                     Err(JsonNumberError::InvalidNumber {
                         message: format!("non-finite number: {self}"),
@@ -865,8 +932,8 @@ macro_rules! impl_floating_point_number {
     };
 }
 
-impl_floating_point_number!(f32);
-impl_floating_point_number!(f64);
+impl_floating_point_number!(f32, format_f32);
+impl_floating_point_number!(f64, format_f64);
 
 /// Internal number struct which is used by [`JsonReader::transfer_to`] to avoid
 /// redundant JSON number string validation by `JsonWriter`
@@ -875,16 +942,28 @@ pub(crate) struct TransferredNumber<'a>(&'a str);
 impl private::Sealed for TransferredNumber<'_> {}
 impl<'a> TransferredNumber<'a> {
     pub(crate) fn new(json_number: &'a str) -> Self {
-        debug_assert!(is_valid_json_number(json_number));
+        debug_assert!(
+            is_valid_json_number(json_number),
+            "not a valid JSON number: {json_number}"
+        );
         Self(json_number)
     }
 }
 impl FiniteNumber for TransferredNumber<'_> {
-    fn use_json_number<C: FnOnce(&str) -> Result<(), IoError>>(
+    #[inline(always)]
+    fn format<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
+        formatter: &impl NumberFormatter,
         consumer: C,
-    ) -> Result<(), IoError> {
-        consumer(self.0)
+    ) -> Result<T, IoError> {
+        formatter.format_number_str(self.0, |number_str| {
+            // Formatter is expected to produce only valid JSON numbers
+            debug_assert!(
+                is_valid_json_number(number_str),
+                "not a valid JSON number: {number_str}"
+            );
+            consumer(number_str)
+        })
     }
 
     fn as_u64(&self) -> Option<u64> {
@@ -893,6 +972,378 @@ impl FiniteNumber for TransferredNumber<'_> {
 
     fn as_i64(&self) -> Option<i64> {
         None
+    }
+}
+
+/// Formats numbers as JSON number strings
+///
+/// ----
+///
+/// **🔬 Experimental**\
+/// Support for number formatting is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/184).
+///
+/// ----
+///
+/// Used by [`WriterSettings::number_formatter`]; the default implementation is [`DefaultNumberFormatter`].
+///
+/// All formatting methods take the value to format, e.g. an `u8`, and a 'consumer'. The consumer is called
+/// with the JSON number string and its result will be propagated to the caller of the formatting method.
+/// Normally that consumer will simply be the JSON writer which writes the JSON number.
+///
+/// Custom number formatters can for example be used to produce more concise JSON numbers by using
+/// the scientific notation, or to format numbers more efficiently using crates such as [zmij](https://docs.rs/zmij/latest/zmij/).
+///
+/// **Important:** All formatting methods must produce valid JSON number strings as
+/// [defined by the JSON specification](https://www.rfc-editor.org/rfc/rfc8259.html#section-6). JSON writer
+/// implementations might rely on this and therefore not perform any additional validation themselves.
+pub trait NumberFormatter {
+    /*
+     * Note / TODO: The current API where the formatter methods take `&self` and a `consumer: FnOnce`
+     * makes it rather inconvenient to use. For example consider something like this where caller has
+     * stored the number formatter in a field and then in the `consumer` closure wants to write the
+     * number using one of its own methods:
+     * ```
+     * self.formatter.format_u32(value, |s| self.write_number_str(s))
+     * ```
+     *
+     * The compiler does not permit this because there are two references to `self` (and the one in
+     * the closure being a mut one).
+     * This means the caller either has to convert the number str to an owned String, or split their
+     * implementation so it can access the formatter and the writer method separately. Something
+     * like this (note the `self.inner`):
+     * ```
+     * self.formatter.format_u32(value, |s| self.inner.write_number_str(s))
+     * ```
+     *
+     * Both is not ideal.
+     *
+     * However, the current API might be the only way to support a temporary `str`?
+     * Other alternatives would be returning a `String` or a `Cow<str>`, but that would mean
+     * the formatter methods allocate, which is not ideal.
+     *
+     * Alternatively could remove the `&self` from the formatter methods; then the formatter
+     * just becomes a generic type and not a field anymore. That solves the issue but might
+     * severely limit custom formatter implementations.
+     */
+
+    /*
+     * TODO: Consumer could be `FnOnce(Cow<'_, str>)`, that way if formatter produces owned
+     * String and the consumer needs an owned String as well, it could directly take the String
+     * instead of having to allocate it itself.
+     * Not sure if this is worth it though, or if that would only be useful for few cases (e.g.
+     * for JsonStreamWriter it is not needed, it only needs a `str`) and if the overhead of using
+     * `Cow` instead of `str` is too big.
+     */
+
+    /*
+     * TODO: Should these methods return `Result<T, E>` instead of `Result<T, IoError>`?
+     * That would make them more flexible, but on the other hand it would prevent implementations
+     * from raising an error themselves (e.g. for unsupported number values) instead of just
+     * propagating errors from the `consumer`.
+     */
+
+    /*
+     * TODO: Do custom implementations really need a dedicated method for every primitive type
+     * or would it suffice to have e.g. u64/i64, u128/i128, usize/isize, f32, f64?
+     * Still keep u64/i64 despite u128/i128 because the 128-bit variant might be too expensive?
+     * Still keep f32 despite f64 because f64 can introduce additional decimal places, see related
+     * https://github.com/google/gson/issues/1127, e.g. `3.723379_f32 as f64` is 3.723378896713257
+     *
+     * For consistency have formatting methods for all primitive types? Even though at least custom
+     * formatting is probably most relevant for large number type like u64/i64 (?), u128/i128, f32
+     * and f64.
+     * And custom number formatter for efficiency is probably only relevant for f32 and f64 since
+     * `core::fmt::NumBuffer` is now stable for integer types.
+     */
+
+    /// Formats an `u8`
+    fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u8,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `i8`
+    fn format_i8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i8,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `u16`
+    fn format_u16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u16,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `i16`
+    fn format_i16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i16,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `u32`
+    fn format_u32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u32,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `i32`
+    fn format_i32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i32,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `u64`
+    fn format_u64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u64,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `i64`
+    fn format_i64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i64,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `u128`
+    fn format_u128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u128,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `i128`
+    fn format_i128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i128,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `usize`
+    fn format_usize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: usize,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats an `isize`
+    fn format_isize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: isize,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /*
+     * TODO: For f32, f64 and number_str should these methods perform validation themselves
+     * (instead of letting the caller do it), and then use `JsonNumberError` as error type
+     * (but still keep `IoError` for the `consumer`)?
+     * For number_str that might require making `is_valid_json_number` public (?), otherwise
+     * custom implementations cannot easily verify if a number is valid JSON, because parsing
+     * for example as f64 allows strings which are not valid JSON numbers.
+     */
+
+    /// Formats a `f32`
+    ///
+    /// This method should only be called after the caller verified that the number is
+    /// finite (neither NaN nor Infinity), because JSON only permits finite numbers.
+    /// Implementations may panic or create invalid JSON number strings if the number is
+    /// not finite.
+    fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: f32,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats a `f64`
+    ///
+    /// This method should only be called after the caller verified that the number is
+    /// finite (neither NaN nor Infinity), because JSON only permits finite numbers.
+    /// Implementations may panic or create invalid JSON number strings if the number is
+    /// not finite.
+    fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: f64,
+        consumer: C,
+    ) -> Result<T, IoError>;
+
+    /// Formats a number which is already present as JSON number string
+    ///
+    /// ----
+    ///
+    /// **🔬 Experimental**\
+    /// This method is currently experimental. Please share your feedback in [this discussion](https://github.com/Marcono1234/struson/discussions/184).
+    ///
+    /// ----
+    ///
+    /// This method should only be called with values which are guaranteed to be valid JSON
+    /// number strings. Implementations may panic or create invalid JSON number strings if the
+    /// given number string is invalid.
+    ///
+    /// The default implementation just passes the value as is to the `consumer`. Custom implementations
+    /// can override this to re-format the value if desired, but they must then parse and format the
+    /// value themselves.
+    ///
+    /// **Important:** Custom implementations of this method must be careful when they try to parse the
+    /// JSON number before trying to re-format it. For example parsing as `f64` could lead to precision
+    /// loss or even have Infinity as result despite the JSON number being finite.
+    #[inline(always)]
+    fn format_number_str<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        number: &str,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        // Caller should have already checked this
+        debug_assert!(
+            is_valid_json_number(number),
+            "not a valid JSON number: {number}"
+        );
+        consumer(number)
+    }
+}
+
+/// Default implementation of [`NumberFormatter`]
+///
+/// Uses `to_string` to format numbers. Especially for `f32` and `f64` this can lead to
+/// very long number strings because it does not use the scientific notation. If this is
+/// undesired a custom number formatter should be used.
+#[derive(Clone, Debug)]
+pub struct DefaultNumberFormatter;
+impl NumberFormatter for DefaultNumberFormatter {
+    // TODO(rust): Once minimum Rust version is >= 1.98.0, use `core::fmt::NumBuffer` instead of `to_string`
+
+    #[inline(always)]
+    fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u8,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_i8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i8,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_u16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u16,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_i16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i16,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_u32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u32,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_i32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i32,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_u64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u64,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_i64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i64,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_u128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: u128,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_i128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: i128,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_usize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: usize,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_isize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: isize,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: f32,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
+        consumer(&value.to_string())
+    }
+
+    #[inline(always)]
+    fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+        &self,
+        value: f64,
+        consumer: C,
+    ) -> Result<T, IoError> {
+        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
+        consumer(&value.to_string())
     }
 }
 
@@ -973,5 +1424,82 @@ mod tests {
         assert_non_finite(f64::NAN);
         assert_non_finite(f64::NEG_INFINITY);
         assert_non_finite(f64::INFINITY);
+    }
+
+    /// Tests for [`DefaultNumberFormatter`]
+    mod default_number_formatter {
+        use crate::writer::{DefaultNumberFormatter, NumberFormatter};
+
+        #[test]
+        fn format() -> Result<(), Box<dyn std::error::Error>> {
+            // Verify that f32 is formatted as f32, and f64 as f64
+            // Because converting f32 to f64 can introduce additional decimal places, see related
+            // https://github.com/google/gson/issues/1127, e.g. `3.723379_f32 as f64` is 3.723378896713257
+            assert_eq!(
+                DefaultNumberFormatter.format_f32(3.723379_f32, |s| Ok(s.to_owned()))?,
+                "3.723379"
+            );
+            assert_eq!(
+                DefaultNumberFormatter.format_f32(f32::MAX, |s| Ok(s.to_owned()))?,
+                f32::MAX.to_string()
+            );
+
+            assert_eq!(
+                DefaultNumberFormatter.format_f64(3.723379_f64, |s| Ok(s.to_owned()))?,
+                "3.723379"
+            );
+            assert_eq!(
+                DefaultNumberFormatter.format_f64(3.723378896713257_f64, |s| Ok(s.to_owned()))?,
+                "3.723378896713257"
+            );
+            assert_eq!(
+                DefaultNumberFormatter.format_f64(f64::MAX, |s| Ok(s.to_owned()))?,
+                f64::MAX.to_string()
+            );
+
+            assert_eq!(
+                DefaultNumberFormatter.format_u128(u128::MAX, |s| Ok(s.to_owned()))?,
+                u128::MAX.to_string()
+            );
+            assert_eq!(
+                DefaultNumberFormatter.format_usize(usize::MAX, |s| Ok(s.to_owned()))?,
+                usize::MAX.to_string()
+            );
+
+            // Should preserve number format
+            assert_eq!(
+                DefaultNumberFormatter.format_number_str("-123.000e+5", |s| Ok(s.to_owned()))?,
+                "-123.000e+5"
+            );
+            assert_eq!(
+                DefaultNumberFormatter.format_number_str("1e999999", |s| Ok(s.to_owned()))?,
+                "1e999999"
+            );
+
+            Ok(())
+        }
+
+        // These `should_panic` tests verify that invalid numbers are rejected (at least in debug builds);
+        // though NumberFormatter makes no guarantee for this
+        #[test]
+        #[should_panic(expected = "not finite: inf")]
+        fn invalid_f32() {
+            let _ = DefaultNumberFormatter
+                .format_f32::<(), _>(f32::INFINITY, |_| panic!("should not be called"));
+        }
+
+        #[test]
+        #[should_panic(expected = "not finite: inf")]
+        fn invalid_f64() {
+            let _ = DefaultNumberFormatter
+                .format_f64::<(), _>(f64::INFINITY, |_| panic!("should not be called"));
+        }
+
+        #[test]
+        #[should_panic(expected = "not a valid JSON number: 01")]
+        fn invalid_number_str() {
+            let _ = DefaultNumberFormatter
+                .format_number_str::<(), _>("01", |_| panic!("should not be called"));
+        }
     }
 }

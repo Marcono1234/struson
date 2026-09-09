@@ -27,7 +27,7 @@ use crate::utf8;
 /// # ;
 /// ```
 #[derive(Clone, Debug)]
-pub struct WriterSettings {
+pub struct WriterSettings<NF: NumberFormatter = DefaultNumberFormatter> {
     /// Whether to allow creating an empty JSON document
     ///
     /// When enabled the created document is allowed to be empty without containing any JSON value,
@@ -86,6 +86,21 @@ pub struct WriterSettings {
     /// character in member names and string values may be written as escape sequence.
     pub escape_all_non_ascii: bool,
 
+    /// Specifies how JSON numbers should be formatted
+    ///
+    /// Number formatters are expected to produce valid JSON numbers, so this setting has no
+    /// effect on the validity of the JSON output. Instead it can influence how concise the
+    /// number strings will be or how efficiently they are formatted.
+    ///
+    /// The number formatter is used for all numbers written by the JSON writer. To only
+    /// format some numbers in a special way use [`JsonWriter::number_value_from_string`].
+    ///
+    /// **Note:** When specifying a custom number formatter the `..Default::default()` syntax
+    /// for applying default values for all unspecified settings does not work. As workaround
+    /// instead of using `Default::default()` the function [`WriterSettings::default_with_nf`]
+    /// can be used.
+    pub number_formatter: NF,
+
     /// Whether to allow multiple top-level values, and if allowed which settings to use
     ///
     /// When `None` multiple top-level values are not allowed. Otherwise when `Some(...)` it
@@ -134,12 +149,6 @@ pub struct WriterSettings {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub multi_top_level_values: Option<MultiTopLevelValuesSettings>,
-}
-impl WriterSettings {
-    /// Whether to only escape the chars required by the JSON specification
-    fn escape_only_required(&self) -> bool {
-        !(self.escape_all_control_chars || self.escape_all_non_ascii)
-    }
 }
 
 /// Settings for writing multiple top-level values
@@ -200,13 +209,41 @@ impl Default for WriterSettings {
     /// - [empty document](Self::allow_empty_document): disallowed
     /// - [pretty print](Self::pretty_print): disabled (= compact JSON will be written)
     /// - [escape all control chars](Self::escape_all_control_chars): false (= only control characters `0x00` to `0x1F` are escaped)
+    /// - [number formatter](Self::number_formatter): [`DefaultNumberFormatter`]
     /// - [multiple top-level values](Self::multi_top_level_values): disallowed
     fn default() -> Self {
+        Self::default_with_nf(DefaultNumberFormatter)
+    }
+}
+
+impl<NF: NumberFormatter> WriterSettings<NF> {
+    /// Creates JSON writer settings with [default values](WriterSettings::default) except for
+    /// the number formatter
+    ///
+    /// This is a workaround because the `..Default::default()` syntax does not work when specifying
+    /// a custom number formatter.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use struson::writer::WriterSettings;
+    /// # use struson::writer::NumberFormatter;
+    /// # fn _dummy<NF: NumberFormatter>(number_formatter: NF) -> WriterSettings<NF> {
+    /// WriterSettings {
+    ///     pretty_print: true,
+    ///     // specify custom number formatter, but use the default for everything else
+    ///     ..WriterSettings::default_with_nf(number_formatter)
+    /// }
+    /// # }
+    /// # ()
+    /// ```
+    /* TODO(rust): This will probably become obsolete with https://github.com/rust-lang/rust/issues/86555 */
+    pub fn default_with_nf(number_formatter: NF) -> Self {
         Self {
             allow_empty_document: false,
             pretty_print: false,
             escape_all_control_chars: false,
             escape_all_non_ascii: false,
+            number_formatter,
             multi_top_level_values: None,
         }
     }
@@ -240,6 +277,26 @@ fn panic_incorrect_usage(message: &str) -> ! {
     panic!("Incorrect writer usage: {message}")
 }
 
+/// Contains most of the internal implementation of [`JsonStreamWriter`]
+///
+/// See the internal comments for the `JsonStreamWriter` fields for why this exists.
+#[derive(Debug)]
+struct JsonStreamWriterImpl<W: Write> {
+    writer: Writer<W>,
+    /// Whether the current array or object is empty, or [at top-level](Self::is_at_top_level)
+    /// whether no value has been written yet
+    is_empty: bool,
+    expects_member_name: bool,
+    stack: Vec<StackValue>,
+    is_string_value_writer_active: bool,
+    /* Settings from WriterSettings, except for NumberFormatter */
+    allow_empty_document: bool,
+    pretty_print: bool,
+    escape_all_control_chars: bool,
+    multi_top_level_values: Option<MultiTopLevelValuesSettings>,
+    escape_all_non_ascii: bool,
+}
+
 /// A JSON writer implementation which writes data to a [`Write`]
 ///
 /// This JSON writer does not perform any internal buffering. Depending on the type of the
@@ -254,36 +311,47 @@ fn panic_incorrect_usage(message: &str) -> ! {
 /// If the underlying writer returns an error of kind [`ErrorKind::Interrupted`], this
 /// JSON writer will keep retrying to write the data.
 #[derive(Debug)]
-pub struct JsonStreamWriter<W: Write> {
-    writer: Writer<W>,
-    /// Whether the current array or object is empty, or [at top-level](Self::is_at_top_level)
-    /// whether no value has been written yet
-    is_empty: bool,
-    expects_member_name: bool,
-    stack: Vec<StackValue>,
-    is_string_value_writer_active: bool,
-
-    writer_settings: WriterSettings,
+pub struct JsonStreamWriter<W: Write, NF: NumberFormatter = DefaultNumberFormatter> {
+    /*
+     * Has the NumberFormatter as separate field and the internal writer implementation in
+     * a nested struct to avoid borrow checker issues for code like
+     * `self.number_formatter.format(value, |s| self.write(s))`
+     * Such code is not possible because the `self` access in the closure conflicts with
+     * the still active borrow of `self.number_formatter`. Having the internal implementation
+     * nested makes such usage possible because now the borrows are for the separate
+     * fields `self.number_formatter` and `self.i`.
+     */
+    /// The internal implementation
+    i: JsonStreamWriterImpl<W>,
+    number_formatter: NF,
 }
 
-// Implementation with public non-JsonWriter-trait methods
+// Implementations with public non-JsonWriter-trait methods
 impl<W: Write> JsonStreamWriter<W> {
     /// Creates a JSON writer with [default settings](WriterSettings::default)
     pub fn new(writer: W) -> Self {
         Self::new_custom(writer, WriterSettings::default())
     }
-
+}
+impl<W: Write, NF: NumberFormatter> JsonStreamWriter<W, NF> {
     /// Creates a JSON writer with custom settings
     ///
     /// The settings can be used to customize how the JSON output will look like.
-    pub fn new_custom(writer: W, writer_settings: WriterSettings) -> Self {
+    pub fn new_custom(writer: W, writer_settings: WriterSettings<NF>) -> Self {
         Self {
-            writer: Writer(writer),
-            is_empty: true,
-            expects_member_name: false,
-            stack: Vec::with_capacity(16),
-            is_string_value_writer_active: false,
-            writer_settings,
+            i: JsonStreamWriterImpl {
+                writer: Writer(writer),
+                is_empty: true,
+                expects_member_name: false,
+                stack: Vec::with_capacity(16),
+                is_string_value_writer_active: false,
+                allow_empty_document: writer_settings.allow_empty_document,
+                pretty_print: writer_settings.pretty_print,
+                escape_all_control_chars: writer_settings.escape_all_control_chars,
+                escape_all_non_ascii: writer_settings.escape_all_non_ascii,
+                multi_top_level_values: writer_settings.multi_top_level_values,
+            },
+            number_formatter: writer_settings.number_formatter,
         }
     }
 
@@ -299,13 +367,13 @@ impl<W: Write> JsonStreamWriter<W> {
      * the implementation is changed in the future and can fail
      */
     pub fn finish_document_no_flush(self) -> Result<<Self as JsonWriter>::WriterResult, IoError> {
-        self.on_finish();
-        Ok(self.writer.0)
+        self.i.on_finish();
+        Ok(self.i.writer.0)
     }
 }
 
 // Implementation with JSON structure state inspection methods, and general value methods
-impl<W: Write> JsonStreamWriter<W> {
+impl<W: Write> JsonStreamWriterImpl<W> {
     fn is_at_top_level(&self) -> bool {
         self.stack.is_empty()
     }
@@ -331,7 +399,7 @@ impl<W: Write> JsonStreamWriter<W> {
         if !self.is_empty {
             self.writer.write(b",")?;
         }
-        if self.writer_settings.pretty_print {
+        if self.pretty_print {
             self.writer.write(b"\n")?;
             self.write_indentation()?;
         }
@@ -347,7 +415,7 @@ impl<W: Write> JsonStreamWriter<W> {
         }
 
         if self.is_at_top_level() && !self.is_empty {
-            match &self.writer_settings.multi_top_level_values {
+            match &self.multi_top_level_values {
                 None => panic_incorrect_usage(
                     "Cannot write multiple top-level values when not enabled in the settings",
                 ),
@@ -383,7 +451,7 @@ impl<W: Write> JsonStreamWriter<W> {
                 separator,
                 trailing_separator,
                 flush_after_value,
-            }) = &self.writer_settings.multi_top_level_values
+            }) = &self.multi_top_level_values
         {
             if *trailing_separator {
                 self.writer.write(separator.as_bytes())?;
@@ -428,7 +496,7 @@ impl<W: Write> JsonStreamWriter<W> {
     fn on_container_end(&mut self, closing_bracket: &[u8]) -> Result<(), IoError> {
         self.stack.pop();
 
-        if !self.is_empty && self.writer_settings.pretty_print {
+        if !self.is_empty && self.pretty_print {
             self.writer.write(b"\n")?;
             self.write_indentation()?;
         }
@@ -453,7 +521,7 @@ impl<W: Write> JsonStreamWriter<W> {
             panic_incorrect_usage("Cannot finish document when member name is expected");
         }
         if self.is_at_top_level() {
-            if self.is_empty && !self.writer_settings.allow_empty_document {
+            if self.is_empty && !self.allow_empty_document {
                 panic_incorrect_usage(
                     "Cannot finish document when no value has been written yet and empty documents are not enabled in the settings",
                 );
@@ -465,11 +533,16 @@ impl<W: Write> JsonStreamWriter<W> {
 }
 
 // Implementation with string writing methods
-impl<W: Write> JsonStreamWriter<W> {
+impl<W: Write> JsonStreamWriterImpl<W> {
+    /// Whether to only escape the chars required by the JSON specification
+    fn escape_only_required(&self) -> bool {
+        !(self.escape_all_control_chars || self.escape_all_non_ascii)
+    }
+
     /// Whether the char should be escaped according to the JSON specification, ignoring
     /// any writer settings which require additional chars to be escaped
     ///
-    /// See [`WriterSettings::escape_only_required`].
+    /// See [`Self::escape_only_required`].
     fn should_escape_required(&self, c: char) -> bool {
         matches!(c, '"' | '\\')
         // Control characters which must be escaped per JSON specification
@@ -478,8 +551,8 @@ impl<W: Write> JsonStreamWriter<W> {
 
     fn should_escape(&self, c: char) -> bool {
         self.should_escape_required(c)
-            || (self.writer_settings.escape_all_non_ascii && !c.is_ascii())
-            || (self.writer_settings.escape_all_control_chars && c.is_control())
+            || (self.escape_all_non_ascii && !c.is_ascii())
+            || (self.escape_all_control_chars && c.is_control())
     }
 
     fn write_escaped_char(&mut self, c: char) -> Result<(), IoError> {
@@ -538,7 +611,7 @@ impl<W: Write> JsonStreamWriter<W> {
         let bytes = value.as_bytes();
         let mut next_to_write_index = 0;
 
-        if self.writer_settings.escape_only_required() {
+        if self.escape_only_required() {
             // Optimized implementation which only has to check ASCII chars for escaping
             for index in 0..bytes.len() {
                 // Pretend the byte is a Unicode char; ASCII chars are the only ones which need
@@ -580,7 +653,7 @@ impl<W: Write> JsonStreamWriter<W> {
     }
 }
 
-impl<W: Write> JsonWriter for JsonStreamWriter<W> {
+impl<W: Write, NF: NumberFormatter> JsonWriter for JsonStreamWriter<W, NF> {
     /// Result returned by [`finish_document`](Self::finish_document)
     ///
     /// This JSON writer implementation returns the underlying `Write` to allow for
@@ -590,42 +663,42 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     type WriterResult = W;
 
     fn begin_object(&mut self) -> Result<(), IoError> {
-        self.on_container_start(StackValue::Object, b"{", true)
+        self.i.on_container_start(StackValue::Object, b"{", true)
     }
 
     fn name(&mut self, name: &str) -> Result<(), IoError> {
-        if !self.expects_member_name {
+        if !self.i.expects_member_name {
             panic_incorrect_usage("Cannot write name when name is not expected");
         }
-        if self.is_string_value_writer_active {
+        if self.i.is_string_value_writer_active {
             panic_incorrect_usage("Cannot write name when string value writer is still active");
         }
-        self.before_container_element()?;
-        self.write_string_value(name)?;
-        self.writer.write(b":")?;
-        if self.writer_settings.pretty_print {
-            self.writer.write(b" ")?;
+        self.i.before_container_element()?;
+        self.i.write_string_value(name)?;
+        self.i.writer.write(b":")?;
+        if self.i.pretty_print {
+            self.i.writer.write(b" ")?;
         }
-        self.expects_member_name = false;
+        self.i.expects_member_name = false;
 
         Ok(())
     }
 
     fn end_object(&mut self) -> Result<(), IoError> {
-        if !self.is_in_object() {
+        if !self.i.is_in_object() {
             panic_incorrect_usage("Cannot end object when not inside object");
         }
-        if self.is_string_value_writer_active {
+        if self.i.is_string_value_writer_active {
             panic_incorrect_usage("Cannot end object when string value writer is still active");
         }
-        if !self.expects_member_name {
+        if !self.i.expects_member_name {
             panic_incorrect_usage("Cannot end object when member value is expected");
         }
-        self.on_container_end(b"}")
+        self.i.on_container_end(b"}")
     }
 
     fn begin_array(&mut self) -> Result<(), IoError> {
-        self.on_container_start(
+        self.i.on_container_start(
             StackValue::Array,
             b"[",
             // Clear this because it is only relevant for objects; will be restored when entering parent object (if any) again
@@ -634,38 +707,56 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 
     fn end_array(&mut self) -> Result<(), IoError> {
-        if !self.is_in_array() {
+        if !self.i.is_in_array() {
             panic_incorrect_usage("Cannot end array when not inside array");
         }
-        if self.is_string_value_writer_active {
+        if self.i.is_string_value_writer_active {
             panic_incorrect_usage("Cannot end array when string value writer is still active");
         }
-        self.on_container_end(b"]")
+        self.i.on_container_end(b"]")
     }
 
     fn string_value(&mut self, value: &str) -> Result<(), IoError> {
-        self.write_simple_value(|self_| self_.write_string_value(value))
+        self.i
+            .write_simple_value(|self_| self_.write_string_value(value))
     }
 
     fn bool_value(&mut self, value: bool) -> Result<(), IoError> {
-        self.write_simple_value_bytes(if value { b"true" } else { b"false" })
+        self.i
+            .write_simple_value_bytes(if value { b"true" } else { b"false" })
     }
 
     fn null_value(&mut self) -> Result<(), IoError> {
-        self.write_simple_value_bytes(b"null")
+        self.i.write_simple_value_bytes(b"null")
     }
 
     fn number_value<N: FiniteNumber>(&mut self, value: N) -> Result<(), IoError> {
-        value.use_json_number(|number_str| self.write_simple_value_bytes(number_str.as_bytes()))
+        value.format(&self.number_formatter, |number_str| {
+            self.i.write_simple_value_bytes(number_str.as_bytes())
+        })
     }
 
     fn fp_number_value<N: FloatingPointNumber>(&mut self, value: N) -> Result<(), JsonNumberError> {
-        value.use_json_number(|number_str| self.write_simple_value_bytes(number_str.as_bytes()))
+        value.format(&self.number_formatter, |number_str| {
+            self.i.write_simple_value_bytes(number_str.as_bytes())
+        })
+    }
+
+    fn number_formatter(&self) -> &impl NumberFormatter {
+        &self.number_formatter
     }
 
     fn number_value_from_string(&mut self, value: &str) -> Result<(), JsonNumberError> {
         if is_valid_json_number(value) {
-            self.write_simple_value_bytes(value.as_bytes())?;
+            self.number_formatter
+                .format_number_str(value, |number_str| {
+                    // Formatter is expected to produce only valid JSON numbers
+                    debug_assert!(
+                        is_valid_json_number(number_str),
+                        "not a valid JSON number: {number_str}"
+                    );
+                    self.i.write_simple_value_bytes(number_str.as_bytes())
+                })?;
             Ok(())
         } else {
             Err(JsonNumberError::InvalidNumber {
@@ -683,20 +774,20 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     /// If flushing the underlying writer is undesired, use [`finish_document_no_flush`](Self::finish_document_no_flush)
     /// instead.
     fn finish_document(mut self) -> Result<Self::WriterResult, IoError> {
-        self.on_finish();
+        self.i.on_finish();
         // Flush the underlying writer to
         // - fail fast if there is an issue writing the data
         //   (otherwise this might only happen implicitly when the underlying writer is dropped,
         //    and the error is silently discarded or reported as panic)
         // - avoid that the user has to obtain the writer again and manually call `flush`
-        self.writer.flush()?;
-        Ok(self.writer.0)
+        self.i.writer.flush()?;
+        Ok(self.i.writer.0)
     }
 
     fn string_value_writer(&mut self) -> Result<impl StringValueWriter + '_, IoError> {
-        self.before_value()?;
-        self.writer.write(b"\"")?;
-        self.is_string_value_writer_active = true;
+        self.i.before_value()?;
+        self.i.writer.write(b"\"")?;
+        self.i.is_string_value_writer_active = true;
         Ok(StringValueWriterImpl {
             json_writer: self,
             utf8_buf: [0_u8; utf8::MAX_BYTES_PER_CHAR],
@@ -707,8 +798,8 @@ impl<W: Write> JsonWriter for JsonStreamWriter<W> {
     }
 }
 
-struct StringValueWriterImpl<'j, W: Write> {
-    json_writer: &'j mut JsonStreamWriter<W>,
+struct StringValueWriterImpl<'j, W: Write, NF: NumberFormatter> {
+    json_writer: &'j mut JsonStreamWriter<W, NF>,
     /// Buffer used to store incomplete data of a UTF-8 multi-byte character provided by
     /// a user of this writer
     ///
@@ -741,7 +832,7 @@ fn decode_utf8_char(bytes: &[u8]) -> Result<&str, IoError> {
     }
 }
 
-impl<W: Write> StringValueWriterImpl<'_, W> {
+impl<W: Write, NF: NumberFormatter> StringValueWriterImpl<'_, W, NF> {
     #[cold]
     fn utf8_error<T>(message: &'static str) -> Result<T, IoError> {
         Err(IoError::new(UTF8_ERROR_KIND, message))
@@ -765,7 +856,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
                 return Ok(copy_count);
             } else {
                 let s = decode_utf8_char(&self.utf8_buf[..self.utf8_expected_len])?;
-                self.json_writer.write_string_value_piece(s)?;
+                self.json_writer.i.write_string_value_piece(s)?;
                 self.utf8_pos = 0;
                 self.utf8_expected_len = 0;
                 start_pos += copy_count;
@@ -798,7 +889,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
                 let remaining_count = buf.len() - i;
                 if remaining_count < expected_bytes_count {
                     // Write everything up to (excluding) the start of the current UTF-8 multi-byte char
-                    self.json_writer.write_string_value_piece(
+                    self.json_writer.i.write_string_value_piece(
                         std::str::from_utf8(&buf[start_pos..i]).map_err(map_utf8_error)?,
                     )?;
 
@@ -816,7 +907,7 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
             i += 1;
         }
 
-        self.json_writer.write_string_value_piece(
+        self.json_writer.i.write_string_value_piece(
             std::str::from_utf8(&buf[start_pos..]).map_err(map_utf8_error)?,
         )?;
         Ok(buf.len())
@@ -847,17 +938,17 @@ impl<W: Write> StringValueWriterImpl<'_, W> {
         result
     }
 }
-impl<W: Write> Write for StringValueWriterImpl<'_, W> {
+impl<W: Write, NF: NumberFormatter> Write for StringValueWriterImpl<'_, W, NF> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.run_with_error_tracking(|self_| self_.write_impl(buf))
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.run_with_error_tracking(|self_| self_.json_writer.writer.flush())
+        self.run_with_error_tracking(|self_| self_.json_writer.i.writer.flush())
     }
 }
 
-impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
+impl<W: Write, NF: NumberFormatter> StringValueWriter for StringValueWriterImpl<'_, W, NF> {
     // Provides more efficient implementation which benefits from avoided UTF-8 validation
     fn write_str(&mut self, s: &str) -> Result<(), IoError> {
         self.run_with_error_tracking(|self_| {
@@ -866,7 +957,7 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
                 // self-contained complete UTF-8 data, and therefore does not complete the incomplete data
                 return Self::utf8_error("incomplete multi-byte UTF-8 data");
             }
-            self_.json_writer.write_string_value_piece(s)
+            self_.json_writer.i.write_string_value_piece(s)
         })
     }
 
@@ -878,9 +969,9 @@ impl<W: Write> StringValueWriter for StringValueWriterImpl<'_, W> {
         if self.utf8_pos > 0 {
             return Self::utf8_error("incomplete multi-byte UTF-8 data");
         }
-        self.json_writer.writer.write(b"\"")?;
-        self.json_writer.is_string_value_writer_active = false;
-        self.json_writer.after_value()
+        self.json_writer.i.writer.write(b"\"")?;
+        self.json_writer.i.is_string_value_writer_active = false;
+        self.json_writer.i.after_value()
     }
 }
 
@@ -921,6 +1012,208 @@ mod tests {
         assert_eq!(
             "[8,-8,16,-16,32,-32,64,-64,128,-128,1.5,-1.5,2.5,-2.5,123.45e-12]",
             String::from_utf8(writer)?
+        );
+        Ok(())
+    }
+
+    /// Macro which helps implementing unused [`NumberFormatter`] methods
+    #[macro_export] // allow usage in other tests
+    macro_rules! unused_format_number {
+        (u8) => { $crate::unused_format_number!(u8, format_u8); };
+        (i8) => { $crate::unused_format_number!(i8, format_i8); };
+        (u16) => { $crate::unused_format_number!(u16, format_u16); };
+        (i16) => { $crate::unused_format_number!(i16, format_i16); };
+        (u32) => { $crate::unused_format_number!(u32, format_u32); };
+        (i32) => { $crate::unused_format_number!(i32, format_i32); };
+        (u64) => { $crate::unused_format_number!(u64, format_u64); };
+        (i64) => { $crate::unused_format_number!(i64, format_i64); };
+        (u128) => { $crate::unused_format_number!(u128, format_u128); };
+        (i128) => { $crate::unused_format_number!(i128, format_i128); };
+        (usize) => { $crate::unused_format_number!(usize, format_usize); };
+        (isize) => { $crate::unused_format_number!(isize, format_isize); };
+        (f32) => { $crate::unused_format_number!(f32, format_f32); };
+        (f64) => { $crate::unused_format_number!(f64, format_f64); };
+        (str) => { $crate::unused_format_number!(&str, format_number_str); };
+        ($type:ty, $method:ident) => {
+            fn $method<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                _value: $type,
+                _consumer: C,
+            ) -> Result<T, IoError> {
+                panic!("should not have been used")
+            }
+        };
+        // Support listing multiple types in a single macro invocation
+        ($($type:ident),+) => {
+            $($crate::unused_format_number!($type);)+
+        };
+    }
+
+    #[test]
+    fn number_formatting() -> TestResult {
+        struct CustomNumberFormatter;
+        impl NumberFormatter for CustomNumberFormatter {
+            fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: u8,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.0"))
+            }
+
+            fn format_i8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: i8,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.1"))
+            }
+
+            fn format_u16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: u16,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.2"))
+            }
+
+            fn format_i16<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: i16,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.3"))
+            }
+
+            fn format_u32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: u32,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.4"))
+            }
+
+            fn format_i32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: i32,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.5"))
+            }
+
+            fn format_u64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: u64,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.6"))
+            }
+
+            fn format_i64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: i64,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.7"))
+            }
+
+            fn format_u128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: u128,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.8"))
+            }
+
+            fn format_i128<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: i128,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.9"))
+            }
+
+            fn format_usize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: usize,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.10"))
+            }
+
+            fn format_isize<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: isize,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}.11"))
+            }
+
+            fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: f32,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}e1"))
+            }
+
+            fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: f64,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{value}e2"))
+            }
+
+            fn format_number_str<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                number: &str,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{number}e3"))
+            }
+        }
+
+        let mut json_writer = JsonStreamWriter::new_custom(
+            Vec::new(),
+            WriterSettings {
+                ..WriterSettings::default_with_nf(CustomNumberFormatter)
+            },
+        );
+
+        // Verify that `JsonWriter::number_formatter()` returns the custom formatter
+        assert_eq!(
+            json_writer
+                .number_formatter()
+                .format_u8(0_u8, |s| Ok(s.to_owned()))?,
+            "0.0"
+        );
+
+        json_writer.begin_array()?;
+
+        json_writer.number_value(0_u8)?;
+        json_writer.number_value(1_i8)?;
+        json_writer.number_value(2_u16)?;
+        json_writer.number_value(3_i16)?;
+        json_writer.number_value(4_u32)?;
+        json_writer.number_value(5_i32)?;
+        json_writer.number_value(6_u64)?;
+        json_writer.number_value(7_i64)?;
+        json_writer.number_value(8_u128)?;
+        json_writer.number_value(9_i128)?;
+        json_writer.number_value(10_usize)?;
+        json_writer.number_value(11_isize)?;
+
+        json_writer.fp_number_value(12_f32)?;
+        json_writer.fp_number_value(13_f64)?;
+
+        json_writer.number_value_from_string("14")?;
+
+        json_writer.end_array()?;
+
+        assert_eq!(
+            String::from_utf8(json_writer.finish_document()?)?,
+            "[0.0,1.1,2.2,3.3,4.4,5.5,6.6,7.7,8.8,9.9,10.10,11.11,12e1,13e2,14e3]"
         );
         Ok(())
     }
@@ -967,6 +1260,76 @@ mod tests {
             json_writer.number_value_from_string("12a"),
             "invalid JSON number: 12a",
         );
+
+        assert!(writer.is_empty(), "nothing should have been written");
+    }
+
+    /// Verifies that invalid numbers are rejected before being passed to the
+    /// number formatter
+    #[test]
+    fn numbers_invalid_formatting() {
+        struct CustomNumberFormatter;
+        impl NumberFormatter for CustomNumberFormatter {
+            unused_format_number!(
+                u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize
+            );
+
+            fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: f32,
+                _consumer: C,
+            ) -> Result<T, IoError> {
+                panic!("was called with invalid value: {value}")
+            }
+
+            fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                value: f64,
+                _consumer: C,
+            ) -> Result<T, IoError> {
+                panic!("was called with invalid value: {value}")
+            }
+
+            fn format_number_str<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                number: &str,
+                _consumer: C,
+            ) -> Result<T, IoError> {
+                panic!("was called with invalid value: {number}")
+            }
+        }
+
+        fn assert_invalid_number(result: Result<(), JsonNumberError>, expected_message: &str) {
+            match result {
+                Err(JsonNumberError::InvalidNumber { message }) => {
+                    assert_eq!(expected_message, message);
+                }
+                r => panic!("unexpected result: {r:?}"),
+            }
+        }
+
+        let mut writer = Vec::<u8>::new();
+        let mut json_writer = JsonStreamWriter::new_custom(
+            &mut writer,
+            WriterSettings {
+                ..WriterSettings::default_with_nf(CustomNumberFormatter)
+            },
+        );
+
+        assert_invalid_number(
+            json_writer.fp_number_value(f32::INFINITY),
+            &format!("non-finite number: {}", f32::INFINITY),
+        );
+        assert_invalid_number(
+            json_writer.fp_number_value(f64::INFINITY),
+            &format!("non-finite number: {}", f64::INFINITY),
+        );
+        assert_invalid_number(
+            json_writer.number_value_from_string("-1+2"),
+            "invalid JSON number: -1+2",
+        );
+
+        assert!(writer.is_empty(), "nothing should have been written");
     }
 
     #[test]
@@ -1417,7 +1780,7 @@ mod tests {
 
                 // Should still consider string value writer as active because value was not
                 // successfully finished
-                assert!(json_writer.is_string_value_writer_active);
+                assert!(json_writer.i.is_string_value_writer_active);
             }};
         }
 

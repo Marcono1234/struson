@@ -2229,8 +2229,11 @@ pub trait JsonReader {
     /// Instead the formatting of the output is dependent on the configuration of the JSON writer.
     /// Similarly the Unicode characters of member names and string values might be escaped
     /// differently. However, all these differences don't have an effect on the JSON value.
-    /// JSON readers will consider it to be equivalent. For JSON numbers the exact format
-    /// is preserved.
+    /// JSON readers will consider it to be equivalent.\
+    /// By default the format of JSON numbers is preserved, unless a custom number formatter is
+    /// [specified in the `WriterSettings`](crate::writer::WriterSettings::number_formatter) and its
+    /// [`NumberFormatter::format_number_str`](crate::writer::NumberFormatter::format_number_str)
+    /// re-formats the numbers.
     ///
     /// This method is useful for extracting a subsection from a JSON document and / or for
     /// embedding it into another JSON document. Extraction can be done by using for example

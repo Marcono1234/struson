@@ -223,7 +223,7 @@ mod error_safe_writer {
     use std::io::ErrorKind;
 
     use super::*;
-    use crate::writer::IoError;
+    use crate::writer::{IoError, NumberFormatter};
 
     // Because `std::io::Error` does not impl Clone, at least preserve its kind and `to_string()`
     pub(super) type StoredIoError = (ErrorKind, String);
@@ -371,6 +371,10 @@ mod error_safe_writer {
                 |original_error| convert_original_number_error(original_error),
                 |stored_error| JsonNumberError::IoError(stored_error)
             )
+        }
+
+        fn number_formatter(&self) -> &impl NumberFormatter {
+            self.delegate.number_formatter()
         }
 
         fn finish_document(self) -> Result<Self::WriterResult, IoError> {

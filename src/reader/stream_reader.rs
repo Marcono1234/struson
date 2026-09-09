@@ -2113,7 +2113,7 @@ impl<R: Read> Read for StringValueReader<'_, R> {
 mod tests {
     use super::json_path::json_path;
     use super::*;
-    use crate::writer::JsonStreamWriter;
+    use crate::writer::{JsonStreamWriter, NumberFormatter, WriterSettings};
     use std::io::Write;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -4375,6 +4375,41 @@ mod tests {
         json_writer.finish_document()?;
 
         assert_eq!(expected_json, String::from_utf8(writer)?);
+        Ok(())
+    }
+
+    /// Tests `transfer_to` with a JSON writer with custom number formatter
+    #[test]
+    fn transfer_to_reformat_number() -> TestResult {
+        struct CustomNumberFormatter;
+        impl NumberFormatter for CustomNumberFormatter {
+            crate::unused_format_number!(
+                u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize, f32, f64
+            );
+
+            fn format_number_str<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                &self,
+                number: &str,
+                consumer: C,
+            ) -> Result<T, IoError> {
+                consumer(&format!("{number}.000"))
+            }
+        }
+
+        let mut json_reader = new_reader("123");
+        let mut json_writer = JsonStreamWriter::new_custom(
+            Vec::new(),
+            WriterSettings {
+                ..WriterSettings::default_with_nf(CustomNumberFormatter)
+            },
+        );
+        json_reader.transfer_to(&mut json_writer)?;
+        json_reader.consume_trailing_whitespace()?;
+
+        assert_eq!(
+            String::from_utf8(json_writer.finish_document()?)?,
+            "123.000"
+        );
         Ok(())
     }
 

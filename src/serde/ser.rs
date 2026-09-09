@@ -886,8 +886,14 @@ impl<W: JsonWriter + ?Sized> MapKeyStringSerializer<'_, W> {
         number: N,
     ) -> Result<(), SerializerError> {
         // For consistency use same number serialization logic as JsonWriter
-        number
-            .use_json_number(|s| self.json_writer.name(s))
+        // Use as owned String here because borrow checker prevents formatted number consumer to
+        // have a reference to `self.json_writer` while formatter itself also has a reference to it
+        let number_str = number
+            .format(self.json_writer.number_formatter(), |s| Ok(s.to_owned()))
+            .map_err(SerializerError::IoError)?;
+
+        self.json_writer
+            .name(&number_str)
             .map_err(SerializerError::IoError)
     }
 
@@ -896,9 +902,15 @@ impl<W: JsonWriter + ?Sized> MapKeyStringSerializer<'_, W> {
         number: N,
     ) -> Result<(), SerializerError> {
         // For consistency use same number serialization logic as JsonWriter
-        number
-            .use_json_number(|s| self.json_writer.name(s))
-            .map_err(map_number_err)
+        // Use as owned String here because borrow checker prevents formatted number consumer to
+        // have a reference to `self.json_writer` while formatter itself also has a reference to it
+        let number_str = number
+            .format(self.json_writer.number_formatter(), |s| Ok(s.to_owned()))
+            .map_err(map_number_err)?;
+
+        self.json_writer
+            .name(&number_str)
+            .map_err(SerializerError::IoError)
     }
 }
 
@@ -1504,6 +1516,51 @@ mod tests {
                 },
                 r#"{"true":0,"false":0,"2":0,"3":0,"1.23":0,"a":0,"value":0,"UnitVariant":0,"NewtypeStruct":0}"#
             );
+        }
+
+        /// Verifies that serializing a number as map key uses the custom number formatter
+        #[test]
+        fn string_key_number_formatting() -> Result<(), Box<dyn std::error::Error>> {
+            use crate::writer::{NumberFormatter, WriterSettings};
+
+            struct CustomNumberFormatter;
+            impl NumberFormatter for CustomNumberFormatter {
+                crate::unused_format_number!(
+                    i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize, f32, f64, str
+                );
+
+                fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
+                    &self,
+                    value: u8,
+                    consumer: C,
+                ) -> Result<T, IoError> {
+                    consumer(&format!("{value}e123"))
+                }
+            }
+
+            struct CustomSerialize;
+            impl Serialize for CustomSerialize {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    let mut map = serializer.serialize_map(None)?;
+                    map.serialize_key(&1_u8)?;
+                    map.serialize_value(&true)?;
+                    map.end()
+                }
+            }
+
+            let mut json_writer = JsonStreamWriter::new_custom(
+                Vec::new(),
+                WriterSettings {
+                    ..WriterSettings::default_with_nf(CustomNumberFormatter)
+                },
+            );
+            json_writer.serialize_value(&CustomSerialize)?;
+
+            assert_eq!(
+                String::from_utf8(json_writer.finish_document()?)?,
+                "{\"1e123\":true}"
+            );
+            Ok(())
         }
 
         #[test]
