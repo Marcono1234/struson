@@ -26,6 +26,16 @@ use crate::utf8;
 /// }
 /// # ;
 /// ```
+///
+/// # Custom JSON writers
+///
+/// The settings are specific to [`JsonStreamWriter`], other custom `JsonWriter`
+/// implementations might not support them.
+///
+/// If custom implementations want to support a subset of these settings, it is
+/// recommended that these implementations define their own settings struct instead of
+/// reusing this one. Otherwise it will be confusing to users why some values of the
+/// settings have no effect.
 #[derive(Clone, Debug)]
 pub struct WriterSettings<NF: NumberFormatter = DefaultNumberFormatter> {
     /// Whether to allow creating an empty JSON document

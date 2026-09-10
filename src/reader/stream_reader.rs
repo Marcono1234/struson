@@ -172,6 +172,16 @@ pub struct JsonStreamReader<R: Read> {
 /// }
 /// # ;
 /// ```
+///
+/// # Custom JSON readers
+///
+/// The settings are specific to [`JsonStreamReader`], other custom `JsonReader`
+/// implementations might not support them.
+///
+/// If custom implementations want to support a subset of these settings, it is
+/// recommended that these implementations define their own settings struct instead of
+/// reusing this one. Otherwise it will be confusing to users why some values of the
+/// settings have no effect.
 #[derive(Clone, Debug)]
 pub struct ReaderSettings {
     /// Whether to allow reading an empty JSON document
