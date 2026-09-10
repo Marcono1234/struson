@@ -461,8 +461,6 @@ fn test() {
         f: f32,
     }
 
-    let full_json = r#"{"a":2,"b":true,"c":null,"d":[{"e":"str\"","f":1.2e3}]}"#;
-    let mut json = String::new();
     let mut outer = Outer::default();
 
     // Test handling of empty JSON
@@ -479,6 +477,12 @@ fn test() {
         r => panic!("unexpected result: {r:?}"),
     }
 
+    // The following repeatedly deserializes partial JSON data, each time with one more char
+    // of the full JSON data
+    let full_json = r#"{"a":2,"b":true,"c":null,"d":[{"e":"str\"","f":1.2e3}]}"#;
+    // Each entry in `expected_deserialized` represents the expected result for deserialization
+    // with that many of the JSON chars + 1, e.g. value at index 0 is 1 JSON char,
+    // index 1 is 2 JSON chars, ...
     let mut expected_deserialized = Vec::<Outer>::new();
     expected_deserialized.extend_from_slice(&vec![Outer::default(); 7]);
     expected_deserialized.extend_from_slice(&vec![
@@ -541,7 +545,9 @@ fn test() {
     // Verify that test is properly implemented and number of expected values is equal to chars
     assert_eq!(full_json.chars().count(), expected_deserialized.len());
 
-    for (index, c) in full_json.char_indices() {
+    // Repeatedly deserialize partial JSON, each time with one additional JSON char
+    let mut json = String::new();
+    for (index, c) in full_json.chars().enumerate() {
         json.push(c);
         deserialize_partial!(json.as_bytes(), |d| Outer::deserialize_in_place(
             d, &mut outer
