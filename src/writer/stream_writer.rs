@@ -310,6 +310,19 @@ struct JsonStreamWriterImpl<W: Write> {
 ///
 /// If the underlying writer returns an error of kind [`ErrorKind::Interrupted`], this
 /// JSON writer will keep retrying to write the data.
+///
+/// # Compatibility with `JsonStreamReader`
+///
+/// Both `JsonStreamWriter` and [`JsonStreamReader`](crate::reader::JsonStreamReader) process
+/// standard JSON data (unless configured otherwise in the settings) and are therefore generally
+/// compatible with each other. That means, data written with `JsonStreamWriter` can be read again
+/// with `JsonStreamReader`.
+///
+/// **However**, `JsonStreamReader` enforces [security-related restrictions](crate::reader::JsonStreamReader#security)
+/// by default. Similar restrictions do not exist for `JsonStreamWriter`. Therefore, when writing
+/// for example large number values or deeply nested JSON structures it might be necessary to adjust
+/// these restrictions in the [`ReaderSettings`](crate::reader::ReaderSettings) to make sure the
+/// reader does not reject the JSON data.
 #[derive(Debug)]
 pub struct JsonStreamWriter<W: Write, NF: NumberFormatter = DefaultNumberFormatter> {
     /*

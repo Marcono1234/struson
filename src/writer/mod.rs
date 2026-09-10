@@ -497,6 +497,12 @@ pub trait JsonWriter {
     /// can be constructed and serialization can be performed using it later on. However,
     /// this should only be rarely necessary.
     ///
+    /// **Note:** When deserializing the value later again using [`JsonReader`](crate::reader::JsonReader),
+    /// keep in mind that [`JsonReaderDeserializer`](crate::serde::JsonReaderDeserializer)
+    /// by default limits the maximum nesting depth and might therefore reject data
+    /// which was successfully serialized here. If necessary [adjust the nesting depth
+    /// limit of the deserializer](crate::serde::JsonReaderDeserializer::new_with_custom_nesting_limit).
+    ///
     /// # Examples
     /// ```
     /// # use struson::writer::*;
