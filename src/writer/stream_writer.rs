@@ -765,7 +765,11 @@ impl<W: Write, NF: NumberFormatter> JsonWriter for JsonStreamWriter<W, NF> {
         })
     }
 
-    fn number_formatter(&self) -> &impl NumberFormatter {
+    #[allow(
+        refining_impl_trait,
+        reason = "number formatter type NF is not an implementation detail; it is the type specified by user"
+    )]
+    fn number_formatter(&self) -> &NF {
         &self.number_formatter
     }
 

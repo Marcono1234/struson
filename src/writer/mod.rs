@@ -810,7 +810,7 @@ pub trait FloatingPointNumber: private::Sealed + Debug {
     /// Gets this number as `f64`
     ///
     /// If this number can be losslessly and relatively efficiently converted
-    /// to a `f64`, returns it. Otherwise, or if the number only exists as
+    /// to an `f64`, returns it. Otherwise, or if the number only exists as
     /// string representation, `None` is returned. In that case
     /// [`use_json_number`](Self::use_json_number) can be used as fallback.
     ///
@@ -996,8 +996,10 @@ impl FiniteNumber for TransferredNumber<'_> {
 /// with the JSON number string and its result will be propagated to the caller of the formatting method.
 /// Normally that consumer will simply be the JSON writer which writes the JSON number.
 ///
-/// Custom number formatters can for example be used to produce more concise JSON numbers by using
-/// the scientific notation, or to format numbers more efficiently using crates such as [zmij](https://docs.rs/zmij/latest/zmij/).
+/// The default implementation of all formatting methods uses `to_string` to format the numbers.
+/// Custom number formatters can override the methods to customize number formatting, for example to produce
+/// more concise JSON numbers by using the scientific notation, or to format numbers more efficiently using
+/// crates such as [zmij](https://docs.rs/zmij/latest/zmij/).
 ///
 /// **Important:** All formatting methods must produce valid JSON number strings as
 /// [defined by the JSON specification](https://www.rfc-editor.org/rfc/rfc8259.html#section-6). JSON writer
@@ -1062,89 +1064,127 @@ pub trait NumberFormatter {
      * `core::fmt::NumBuffer` is now stable for integer types.
      */
 
+    // TODO(rust): Once minimum Rust version is >= 1.98.0, use `core::fmt::NumBuffer` instead of `to_string`
+
     /// Formats an `u8`
+    #[inline(always)]
     fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: u8,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `i8`
+    #[inline(always)]
     fn format_i8<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: i8,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `u16`
+    #[inline(always)]
     fn format_u16<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: u16,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `i16`
+    #[inline(always)]
     fn format_i16<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: i16,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `u32`
+    #[inline(always)]
     fn format_u32<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: u32,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `i32`
+    #[inline(always)]
     fn format_i32<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: i32,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `u64`
+    #[inline(always)]
     fn format_u64<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: u64,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `i64`
+    #[inline(always)]
     fn format_i64<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: i64,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `u128`
+    #[inline(always)]
     fn format_u128<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: u128,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `i128`
+    #[inline(always)]
     fn format_i128<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: i128,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `usize`
+    #[inline(always)]
     fn format_usize<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: usize,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /// Formats an `isize`
+    #[inline(always)]
     fn format_isize<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: isize,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        consumer(&value.to_string())
+    }
 
     /*
      * TODO: For f32, f64 and number_str should these methods perform validation themselves
@@ -1155,29 +1195,37 @@ pub trait NumberFormatter {
      * for example as f64 allows strings which are not valid JSON numbers.
      */
 
-    /// Formats a `f32`
+    /// Formats an `f32`
     ///
     /// This method should only be called after the caller verified that the number is
     /// finite (neither NaN nor Infinity), because JSON only permits finite numbers.
     /// Implementations may panic or create invalid JSON number strings if the number is
     /// not finite.
+    #[inline(always)]
     fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: f32,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
+        consumer(&value.to_string())
+    }
 
-    /// Formats a `f64`
+    /// Formats an `f64`
     ///
     /// This method should only be called after the caller verified that the number is
     /// finite (neither NaN nor Infinity), because JSON only permits finite numbers.
     /// Implementations may panic or create invalid JSON number strings if the number is
     /// not finite.
+    #[inline(always)]
     fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
         &self,
         value: f64,
         consumer: C,
-    ) -> Result<T, IoError>;
+    ) -> Result<T, IoError> {
+        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
+        consumer(&value.to_string())
+    }
 
     /// Formats a number which is already present as JSON number string
     ///
@@ -1216,141 +1264,14 @@ pub trait NumberFormatter {
 
 /// Default implementation of [`NumberFormatter`]
 ///
-/// Uses `to_string` to format numbers. Especially for `f32` and `f64` this can lead to
-/// very long number strings because it does not use the scientific notation. If this is
-/// undesired a custom number formatter should be used.
+/// Inherits the default method implementations, which use `to_string` to format numbers.
+/// Especially for `f32` and `f64` this can lead to very long number strings because it does
+/// not use the scientific notation. If this is undesired a custom number formatter should
+/// be used.
 #[derive(Clone, Debug)]
 pub struct DefaultNumberFormatter;
 impl NumberFormatter for DefaultNumberFormatter {
-    // TODO(rust): Once minimum Rust version is >= 1.98.0, use `core::fmt::NumBuffer` instead of `to_string`
-
-    #[inline(always)]
-    fn format_u8<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: u8,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_i8<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: i8,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_u16<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: u16,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_i16<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: i16,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_u32<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: u32,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_i32<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: i32,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_u64<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: u64,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_i64<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: i64,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_u128<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: u128,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_i128<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: i128,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_usize<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: usize,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_isize<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: isize,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_f32<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: f32,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
-        consumer(&value.to_string())
-    }
-
-    #[inline(always)]
-    fn format_f64<T, C: FnOnce(&str) -> Result<T, IoError>>(
-        &self,
-        value: f64,
-        consumer: C,
-    ) -> Result<T, IoError> {
-        debug_assert!(value.is_finite(), "not finite: {value}"); // caller should have already checked this
-        consumer(&value.to_string())
-    }
+    // Inherit default implementations of all methods
 }
 
 #[cfg(test)]
