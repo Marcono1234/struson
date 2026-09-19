@@ -13,6 +13,10 @@ on:
         - minor
         - patch
 
+# Disable caching for publish workflow; should run from clean state and not be influenced by previous
+# cache, see also https://docs.zizmor.sh/audits/#cache-poisoning
+cache-mode: none
+
 env:
   # Enable colored terminal output, see https://doc.rust-lang.org/cargo/reference/config.html#termcolor
   CARGO_TERM_COLOR: always
