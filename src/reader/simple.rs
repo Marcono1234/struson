@@ -1508,6 +1508,7 @@ mod error_safe_reader {
             ReaderErrorKind::SyntaxError(_) => error.rough_clone(),
             ReaderErrorKind::MaxNestingDepthExceeded { .. } => error.rough_clone(),
             ReaderErrorKind::UnsupportedNumberValue { .. } => error.rough_clone(),
+            ReaderErrorKind::DuplicateName { .. } => error.rough_clone(),
             ReaderErrorKind::InvalidIntError(_) => error.rough_clone(),
             ReaderErrorKind::InvalidUtf8Data => error.rough_clone(),
             ReaderErrorKind::IoError(io_error) => ReaderError::new(

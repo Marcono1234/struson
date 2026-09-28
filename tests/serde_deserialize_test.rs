@@ -4,7 +4,10 @@ use std::{collections::HashMap, fmt::Debug};
 
 use serde::{Deserialize, de::DeserializeOwned};
 use struson::{
-    reader::{JsonReader, JsonStreamReader, ReaderErrorKind, UnexpectedStructureKind, ValueType},
+    reader::{
+        DuplicateNameDetection, JsonReader, JsonStreamReader, ReaderErrorKind, ReaderSettings,
+        UnexpectedStructureKind, ValueType,
+    },
     serde::{DeserializerError, JsonReaderDeserializer},
 };
 
@@ -243,5 +246,60 @@ fn deserialize_string() {
     assert_deserialized(
         "\"a \\u0000 \\uD852\\uDF62 \u{10FFFF}\"",
         "a \0 \u{24B62} \u{10FFFF}".to_owned(),
+    );
+}
+
+#[test]
+fn deserialize_duplicate_name_detection() {
+    fn deserialize<D: DeserializeOwned>(
+        json: &str,
+        duplicate_name_detection: DuplicateNameDetection,
+    ) -> Result<D, DeserializerError> {
+        let mut json_reader = JsonStreamReader::new_custom(
+            json.as_bytes(),
+            ReaderSettings {
+                duplicate_name_detection,
+                ..Default::default()
+            },
+        );
+        D::deserialize(&mut JsonReaderDeserializer::new(&mut json_reader))
+    }
+
+    fn assert_duplicate_name<D: Debug>(result: Result<D, DeserializerError>, expected_name: &str) {
+        match result {
+            Err(DeserializerError::ReaderError(e)) => match e.kind() {
+                ReaderErrorKind::DuplicateName { name } => assert_eq!(expected_name, name),
+                _ => panic!("unexpected error: {e:?}"),
+            },
+            _ => panic!("unexpected result: {result:?}"),
+        }
+    }
+
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct S {
+        a: u8,
+    }
+
+    let json = r#"{"a": 1, "a": 2}"#;
+    assert_duplicate_name(
+        deserialize::<HashMap<String, u8>>(json, DuplicateNameDetection::ReadNames),
+        "a",
+    );
+
+    // Names of ignored fields are read, so they are checked; names inside their values are skipped
+    let json = r#"{"a": 1, "b": 1, "b": 2}"#;
+    assert_duplicate_name(
+        deserialize::<S>(json, DuplicateNameDetection::ReadNames),
+        "b",
+    );
+
+    let json = r#"{"a": 1, "b": {"c": 1, "c": 2}}"#;
+    assert_eq!(
+        S { a: 1 },
+        deserialize::<S>(json, DuplicateNameDetection::ReadNames).unwrap()
+    );
+    assert_duplicate_name(
+        deserialize::<S>(json, DuplicateNameDetection::AllNames),
+        "c",
     );
 }

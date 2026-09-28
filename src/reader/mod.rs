@@ -755,6 +755,15 @@ pub enum ReaderErrorKind {
         number: String,
     },
 
+    /// A member name occurred a second time within the same JSON object
+    ///
+    /// Duplicate member names are not detected by default, see
+    /// [`ReaderSettings::duplicate_name_detection`] for how to enable it.
+    DuplicateName {
+        /// The duplicate member name, unescaped
+        name: String,
+    },
+
     /// A JSON number is not a valid integer
     ///
     /// This error is reported by [`JsonReader::next_number_int`] when a value is presumably
@@ -798,6 +807,7 @@ impl Display for ReaderErrorKind {
             Self::UnsupportedNumberValue { number } => {
                 write!(f, "unsupported number value '{number}'")
             }
+            Self::DuplicateName { name } => write!(f, "duplicate member name '{name}'"),
             Self::InvalidIntError(e) => write!(f, "invalid integer number due to '{e:?}'"),
             Self::InvalidUtf8Data => write!(f, "invalid UTF-8 data"),
             Self::IoError(e) => write!(f, "IO error '{e}'"),
@@ -825,6 +835,7 @@ impl ReaderErrorKind {
             Self::UnsupportedNumberValue { number } => Self::UnsupportedNumberValue {
                 number: number.clone(),
             },
+            Self::DuplicateName { name } => Self::DuplicateName { name: name.clone() },
             Self::InvalidIntError(kind) => Self::InvalidIntError(*kind),
             Self::InvalidUtf8Data => Self::InvalidUtf8Data,
             Self::IoError(error) => Self::IoError(IoError::new(error.kind(), error.to_string())),
@@ -1268,6 +1279,7 @@ pub trait JsonReader {
     /// in `{"a": 1, "a": 2}`. Programs processing JSON data from an untrusted source
     /// must implement this detection themselves to protect against exploits relying
     /// on different handling of duplicate names by different JSON parsing libraries.
+    /// [`JsonStreamReader`] can detect them, see [`ReaderSettings::duplicate_name_detection`].
     ///
     /// # Examples
     /// ```
