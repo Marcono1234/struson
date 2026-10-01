@@ -1279,7 +1279,7 @@ pub trait JsonReader {
     /// in `{"a": 1, "a": 2}`. Programs processing JSON data from an untrusted source
     /// must implement this detection themselves to protect against exploits relying
     /// on different handling of duplicate names by different JSON parsing libraries.
-    /// [`JsonStreamReader`] can detect them, see [`ReaderSettings::duplicate_name_detection`].
+    /// [`JsonStreamReader`] can detect duplicate names, see [`ReaderSettings::duplicate_name_detection`].
     ///
     /// # Examples
     /// ```
@@ -1295,6 +1295,9 @@ pub trait JsonReader {
     ///
     /// If there is no next object member a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
+    ///
+    /// If a duplicate name is encountered and detection is [enabled in the `ReaderSettings`](ReaderSettings::duplicate_name_detection)
+    /// a [`ReaderErrorKind::DuplicateName`] is returned.
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This
@@ -1934,6 +1937,9 @@ pub trait JsonReader {
     ///
     /// If there is no next object member a [`ReaderErrorKind::UnexpectedStructure`] is returned.
     /// [`has_next`](Self::has_next) can be used to check if there are further members in the current JSON object.
+    ///
+    /// If a duplicate name is encountered and detection is [enabled in the `ReaderSettings`](ReaderSettings::duplicate_name_detection)
+    /// a [`ReaderErrorKind::DuplicateName`] is returned.
     ///
     /// # Panics
     /// Panics when called on a JSON reader which currently does not expect a member name. This

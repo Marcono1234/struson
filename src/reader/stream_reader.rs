@@ -159,7 +159,11 @@ pub struct JsonStreamReader<R: Read> {
     byte_pos: u64,
     json_path: Option<Vec<JsonPathPiece>>,
     /// Names read so far in each currently open object, used for [`ReaderSettings::duplicate_name_detection`]
-    member_names: Vec<HashSet<String>>,
+    ///
+    /// Only extended when encountering objects, so its length differs from the [stack length](Self::stack)
+    /// when the stack contains JSON arrays. Stays empty when duplicate name detection is disabled.
+    /// Names are stored as `Box<str>` so that they don't hold on to any excess capacity.
+    member_names: Vec<HashSet<Box<str>>>,
 
     reader_settings: ReaderSettings,
 }
@@ -365,18 +369,17 @@ pub struct ReaderSettings {
     pub duplicate_name_detection: DuplicateNameDetection,
 }
 
-/// Which object member names a [`JsonStreamReader`] checks for duplicates
+/// Specifies which object member names are checked for duplicates
 ///
-/// See [`ReaderSettings::duplicate_name_detection`].
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]
+/// Used by [`ReaderSettings::duplicate_name_detection`].
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum DuplicateNameDetection {
     /// Duplicate member names are not detected
-    #[default]
     Disabled,
     /// Names read with [`JsonReader::next_name`] and [`JsonReader::next_name_owned`] are checked
     ///
     /// Names consumed with [`JsonReader::skip_name`], including the names inside values skipped
-    /// with [`JsonReader::skip_value`], are neither checked nor remembered.
+    /// with [`JsonReader::skip_value`], are not considered.
     ReadNames,
     /// All names are checked, including the ones consumed with [`JsonReader::skip_name`] and
     /// inside values skipped with [`JsonReader::skip_value`]
@@ -1265,6 +1268,10 @@ impl<R: Read> JsonStreamReader<R> {
         self.read_all_string_bytes(&mut |_| {})
     }
 
+    /// Reads a string (value or name)
+    ///
+    /// The `String` value uses the value buffer; if the result is only needed as `str` or not
+    /// used at all it should be restored as value buffer using [`Self::put_into_string_value_buf`].
     fn read_string(&mut self) -> Result<String, StringReadingError> {
         let mut buf = self.take_or_create_string_value_buf();
         self.read_all_string_bytes(&mut |b| buf.push(b))?;
@@ -1276,7 +1283,8 @@ impl<R: Read> JsonStreamReader<R> {
 
     // Note: This is split into `before_name` and `after_name` to allow both `next_name` and `skip_name`
     // to reuse this code
-    fn before_name(&mut self) -> Result<(), ReaderError> {
+    /// Returns the position of the opening double quote of the name, without JSON path
+    fn before_name(&mut self) -> Result<JsonReaderPosition, ReaderError> {
         if !self.expects_member_name {
             panic_incorrect_usage("Cannot consume member name when not expecting it");
         }
@@ -1291,19 +1299,23 @@ impl<R: Read> JsonStreamReader<R> {
         }
 
         self.expects_member_name = false;
+        let position = self.current_position(false);
         // `has_next` call above peeked at start of member name; consume opening double quote here now
         self.consume_peeked();
-        Ok(())
+        Ok(position)
+    }
+
+    fn checks_duplicate_names(&self) -> bool {
+        self.reader_settings.duplicate_name_detection != DuplicateNameDetection::Disabled
     }
 
     /// Reads the next member name and updates the JSON path
     ///
     /// If `check_duplicate` is `true`, returns an error if the name was already read in the current object.
+    /// The `String` value uses the value buffer; if the result is only needed as `str` or not
+    /// used at all it should be restored as value buffer using [`Self::put_into_string_value_buf`].
     fn read_name(&mut self, check_duplicate: bool) -> Result<String, ReaderError> {
-        self.before_name()?;
-        // `before_name` consumed the opening double quote; a duplicate name error points at it
-        let (line, column, byte_pos) = (self.line, self.column - 1, self.byte_pos - 1);
-
+        let name_position = self.before_name()?;
         let name = self.read_string()?;
 
         if let Some(ref mut json_path) = self.json_path {
@@ -1313,13 +1325,18 @@ impl<R: Read> JsonStreamReader<R> {
             }
         }
 
-        if check_duplicate && !self.member_names.last_mut().unwrap().insert(name.clone()) {
+        if check_duplicate
+            && !self
+                .member_names
+                .last_mut()
+                .unwrap()
+                .insert(Box::from(name.as_str()))
+        {
             return Err(ReaderError::new(
                 ReaderErrorKind::DuplicateName { name },
                 JsonReaderPosition {
                     path: self.json_path.clone(),
-                    line_pos: Some(LinePosition { line, column }),
-                    data_pos: Some(byte_pos),
+                    ..name_position
                 },
             ));
         }
@@ -1810,7 +1827,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
             // Important: When changing this placeholder in the future also have to update documentation mentioning it
             json_path.push(JsonPathPiece::ObjectMember("<?>".to_owned()));
         }
-        if self.reader_settings.duplicate_name_detection != DuplicateNameDetection::Disabled {
+        if self.checks_duplicate_names() {
             self.member_names.push(HashSet::new());
         }
 
@@ -1819,9 +1836,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
     }
 
     fn next_name_owned(&mut self) -> Result<String, ReaderError> {
-        self.read_name(
-            self.reader_settings.duplicate_name_detection != DuplicateNameDetection::Disabled,
-        )
+        self.read_name(self.checks_duplicate_names())
     }
 
     fn next_name(&mut self) -> Result<&str, ReaderError> {
@@ -1847,7 +1862,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         // below (respectively on_value_end() called by it) will set expects_member_name again if
         // enclosing container is an object
         self.expects_member_name = false;
-        if self.reader_settings.duplicate_name_detection != DuplicateNameDetection::Disabled {
+        if self.checks_duplicate_names() {
             self.member_names.pop();
         }
         self.on_container_end();
@@ -1915,7 +1930,7 @@ impl<R: Read> JsonReader for JsonStreamReader<R> {
         let check_duplicate =
             self.reader_settings.duplicate_name_detection == DuplicateNameDetection::AllNames;
         if self.json_path.is_some() || check_duplicate {
-            // Read the name to update the path, or to compare it with the previous names
+            // Read the name to update the path, or to check for duplicates
             let name = self.read_name(check_duplicate)?;
             self.put_into_string_value_buf(name);
         } else {
@@ -3714,18 +3729,38 @@ mod tests {
 
             // Names are compared after unescaping
             let mut json_reader =
-                new_reader_with_duplicate_detection(r#"{"a": 1, "a": 2}"#, detection);
+                new_reader_with_duplicate_detection(r#"{"a": 1, "\u0061": 2}"#, detection);
             json_reader.begin_object()?;
             json_reader.next_name()?;
             json_reader.skip_value()?;
             assert_duplicate_name(json_reader.next_name_owned(), "a", 9, &json_path!["a"]);
 
-            // Nested objects have their own names; names differing in case or Unicode
-            // normalization are not duplicates
+            // `transfer_to` reads the names, so it detects duplicates as well
+            let mut json_reader =
+                new_reader_with_duplicate_detection(r#"{"a": {"b": 1, "b": 2}}"#, detection);
+            let result = json_reader
+                .transfer_to(&mut JsonStreamWriter::new(Vec::new()))
+                .map_err(as_transfer_read_error);
+            assert_duplicate_name(result, "b", 15, &json_path!["a", "b"]);
+
+            // Nested objects have their own names
             let mut json_reader = new_reader_with_duplicate_detection(
-                r#"{"a": {"a": {"a": 1}, "b": 2}, "b": [{"a": 3}, {"a": 4}], "A": 5, "é": 6, "é": 7}"#,
+                r#"{"a": {"a": {"a": 1}, "b": 2}, "b": [{"a": 3}, {"a": 4}]}"#,
                 detection,
             );
+            json_reader.transfer_to(&mut JsonStreamWriter::new(Vec::new()))?;
+            json_reader.consume_trailing_whitespace()?;
+
+            // Names differing in case are not duplicates
+            let mut json_reader =
+                new_reader_with_duplicate_detection(r#"{"a": 1, "A": 2}"#, detection);
+            json_reader.transfer_to(&mut JsonStreamWriter::new(Vec::new()))?;
+            json_reader.consume_trailing_whitespace()?;
+
+            // Names differing in Unicode normalization are not duplicates:
+            // "é" (\u{00e9}) vs. "é" (\u{0065}\u{0301})
+            let mut json_reader =
+                new_reader_with_duplicate_detection(r#"{"é": 1, "é": 2}"#, detection);
             json_reader.transfer_to(&mut JsonStreamWriter::new(Vec::new()))?;
             json_reader.consume_trailing_whitespace()?;
         }
