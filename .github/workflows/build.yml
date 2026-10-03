@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9  #v2.82.2
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3  #v2.87.16
         with:
           tool: cargo-make@0.37.24
 
@@ -41,7 +41,7 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
       - name: Install cargo-hack
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9  #v2.82.2
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3  #v2.87.16
         with:
           tool: cargo-hack@0.6.42
       # See https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version
