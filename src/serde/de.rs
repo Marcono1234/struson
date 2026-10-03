@@ -134,6 +134,9 @@ fn panic_incorrect_usage(message: &str) -> ! {
 ///   them. Different JSON libraries might therefore handle them in inconsistent ways (for example one
 ///   using the first occurrence, another one using the last), which could be exploited.
 ///
+///   When using [`JsonStreamReader`](crate::reader::JsonStreamReader) as underlying reader, duplicate
+///   member names can be detected using [`ReaderSettings::duplicate_name_detection`](crate::reader::ReaderSettings::duplicate_name_detection).
+///
 /// - Impose a limit on the length on member names and string values, or on arrays and objects
 ///
 ///   Especially when the JSON data comes from a compressed data stream (such as gzip) large member names
