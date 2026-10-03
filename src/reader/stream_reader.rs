@@ -1281,9 +1281,10 @@ impl<R: Read> JsonStreamReader<R> {
         Ok(utf8::to_string_unchecked(buf))
     }
 
-    // Note: This is split into `before_name` and `after_name` to allow both `next_name` and `skip_name`
-    // to reuse this code
-    /// Returns the position of the opening double quote of the name, without JSON path
+    /* Note: This is split into `before_name` and `after_name` to allow both `next_name` and `skip_name` to reuse this code */
+    /// To be called before consuming an object member name
+    ///
+    /// Returns the position of the opening double quote of the name, without JSON path.
     fn before_name(&mut self) -> Result<JsonReaderPosition, ReaderError> {
         if !self.expects_member_name {
             panic_incorrect_usage("Cannot consume member name when not expecting it");
