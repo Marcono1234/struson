@@ -36,7 +36,7 @@ jobs:
     env:
       RUSTDOCFLAGS: --deny warnings
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
       - run: cargo +nightly docs-rs
@@ -49,7 +49,7 @@ jobs:
       contents: write  # read repository content and push updated version and tag
       id-token: write  # Required for OIDC token exchange for trusted publishing, see below
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Update project version
         shell: bash
