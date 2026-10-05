@@ -28,7 +28,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # Serde is used for comparison in benchmarks and for tests
 serde = "1.0.228"
 # When updating serde_json, adjust Struson Serde integration behavior to match serde_json
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 
 # Used for verifying in allocation tests that no allocations occur in certain situations
 # Specify Git revision because version with "backtrace" feature has not been released yet

@@ -26,7 +26,7 @@ env:
 
 jobs:
   # Build the documentation similar (but not completely identical) to how docs.rs would do it,
-  # to notice any potential configuration issues in advance; see https://github.com/dtolnay/cargo-docs-rs
+  # to notice any potential configuration issues in advance; see https://github.com/syphar/cargo-docs-rs
   # Run this as separate job with minimal permissions because the used actions cannot be pinned
   # easily, and to avoid that the Nightly toolchain somehow affects publishing
   check-docs-rs-build:
@@ -37,6 +37,7 @@ jobs:
       RUSTDOCFLAGS: --deny warnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Use latest nightly to match docs.rs build, see https://docs.rs/about/builds
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
       - run: cargo +nightly docs-rs

@@ -44,9 +44,48 @@ jobs:
         uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3  #v2.87.16
         with:
           tool: cargo-hack@0.6.42
+
       # See https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version
       - name: Check 'rust-version' compatibility
         # `--all-targets` is probably not actually needed to ensure that users of the library can use it
         # with 'rust-version' (`--all-targets` includes tests, benches, examples); but for now keep it
         # to ensure that users can also build Struson themselves with that 'rust-version'
         run: cargo hack check --rust-version --workspace --all-targets --all-features --locked
+
+
+  # Builds the project with the minimal dependency versions defined in `Cargo.toml`, instead of the pinned
+  # versions in `Cargo.lock`
+  build-minimal-versions:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Build (minimal versions) (${{ matrix.os }})
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+
+      - name: Install tools
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3  #v2.87.16
+        with:
+          tool: |
+            cargo-hack@0.6.42
+            cargo-minimal-versions@0.1.37
+
+      - name: cargo check
+        run: cargo minimal-versions check --direct --rust-version --workspace --all-features --locked
+        env:
+          # Set `RUSTC_BOOTSTRAP` because `cargo minimal-versions` uses unstable cargo features
+          # Based on https://github.com/rustls/rustls/pull/2626; `RUSTC_BOOTSTRAP` should be avoided but here for
+          # tool usage it might be 'fine'; allows using the pinned Rust version from `rust-toolchain.toml` instead
+          # of an arbitrary Rust nightly version
+          # Maybe becomes easier in the future with https://github.com/rust-lang/rfcs/pull/3965 ?
+          RUSTC_BOOTSTRAP: 1
+
+      - name: cargo test
+        run: cargo minimal-versions test --direct --rust-version --workspace --all-features --locked
+        env:
+          # See above
+          RUSTC_BOOTSTRAP: 1
