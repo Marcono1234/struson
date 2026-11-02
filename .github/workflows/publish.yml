@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     env:
-      RUSTDOCFLAGS: --deny warnings
+      CARGO_BUILD_WARNINGS: deny
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       # Use latest nightly to match docs.rs build, see https://docs.rs/about/builds
@@ -113,7 +113,8 @@ jobs:
         id: auth
       - name: Publish
         shell: bash
-        # TODO: Fail on any warnings (e.g. incorrect Cargo.toml values); not yet available, see https://github.com/rust-lang/cargo/issues/8424
         run: cargo publish --all-features --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          # TODO(rust): This does not seem to abort publish on warnings, see https://github.com/rust-lang/cargo/issues/17674
+          CARGO_BUILD_WARNINGS: deny

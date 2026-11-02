@@ -898,7 +898,9 @@ impl<W: Write, NF: NumberFormatter> StringValueWriterImpl<'_, W, NF> {
             let byte = buf[i];
 
             if !utf8::is_1byte(byte) {
+                #[expect(clippy::needless_late_init, reason = "better readability")]
                 let expected_bytes_count;
+
                 if utf8::is_2byte_start(byte) {
                     expected_bytes_count = 2;
                 } else if utf8::is_3byte_start(byte) {

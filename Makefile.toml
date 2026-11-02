@@ -5,8 +5,7 @@
 skip_core_tasks = true
 
 [env]
-RUSTFLAGS = "--deny warnings"
-RUSTDOCFLAGS = "--deny warnings"
+CARGO_BUILD_WARNINGS = "deny"
 
 
 # The following differentiates between default features and Serde interoperability feature
@@ -101,7 +100,7 @@ dependencies = [
 # Note: Running Clippy should hopefully suffice, no need to run `cargo check`, see https://stackoverflow.com/q/57449356
 [tasks.clippy]
 command = "cargo"
-args = ["clippy", "--all-targets", "--all-features", "--", "--deny", "warnings"]
+args = ["clippy", "--all-targets", "--all-features"]
 
 [tasks.doc]
 command = "cargo"
