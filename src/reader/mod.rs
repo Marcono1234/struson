@@ -1275,11 +1275,11 @@ pub trait JsonReader {
     /// Afterwards one of the value reading methods such as [`next_number`](Self::next_number) can be
     /// used to read the corresponding member value.
     ///
-    /// **Important:** This method does not detect duplicate  member names, such as
-    /// in `{"a": 1, "a": 2}`. Programs processing JSON data from an untrusted source
-    /// must implement this detection themselves to protect against exploits relying
-    /// on different handling of duplicate names by different JSON parsing libraries.
-    /// [`JsonStreamReader`] can detect duplicate names, see [`ReaderSettings::duplicate_name_detection`].
+    /// **Important:** By default duplicate member names are not detected and the same
+    /// member name may be returned multiple times in case multiple members have that
+    /// name, such as in `{"a": 1, "a": 2}`. This can be exploitable when the JSON data
+    /// is processed by several programs and they handle duplicate names differently.\
+    /// Detection of duplicate names can be [enabled in the `ReaderSettings`](ReaderSettings::duplicate_name_detection).
     ///
     /// # Examples
     /// ```
