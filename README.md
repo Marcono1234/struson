@@ -206,6 +206,10 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
 
 ## Similar projects
 
+Similar Rust streaming JSON libraries by other authors. These might be suitable alternatives in case Struson does not meet your needs. Alternatively feel free to [create a new feature request for Struson](https://github.com/Marcono1234/struson/issues/new/choose) (in case there is no existing request yet).
+
+These projects were selected based on their description and API documentation. I have not checked them for correctness or performance, use at your own risk.
+
 - <https://github.com/alexmaco/json_stream>
   > A streaming JSON parser/emitter library for rust
 - <https://github.com/sarum90/qjsonrs>
@@ -231,6 +235,8 @@ If you don't want to install cargo-make, you can instead manually run the tasks 
   > Actson is a low-level JSON parser for reactive applications and non-blocking I/O.
 - <https://github.com/core-json/core-json>
   > A non-allocating no-`std` JSON deserializer in Rust
+- <https://github.com/pydantic/jiter>
+  > Fast iterable JSON parser
 - [rustc-serialize `Parser`](https://docs.rs/rustc-serialize/latest/rustc_serialize/json/struct.Parser.html) (deprecated)
   > A streaming JSON parser implemented as an iterator of JsonEvent, consuming an iterator of char.
 
