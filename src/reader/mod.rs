@@ -478,7 +478,7 @@ pub struct JsonReaderPosition {
     /// next data unit. For example for a JSON reader implementation based on [`std::io::Read`] the
     /// value might be the byte position.
     ///
-    /// `None` if the JSON reader implementation does provide information about the data position.
+    /// `None` if the JSON reader implementation does not provide information about the data position.
     ///
     /// This value might not be equal to the amount of data consumed from the underlying data source
     /// in case the JSON reader buffers data internally which it has not processed yet.
