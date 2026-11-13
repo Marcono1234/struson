@@ -63,6 +63,7 @@ bool_assert_comparison = "allow"
 # Set some allow-by-default lints to "warn"
 implicit_clone = "warn"
 str_to_string = "warn"
+doc_comment_double_space_linebreaks = "warn"
 
 # docs.rs specific configuration
 [package.metadata.docs.rs]
