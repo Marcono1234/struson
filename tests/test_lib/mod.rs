@@ -1,13 +1,11 @@
 //! Common library module for integration tests
 // See https://doc.rust-lang.org/book/ch11-03-test-organization.html#submodules-in-integration-tests
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn get_test_data_file_path() -> PathBuf {
     // Get path of test file, see https://stackoverflow.com/a/30004252
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("tests/test_lib/test_data.json");
-    path
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_lib/test_data.json")
 }
 
 #[derive(PartialEq, Eq, Debug)]
