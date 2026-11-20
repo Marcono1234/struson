@@ -1002,7 +1002,7 @@ impl FiniteNumber for TransferredNumber<'_> {
 /// crates such as [zmij](https://docs.rs/zmij/latest/zmij/).
 ///
 /// **Important:** All formatting methods must produce valid JSON number strings as
-/// [defined by the JSON specification](https://www.rfc-editor.org/rfc/rfc8259.html#section-6). JSON writer
+/// [defined by the JSON specification](https://www.rfc-editor.org/info/rfc8259/#section-6). JSON writer
 /// implementations might rely on this and therefore not perform any additional validation themselves.
 pub trait NumberFormatter {
     /*

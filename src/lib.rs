@@ -7,7 +7,7 @@
 // See https://stackoverflow.com/q/61417452
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-//! Struson is an [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
+//! Struson is an [RFC 8259](https://www.rfc-editor.org/info/rfc8259/) compliant streaming JSON reader and writer.
 //!
 //! Its main purpose is allowing to read and write JSON data in a memory efficient way without having to store the
 //! complete JSON document structure in memory. It is however *not* an object mapper which converts structs

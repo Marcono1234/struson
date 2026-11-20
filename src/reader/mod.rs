@@ -9,7 +9,7 @@
 /// elements which either represent the index of a JSON array item or the name of a JSON object member.
 /// These pieces combined form the _path_ to a value in a JSON document.
 ///
-/// This is not an implementation of the [JSONPath RFC 9535](https://www.rfc-editor.org/rfc/rfc9535) standard;
+/// This is not an implementation of the [JSONPath RFC 9535](https://www.rfc-editor.org/info/rfc9535/) standard;
 /// the implementation here uses a different syntax and only covers a subset of these features needed for
 /// JSON reader functionality, most notably for reporting the location of errors and for [`JsonReader::seek_to`].
 /// If you need more functionality, prefer a library which fully implements the JSONPath standard.

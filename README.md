@@ -1,6 +1,6 @@
 # <div align="center"> Struson </br> [![crates.io](https://img.shields.io/crates/v/struson)](https://crates.io/crates/struson) [![docs.rs](https://img.shields.io/docsrs/struson?label=docs.rs)](https://docs.rs/struson)</div>
 
-Struson is an [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html) compliant streaming JSON reader and writer.
+Struson is an [RFC 8259](https://www.rfc-editor.org/info/rfc8259/) compliant streaming JSON reader and writer.
 
 Its main purpose is to allow reading and writing JSON documents in a memory efficient way without having to store the complete JSON document structure in memory.
 

@@ -32,7 +32,7 @@ use crate::{
 /// [`MultiJsonPathPiece`] elements which either represent JSON array items or JSON object members. These
 /// pieces combined form the _path_ to the values in a JSON document.
 ///
-/// This is not an implementation of the [JSONPath RFC 9535](https://www.rfc-editor.org/rfc/rfc9535) standard;
+/// This is not an implementation of the [JSONPath RFC 9535](https://www.rfc-editor.org/info/rfc9535/) standard;
 /// the implementation here uses a different syntax and only covers a subset of these features suitable
 /// for the streaming JSON reader of this library. If you need more functionality, prefer a library
 /// which fully implements the JSONPath standard.
