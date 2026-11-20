@@ -79,19 +79,19 @@
       "input_encoding": "utf-8"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_UTF-16LE_with_BOM",
       "input": "fffe5b002200e90022005d00",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_UTF-8_invalid_sequence",
       "input": "5b22e697a5d188fa225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_UTF8_surrogate_U+D800",
       "input": "5b22eda080225d",
       "input_encoding": "hex"
@@ -127,7 +127,7 @@
       "input_encoding": "utf-8"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_invalid_utf-8",
       "input": "5b22ff225d",
       "input_encoding": "hex"
@@ -139,7 +139,7 @@
       "input_encoding": "utf-8"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_iso_latin_1",
       "input": "5b22e9225d",
       "input_encoding": "hex"
@@ -151,49 +151,49 @@
       "input_encoding": "utf-8"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_lone_utf8_continuation_byte",
       "input": "5b2281225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_not_in_unicode_range",
       "input": "5b22f4bfbfbf225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_overlong_sequence_2_bytes",
       "input": "5b22c0af225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_overlong_sequence_6_bytes",
       "input": "5b22fc83bfbfbfbf225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_overlong_sequence_6_bytes_null",
       "input": "5b22fc8080808080225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_truncated-utf-8",
       "input": "5b22e0ff225d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_utf16BE_no_BOM",
       "input": "005b002200e90022005d",
       "input_encoding": "hex"
     },
     {
-      "expect": "any",
+      "expect": "reject",
       "id": "jts-8259-i_string_utf16LE_no_BOM",
       "input": "5b002200e90022005d00",
       "input_encoding": "hex"
@@ -2109,14 +2109,44 @@
       "input_encoding": "utf-8"
     },
     {
-      "expect": "reject",
+      "expect": "any",
       "id": "json-8259-lone-surrogate",
       "input": "\"\\uD800\"",
+      "input_encoding": "utf-8"
+    },
+    {
+      "expect": "reject",
+      "id": "json-8259-u-escape-fullwidth-digit",
+      "input": "[\"\\u1２34\"]",
+      "input_encoding": "utf-8"
+    },
+    {
+      "expect": "reject",
+      "id": "json-8259-u-escape-low-byte-hex",
+      "input": "[\"\\u1⁂34\"]",
+      "input_encoding": "utf-8"
+    },
+    {
+      "expect": "reject",
+      "id": "json-8259-u-escape-unicode-digit-low-byte",
+      "input": "[\"\\u1١34\"]",
+      "input_encoding": "utf-8"
+    },
+    {
+      "expect": "reject",
+      "id": "json-8259-u-escape-short",
+      "input": "\"\\u123",
+      "input_encoding": "utf-8"
+    },
+    {
+      "expect": "reject",
+      "id": "json-8259-u-escape-short-before-quote",
+      "input": "[\"\\u123\"]",
       "input_encoding": "utf-8"
     }
   ],
   "format": "json",
-  "notes": "Official JSONTestSuite parse files (y_/n_/i_) plus original section-linked extras.",
+  "notes": "Official JSONTestSuite parse files (y_/n_/i_) plus original section-linked extras. An i_ file is scored from RFC 8259, not kept as expect any by default. expect any means both outcomes conform; the paragraph names the latitude, and neither outcome is preferred.",
   "provenance": "nst/JSONTestSuite+original-work",
   "standard": "RFC 8259",
   "standard_url": "https://www.rfc-editor.org/rfc/rfc8259",

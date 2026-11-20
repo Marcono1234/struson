@@ -3,7 +3,7 @@
 Test suite for JSON [RFC 8259](https://www.rfc-editor.org/info/rfc8259/) compliance, based on the data from <https://github.com/leo-gan/GLD.SerializerBenchmark>, see [`LICENSE`](./LICENSE).
 
 The test suite file [`rfc8259.json`](./rfc8259.json) is derived from:\
-<https://github.com/leo-gan/GLD.SerializerBenchmark/blob/4930841a529441107e1c89cc1ac90c982db0069a/compliance/data/json/rfc8259.json>
+<https://github.com/leo-gan/GLD.SerializerBenchmark/blob/9c34dcaffa3575878c5c12694c561a230399f687/compliance/data/json/rfc8259.json>
 
 ## Updating test suite file
 

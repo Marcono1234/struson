@@ -170,12 +170,6 @@ static ANY_CASE_DECISIONS: LazyLock<HashMap<&str, IDecision>> = LazyLock::new(||
             "jts-8259-i_string_1st_valid_surrogate_2nd_invalid",
             IDecision::Reject,
         ),
-        ("jts-8259-i_string_UTF-16LE_with_BOM", IDecision::Reject),
-        (
-            "jts-8259-i_string_UTF-8_invalid_sequence",
-            IDecision::Reject,
-        ),
-        ("jts-8259-i_string_UTF8_surrogate_U+D800", IDecision::Reject),
         (
             "jts-8259-i_string_incomplete_surrogate_and_escape_valid",
             IDecision::Reject,
@@ -193,33 +187,12 @@ static ANY_CASE_DECISIONS: LazyLock<HashMap<&str, IDecision>> = LazyLock::new(||
             IDecision::Reject,
         ),
         ("jts-8259-i_string_invalid_surrogate", IDecision::Reject),
-        ("jts-8259-i_string_invalid_utf-8", IDecision::Reject),
         (
             "jts-8259-i_string_inverted_surrogates_U+1D11E",
             IDecision::Reject,
         ),
-        ("jts-8259-i_string_iso_latin_1", IDecision::Reject),
         ("jts-8259-i_string_lone_second_surrogate", IDecision::Reject),
-        (
-            "jts-8259-i_string_lone_utf8_continuation_byte",
-            IDecision::Reject,
-        ),
-        ("jts-8259-i_string_not_in_unicode_range", IDecision::Reject),
-        (
-            "jts-8259-i_string_overlong_sequence_2_bytes",
-            IDecision::Reject,
-        ),
-        (
-            "jts-8259-i_string_overlong_sequence_6_bytes",
-            IDecision::Reject,
-        ),
-        (
-            "jts-8259-i_string_overlong_sequence_6_bytes_null",
-            IDecision::Reject,
-        ),
-        ("jts-8259-i_string_truncated-utf-8", IDecision::Reject),
-        ("jts-8259-i_string_utf16BE_no_BOM", IDecision::Reject),
-        ("jts-8259-i_string_utf16LE_no_BOM", IDecision::Reject),
+        ("json-8259-lone-surrogate", IDecision::Reject),
         (
             "jts-8259-i_structure_UTF-8_BOM_empty_object",
             IDecision::Reject,
