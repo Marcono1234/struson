@@ -519,19 +519,26 @@ impl<'s, 'a, W: JsonWriter + ?Sized> Serializer for &'s mut JsonWriterSerializer
     /// This implementation writes a JSON object where each member consists of the
     /// field name and value serialized by [`SerializeStruct::serialize_field`](serde_core::ser::SerializeStruct::serialize_field).
     /// Serializing a different number of fields than `len` will cause a [`SerializerError::IncorrectElementsCount`].
-    /// The given struct name is ignored.
+    /// The given struct name is ignored, except for the special struct name which
+    /// serde_json uses for `serde_json::Number` when its `arbitrary_precision` feature
+    /// is enabled; in that case the number is written as raw JSON number, matching
+    /// serde_json's behavior.
     ///
     /// Duplicate field names are not detected or prevented.
     fn serialize_struct(
         self,
-        _name: &'static str,
+        name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        self.json_writer.begin_object()?;
+        let is_serde_json_number = name == SERDE_JSON_NUMBER_TOKEN;
+        if !is_serde_json_number {
+            self.json_writer.begin_object()?;
+        }
         Ok(SerializeStruct {
             ser: self,
             expected_len: len,
             len: 0,
+            is_serde_json_number,
         })
     }
 
@@ -788,6 +795,8 @@ pub struct SerializeStruct<'s, 'a, W: JsonWriter + ?Sized> {
     ser: &'s mut JsonWriterSerializer<'a, W>,
     expected_len: usize,
     len: usize,
+    /// Whether this is a serde_json `arbitrary_precision` number, see [`SERDE_JSON_NUMBER_TOKEN`]
+    is_serde_json_number: bool,
 }
 
 impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeStruct for SerializeStruct<'_, '_, W> {
@@ -808,6 +817,15 @@ impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeStruct for SerializeStruc
         }
         self.len += 1;
 
+        if self.is_serde_json_number {
+            if key != SERDE_JSON_NUMBER_TOKEN {
+                return Err(err_invalid_serde_json_number());
+            }
+            return value.serialize(SerdeJsonNumberSerializer {
+                json_writer: self.ser.json_writer,
+            });
+        }
+
         self.ser.json_writer.name(key)?;
         value.serialize(&mut *self.ser)
     }
@@ -819,8 +837,90 @@ impl<W: JsonWriter + ?Sized> serde_core::ser::SerializeStruct for SerializeStruc
                 actual: self.len,
             });
         }
-        self.ser.json_writer.end_object()?;
+        if !self.is_serde_json_number {
+            self.ser.json_writer.end_object()?;
+        }
         Ok(())
+    }
+}
+
+/// Struct name (and field name) which serde_json uses for serializing `serde_json::Number`
+/// when its `arbitrary_precision` feature is enabled
+///
+/// The struct has a single field whose value is the number as string, see
+/// <https://github.com/serde-rs/json/blob/v1.0.154/src/number.rs#L385-L395>
+const SERDE_JSON_NUMBER_TOKEN: &str = "$serde_json::private::Number";
+
+fn err_invalid_serde_json_number() -> SerializerError {
+    SerializerError::InvalidNumber {
+        message: "serde_json number must consist of a single string field".to_owned(),
+    }
+}
+
+/// Implements the given `Serializer` methods by returning an invalid serde_json number error
+macro_rules! unsupported_serde_json_number_types {
+    ($($name:ident $(<$t:ident>)? ($($arg:ty),*) -> $ret:ident;)*) => {
+        $(
+            fn $name $(<$t: Serialize + ?Sized>)? (self, $(_: $arg),*) -> Result<Self::$ret, Self::Error> {
+                Err(err_invalid_serde_json_number())
+            }
+        )*
+    };
+}
+
+/// Serializer for the field value of a serde_json `arbitrary_precision` number
+///
+/// Only supports serializing a string, which is written as raw JSON number.
+/// Matches the behavior of serde_json's internal `NumberStrEmitter`.
+struct SerdeJsonNumberSerializer<'a, W: JsonWriter + ?Sized> {
+    json_writer: &'a mut W,
+}
+
+impl<W: JsonWriter + ?Sized> Serializer for SerdeJsonNumberSerializer<'_, W> {
+    type Ok = ();
+    type Error = SerializerError;
+    type SerializeSeq = Impossible<(), Self::Error>;
+    type SerializeTuple = Impossible<(), Self::Error>;
+    type SerializeTupleStruct = Impossible<(), Self::Error>;
+    type SerializeTupleVariant = Impossible<(), Self::Error>;
+    type SerializeMap = Impossible<(), Self::Error>;
+    type SerializeStruct = Impossible<(), Self::Error>;
+    type SerializeStructVariant = Impossible<(), Self::Error>;
+
+    fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
+        self.json_writer
+            .number_value_from_string(v)
+            .map_err(map_number_err)
+    }
+
+    unsupported_serde_json_number_types! {
+        serialize_bool(bool) -> Ok;
+        serialize_i8(i8) -> Ok;
+        serialize_i16(i16) -> Ok;
+        serialize_i32(i32) -> Ok;
+        serialize_i64(i64) -> Ok;
+        serialize_u8(u8) -> Ok;
+        serialize_u16(u16) -> Ok;
+        serialize_u32(u32) -> Ok;
+        serialize_u64(u64) -> Ok;
+        serialize_f32(f32) -> Ok;
+        serialize_f64(f64) -> Ok;
+        serialize_char(char) -> Ok;
+        serialize_bytes(&[u8]) -> Ok;
+        serialize_none() -> Ok;
+        serialize_some<T>(&T) -> Ok;
+        serialize_unit() -> Ok;
+        serialize_unit_struct(&'static str) -> Ok;
+        serialize_unit_variant(&'static str, u32, &'static str) -> Ok;
+        serialize_newtype_struct<T>(&'static str, &T) -> Ok;
+        serialize_newtype_variant<T>(&'static str, u32, &'static str, &T) -> Ok;
+        serialize_seq(Option<usize>) -> SerializeSeq;
+        serialize_tuple(usize) -> SerializeTuple;
+        serialize_tuple_struct(&'static str, usize) -> SerializeTupleStruct;
+        serialize_tuple_variant(&'static str, u32, &'static str, usize) -> SerializeTupleVariant;
+        serialize_map(Option<usize>) -> SerializeMap;
+        serialize_struct(&'static str, usize) -> SerializeStruct;
+        serialize_struct_variant(&'static str, u32, &'static str, usize) -> SerializeStructVariant;
     }
 }
 
@@ -1799,6 +1899,35 @@ mod tests {
                 let mut struc = s.serialize_struct("name", 0)?;
                 struc.serialize_field("key1", &1)
             },
+        );
+    }
+
+    #[test]
+    fn serialize_struct_serde_json_number() {
+        const TOKEN: &str = "$serde_json::private::Number";
+
+        assert_serialized(
+            |s| {
+                let mut struc = s.serialize_struct(TOKEN, 1)?;
+                struc.serialize_field(TOKEN, "123.0e10")?;
+                struc.end()
+            },
+            "123.0e10",
+        );
+
+        assert_number_error(
+            |s| {
+                let mut struc = s.serialize_struct(TOKEN, 1)?;
+                struc.serialize_field(TOKEN, "1.")
+            },
+            "invalid JSON number: 1.",
+        );
+        assert_number_error(
+            |s| {
+                let mut struc = s.serialize_struct(TOKEN, 1)?;
+                struc.serialize_field(TOKEN, &1)
+            },
+            "serde_json number must consist of a single string field",
         );
     }
 
